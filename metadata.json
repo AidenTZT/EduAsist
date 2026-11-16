@@ -1,0 +1,8 @@
+{
+  "name": "EduAsist - Asistencias",
+  "description": "Sistema integral de control de asistencias y portal del representante respaldado por Firebase Firestore y Firebase Auth.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

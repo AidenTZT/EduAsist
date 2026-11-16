@@ -1,0 +1,325 @@
+{
+  "entities": {
+    "ConfiguracionInstitucional": {
+      "title": "ConfiguracionInstitucional",
+      "description": "Global institutional configuration parameter.",
+      "type": "object",
+      "properties": {
+        "idConfig": { "type": "number" },
+        "clave": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "valor": { "type": "string", "maxLength": 500 },
+        "descripcion": { "type": "string", "maxLength": 500 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["idConfig", "clave", "valor"]
+    },
+    "RecesoInstitucional": {
+      "title": "RecesoInstitucional",
+      "description": "Institutional break/recess schedule block.",
+      "type": "object",
+      "properties": {
+        "idReceso": { "type": "number" },
+        "nombre": { "type": "string", "minLength": 1, "maxLength": 150 },
+        "horaInicio": { "type": "string", "pattern": "^\\d{2}:\\d{2}$" },
+        "horaFin": { "type": "string", "pattern": "^\\d{2}:\\d{2}$" },
+        "activo": { "type": "boolean" },
+        "descripcion": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["idReceso", "nombre", "horaInicio", "horaFin", "activo"]
+    },
+    "LapsoEscolar": {
+      "title": "LapsoEscolar",
+      "description": "Academic term (lapso) schedule definition.",
+      "type": "object",
+      "properties": {
+        "idLapso": { "type": "number" },
+        "nombreLapso": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "fechaInicio": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "fechaFin": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "activo": { "type": "boolean" },
+        "orden": { "type": "number" },
+        "observaciones": { "type": "string", "maxLength": 500 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["idLapso", "nombreLapso", "fechaInicio", "fechaFin", "activo"]
+    },
+    "AnoEscolar": {
+      "title": "AnoEscolar",
+      "description": "Grade level / academic year.",
+      "type": "object",
+      "properties": {
+        "idAno": { "type": "number" },
+        "nombreNivel": { "type": "string", "minLength": 1, "maxLength": 150 },
+        "activo": { "type": "boolean" }
+      },
+      "required": ["idAno", "nombreNivel", "activo"]
+    },
+    "Seccion": {
+      "title": "Seccion",
+      "description": "Class section belonging to an academic year.",
+      "type": "object",
+      "properties": {
+        "idSeccion": { "type": "number" },
+        "idAno": { "type": "number" },
+        "nombreSeccion": { "type": "string", "minLength": 1, "maxLength": 20 }
+      },
+      "required": ["idSeccion", "idAno", "nombreSeccion"]
+    },
+    "Materia": {
+      "title": "Materia",
+      "description": "Academic subject belonging to a grade level.",
+      "type": "object",
+      "properties": {
+        "idMateria": { "type": "number" },
+        "idAno": { "type": "number" },
+        "nombreMateria": { "type": "string", "minLength": 1, "maxLength": 150 }
+      },
+      "required": ["idMateria", "idAno", "nombreMateria"]
+    },
+    "Usuario": {
+      "title": "Usuario",
+      "description": "Institutional staff user profile with RBAC role.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "number" },
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "email": { "type": "string", "format": "email", "maxLength": 200 },
+        "nombre": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "apellidos": { "type": "string", "maxLength": 120 },
+        "cedula": { "type": "string", "maxLength": 40 },
+        "telefono": { "type": "string", "maxLength": 40 },
+        "rol": { "type": "string", "enum": ["director", "coordinador", "docente"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "uid", "email", "nombre", "apellidos", "rol"]
+    },
+    "StaffEmailIndex": {
+      "title": "StaffEmailIndex",
+      "description": "Normalized email lookup for staff RBAC verification.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "number" },
+        "email": { "type": "string", "format": "email", "maxLength": 200 },
+        "rol": { "type": "string", "enum": ["director", "coordinador", "docente"] }
+      },
+      "required": ["userId", "email", "rol"]
+    },
+    "DocenteMateria": {
+      "title": "DocenteMateria",
+      "description": "Assignment of a teacher to a subject.",
+      "type": "object",
+      "properties": {
+        "idAsignacion": { "type": "number" },
+        "idUsuario": { "type": "number" },
+        "idMateria": { "type": "number" },
+        "usuarioNombre": { "type": "string", "maxLength": 120 },
+        "usuarioApellidos": { "type": "string", "maxLength": 120 },
+        "usuarioRol": { "type": "string", "enum": ["director", "coordinador", "docente"] }
+      },
+      "required": ["idAsignacion", "idUsuario", "idMateria"]
+    },
+    "Horario": {
+      "title": "Horario",
+      "description": "Weekly class schedule block.",
+      "type": "object",
+      "properties": {
+        "idHorario": { "type": "number" },
+        "idAno": { "type": "number" },
+        "idSeccion": { "type": "number" },
+        "idMateria": { "type": "number" },
+        "diaSemana": { "type": "string", "enum": ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"] },
+        "horaInicio": { "type": "string", "pattern": "^\\d{2}:\\d{2}$" },
+        "horaFin": { "type": "string", "pattern": "^\\d{2}:\\d{2}$" },
+        "aula": { "type": "string", "maxLength": 100 }
+      },
+      "required": ["idHorario", "idAno", "idSeccion", "idMateria", "diaSemana", "horaInicio", "horaFin"]
+    },
+    "Representante": {
+      "title": "Representante",
+      "description": "Parent or legal guardian profile.",
+      "type": "object",
+      "properties": {
+        "idRepresentante": { "type": "number" },
+        "cedula": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "nombres": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "apellidos": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "telefono": { "type": "string", "maxLength": 40 },
+        "email": { "type": "string", "format": "email", "maxLength": 200 }
+      },
+      "required": ["idRepresentante", "cedula", "nombres", "apellidos", "email"]
+    },
+    "RepEmailIndex": {
+      "title": "RepEmailIndex",
+      "description": "Normalized email lookup for representative ownership verification.",
+      "type": "object",
+      "properties": {
+        "idRepresentante": { "type": "number" },
+        "email": { "type": "string", "format": "email", "maxLength": 200 }
+      },
+      "required": ["idRepresentante", "email"]
+    },
+    "Estudiante": {
+      "title": "Estudiante",
+      "description": "Enrolled student record linked to a grade, section, and representative.",
+      "type": "object",
+      "properties": {
+        "idEstudiante": { "type": "number" },
+        "cedula": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "nombres": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "apellidos": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "idAnoActual": { "type": "number" },
+        "idSeccion": { "type": "number" },
+        "idRepresentante": { "type": "number" }
+      },
+      "required": ["idEstudiante", "cedula", "nombres", "apellidos", "idAnoActual", "idRepresentante"]
+    },
+    "RegistroAsistencia": {
+      "title": "RegistroAsistencia",
+      "description": "Daily attendance record for a student and subject.",
+      "type": "object",
+      "properties": {
+        "idAsistencia": { "type": "number" },
+        "idEstudiante": { "type": "number" },
+        "idMateria": { "type": "number" },
+        "idRepresentante": { "type": "number" },
+        "fecha": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "horaEntrada": { "type": "string", "maxLength": 20 },
+        "estado": { "type": "string", "enum": ["Presente", "Tarde", "Ausente", "Justificado"] }
+      },
+      "required": ["idAsistencia", "idEstudiante", "idMateria", "idRepresentante", "fecha", "horaEntrada", "estado"]
+    },
+    "RegistroCalificacion": {
+      "title": "RegistroCalificacion",
+      "description": "Term grade record for a student and subject.",
+      "type": "object",
+      "properties": {
+        "idCalificacion": { "type": "number" },
+        "idEstudiante": { "type": "number" },
+        "idMateria": { "type": "number" },
+        "idRepresentante": { "type": "number" },
+        "lapsoPeriodo": { "type": "string", "minLength": 1, "maxLength": 50 },
+        "nota": { "type": "number" },
+        "observacion": { "type": "string", "maxLength": 500 },
+        "fechaRegistro": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" }
+      },
+      "required": ["idCalificacion", "idEstudiante", "idMateria", "idRepresentante", "lapsoPeriodo", "nota", "fechaRegistro"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Immutable security and academic audit log entry.",
+      "type": "object",
+      "properties": {
+        "idLog": { "type": "number" },
+        "idUsuario": { "type": "number" },
+        "emailOCedula": { "type": "string", "maxLength": 200 },
+        "rol": { "type": "string", "maxLength": 40 },
+        "accion": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "entidad": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "idEntidad": { "type": "string", "maxLength": 120 },
+        "detalles": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["idLog", "accion", "entidad", "createdAt"]
+    },
+    "PushSubscriptionRecord": {
+      "title": "PushSubscriptionRecord",
+      "description": "Web Push notification subscription for a representative.",
+      "type": "object",
+      "properties": {
+        "idSubscription": { "type": "number" },
+        "idRepresentante": { "type": "number" },
+        "endpoint": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "p256dh": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "auth": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "userAgent": { "type": "string", "maxLength": 500 },
+        "activa": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "lastUsed": { "type": "string", "format": "date-time" }
+      },
+      "required": ["idSubscription", "idRepresentante", "endpoint", "p256dh", "auth", "activa", "createdAt"]
+    },
+    "MetaCounter": {
+      "title": "MetaCounter",
+      "description": "Sequential ID counter per collection.",
+      "type": "object",
+      "properties": {
+        "nextId": { "type": "number" }
+      },
+      "required": ["nextId"]
+    }
+  },
+  "firestore": {
+    "/configuracion_institucional/{clave}": {
+      "schema": { "$ref": "#/entities/ConfiguracionInstitucional" },
+      "description": "Global institutional configuration records keyed by clave."
+    },
+    "/recesos_institucionales/{idReceso}": {
+      "schema": { "$ref": "#/entities/RecesoInstitucional" },
+      "description": "Institutional break/recess blocks."
+    },
+    "/lapsos_escolares/{idLapso}": {
+      "schema": { "$ref": "#/entities/LapsoEscolar" },
+      "description": "School terms (1er, 2do, 3er Lapso)."
+    },
+    "/anos_escolares/{idAno}": {
+      "schema": { "$ref": "#/entities/AnoEscolar" },
+      "description": "Academic grade levels."
+    },
+    "/secciones/{idSeccion}": {
+      "schema": { "$ref": "#/entities/Seccion" },
+      "description": "Class sections within grade levels."
+    },
+    "/materias/{idMateria}": {
+      "schema": { "$ref": "#/entities/Materia" },
+      "description": "Academic subjects per grade level."
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/Usuario" },
+      "description": "Institutional staff user accounts."
+    },
+    "/staff_emails/{email}": {
+      "schema": { "$ref": "#/entities/StaffEmailIndex" },
+      "description": "Lowercase email index for O(1) staff role checks in security rules."
+    },
+    "/docente_materias/{idAsignacion}": {
+      "schema": { "$ref": "#/entities/DocenteMateria" },
+      "description": "Teacher-subject assignment records."
+    },
+    "/horarios/{idHorario}": {
+      "schema": { "$ref": "#/entities/Horario" },
+      "description": "Weekly class schedule blocks."
+    },
+    "/representantes/{idRepresentante}": {
+      "schema": { "$ref": "#/entities/Representante" },
+      "description": "Parent/guardian profiles."
+    },
+    "/rep_emails/{email}": {
+      "schema": { "$ref": "#/entities/RepEmailIndex" },
+      "description": "Lowercase email index for O(1) representative ownership checks in security rules."
+    },
+    "/estudiantes/{idEstudiante}": {
+      "schema": { "$ref": "#/entities/Estudiante" },
+      "description": "Enrolled students."
+    },
+    "/asistencia/{docId}": {
+      "schema": { "$ref": "#/entities/RegistroAsistencia" },
+      "description": "Daily attendance records keyed by student_subject_date."
+    },
+    "/calificaciones/{docId}": {
+      "schema": { "$ref": "#/entities/RegistroCalificacion" },
+      "description": "Term grade records keyed by student_subject_lapso."
+    },
+    "/audit_logs/{idLog}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Audit trail entries."
+    },
+    "/push_subscriptions/{subId}": {
+      "schema": { "$ref": "#/entities/PushSubscriptionRecord" },
+      "description": "Web Push subscriptions for parents."
+    },
+    "/meta_counters/{name}": {
+      "schema": { "$ref": "#/entities/MetaCounter" },
+      "description": "Monotonic numeric ID counters."
+    }
+  }
+}

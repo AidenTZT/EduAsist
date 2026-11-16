@@ -1,0 +1,712 @@
+import type {
+  AnoEscolar,
+  Seccion,
+  Materia,
+  DocenteMateria,
+  Representante,
+  Estudiante,
+  Usuario,
+  RegistroAsistencia,
+  PortalRepresentanteData,
+  EstadoAsistencia,
+  RolUsuario,
+  Horario,
+  ConfiguracionInstitucional,
+  RecesoInstitucional,
+  ConflictoHorarioResult,
+  AutoResolveResult,
+  SlotSuggestion,
+  AuditLog,
+  AuthMeResponse,
+  LoginResponse,
+  PaginatedResponse,
+} from '../types.ts';
+
+const AUTH_TOKEN_KEY = 'educontrol_auth_token';
+
+function getStoredToken(): string | null {
+  try {
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      return window.sessionStorage.getItem(AUTH_TOKEN_KEY);
+    }
+  } catch {
+    // Ignorar en entornos con storage restringido
+  }
+  return null;
+}
+
+function setStoredToken(token: string | null): void {
+  try {
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      if (token) {
+        window.sessionStorage.setItem(AUTH_TOKEN_KEY, token);
+      } else {
+        window.sessionStorage.removeItem(AUTH_TOKEN_KEY);
+      }
+    }
+  } catch {
+    // Ignorar en entornos con storage restringido
+  }
+}
+
+async function apiFetch<T>(
+  path: string,
+  options: RequestInit = {}
+): Promise<T> {
+  const token = getStoredToken();
+  const headers = new Headers(options.headers || {});
+  if (!headers.has('Content-Type') && options.body && !(options.body instanceof FormData)) {
+    headers.set('Content-Type', 'application/json');
+  }
+  if (token && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  const res = await fetch(`/api${path}`, {
+    ...options,
+    headers,
+    credentials: 'include',
+  });
+
+  if (res.status === 401 && path !== '/auth/login') {
+    setStoredToken(null);
+  }
+
+  const text = await res.text();
+  let data: any = {};
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { error: text };
+    }
+  }
+
+  if (!res.ok) {
+    const err = new Error(data?.error || data?.mensaje || `Error HTTP ${res.status}`) as Error & {
+      status?: number;
+      code?: string;
+    };
+    err.status = res.status;
+    err.code = data?.code;
+    throw err;
+  }
+
+  return data as T;
+}
+
+function buildQuery(params: Record<string, string | number | boolean | undefined | null>): string {
+  const sp = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== '') {
+      sp.set(k, String(v));
+    }
+  });
+  const qs = sp.toString();
+  return qs ? `?${qs}` : '';
+}
+
+// -------------------------------------------------------------
+// 0. AUTENTICACIÓN LOCAL POR CREDENCIALES & AUDITORÍA
+// -------------------------------------------------------------
+export async function loginWithCredentials(
+  usuario: string,
+  password: string,
+  preferredPortal?: 'staff' | 'representante'
+): Promise<LoginResponse> {
+  const res = await apiFetch<LoginResponse>('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({
+      usuario: usuario.trim(),
+      password,
+      ...(preferredPortal ? { preferredPortal } : {}),
+    }),
+  });
+
+  if (res.token) {
+    setStoredToken(res.token);
+  }
+
+  return res;
+}
+
+export async function fetchAuthMe(): Promise<AuthMeResponse> {
+  try {
+    const res = await apiFetch<AuthMeResponse>('/auth/me');
+    if (!res.authenticated) {
+      setStoredToken(null);
+    }
+    return res;
+  } catch {
+    return { authenticated: false };
+  }
+}
+
+export async function logoutSession(): Promise<void> {
+  try {
+    await apiFetch('/auth/logout', { method: 'POST' });
+  } catch {
+    // Continuar con la limpieza local incluso si la red falla
+  } finally {
+    setStoredToken(null);
+  }
+}
+
+export async function fetchAuditLogs(filters?: {
+  page?: number;
+  limit?: number;
+  accion?: string;
+  entidad?: string;
+  search?: string;
+  startDate?: string;
+  endDate?: string;
+}): Promise<PaginatedResponse<AuditLog>> {
+  return apiFetch<PaginatedResponse<AuditLog>>(
+    `/auditoria${buildQuery({
+      page: filters?.page,
+      limit: filters?.limit,
+      accion: filters?.accion,
+      entidad: filters?.entidad,
+      search: filters?.search,
+      startDate: filters?.startDate,
+      endDate: filters?.endDate,
+    })}`
+  );
+}
+
+// -------------------------------------------------------------
+// 1. CONFIGURACIÓN INSTITUCIONAL GLOBAL & RECESOS
+// -------------------------------------------------------------
+export async function fetchConfiguracion(): Promise<{
+  anoLectivo: string;
+  nombreInstitucion: string;
+  raw: ConfiguracionInstitucional[];
+}> {
+  return apiFetch('/configuracion');
+}
+
+export async function updateConfiguracion(
+  clave: string,
+  valor: string,
+  descripcion?: string
+): Promise<ConfiguracionInstitucional> {
+  return apiFetch('/configuracion', {
+    method: 'PUT',
+    body: JSON.stringify({ clave, valor, descripcion }),
+  });
+}
+
+export async function fetchRecesos(soloActivos: boolean = false): Promise<RecesoInstitucional[]> {
+  return apiFetch(`/recesos${buildQuery({ soloActivos: soloActivos ? 'true' : undefined })}`);
+}
+
+export async function createReceso(data: {
+  nombre: string;
+  horaInicio: string;
+  horaFin: string;
+  activo?: boolean;
+  descripcion?: string;
+}): Promise<RecesoInstitucional> {
+  return apiFetch('/recesos', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateReceso(
+  idReceso: number,
+  data: Partial<RecesoInstitucional>
+): Promise<RecesoInstitucional> {
+  return apiFetch(`/recesos/${idReceso}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function toggleReceso(idReceso: number): Promise<RecesoInstitucional> {
+  return apiFetch(`/recesos/${idReceso}/toggle`, { method: 'PATCH' });
+}
+
+export async function deleteReceso(idReceso: number): Promise<void> {
+  await apiFetch(`/recesos/${idReceso}`, { method: 'DELETE' });
+}
+
+// -------------------------------------------------------------
+// 2. PERSONAL INSTITUCIONAL (USERS)
+// -------------------------------------------------------------
+export async function fetchUsers(rol?: RolUsuario): Promise<Usuario[]> {
+  return apiFetch(`/users${buildQuery({ rol })}`);
+}
+
+export async function createUser(data: {
+  usuario?: string;
+  email: string;
+  nombre: string;
+  apellidos: string;
+  cedula?: string;
+  telefono?: string;
+  rol: RolUsuario;
+  password?: string;
+  activo?: boolean;
+}): Promise<Usuario> {
+  return apiFetch('/users', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateUser(
+  id: number,
+  data: Partial<Usuario> & { password?: string }
+): Promise<Usuario> {
+  return apiFetch(`/users/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteUser(id: number): Promise<void> {
+  await apiFetch(`/users/${id}`, { method: 'DELETE' });
+}
+
+// -------------------------------------------------------------
+// 3. AÑOS ESCOLARES, SECCIONES & MATERIAS
+// -------------------------------------------------------------
+export async function fetchAnosEscolares(): Promise<AnoEscolar[]> {
+  return apiFetch('/anos');
+}
+
+export async function createAnoEscolar(nombreNivel: string, activo: boolean = true): Promise<AnoEscolar> {
+  return apiFetch('/anos', {
+    method: 'POST',
+    body: JSON.stringify({ nombreNivel, activo }),
+  });
+}
+
+export async function updateAnoEscolar(
+  id: number,
+  nombreNivel: string,
+  activo?: boolean
+): Promise<AnoEscolar> {
+  return apiFetch(`/anos/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ nombreNivel, activo }),
+  });
+}
+
+export async function deleteAnoEscolar(id: number): Promise<void> {
+  await apiFetch(`/anos/${id}`, { method: 'DELETE' });
+}
+
+export async function fetchSecciones(idAno?: number): Promise<Seccion[]> {
+  return apiFetch(`/secciones${buildQuery({ idAno })}`);
+}
+
+export async function createSeccion(idAno: number, nombreSeccion: string): Promise<Seccion> {
+  return apiFetch('/secciones', {
+    method: 'POST',
+    body: JSON.stringify({ idAno, nombreSeccion }),
+  });
+}
+
+export async function updateSeccion(id: number, nombreSeccion: string, idAno?: number): Promise<Seccion> {
+  return apiFetch(`/secciones/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ nombreSeccion, idAno }),
+  });
+}
+
+export async function deleteSeccion(id: number): Promise<void> {
+  await apiFetch(`/secciones/${id}`, { method: 'DELETE' });
+}
+
+export async function fetchMaterias(idAno?: number): Promise<Materia[]> {
+  return apiFetch(`/materias${buildQuery({ idAno })}`);
+}
+
+export async function createMateria(idAno: number, nombreMateria: string): Promise<Materia> {
+  return apiFetch('/materias', {
+    method: 'POST',
+    body: JSON.stringify({ idAno, nombreMateria }),
+  });
+}
+
+export async function updateMateria(id: number, nombreMateria: string, idAno?: number): Promise<Materia> {
+  return apiFetch(`/materias/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ nombreMateria, idAno }),
+  });
+}
+
+export async function deleteMateria(id: number): Promise<void> {
+  await apiFetch(`/materias/${id}`, { method: 'DELETE' });
+}
+
+export async function fetchDocenteMaterias(
+  idUsuario?: number,
+  idMateria?: number
+): Promise<DocenteMateria[]> {
+  return apiFetch(`/docente-materias${buildQuery({ idUsuario, idMateria })}`);
+}
+
+export async function assignDocenteMateria(
+  idUsuario: number,
+  idMateria: number
+): Promise<DocenteMateria> {
+  return apiFetch('/docente-materias', {
+    method: 'POST',
+    body: JSON.stringify({ idUsuario, idMateria }),
+  });
+}
+
+export async function assignDocenteMateriasBatch(
+  idUsuario: number,
+  idMaterias: number[]
+): Promise<{ success: boolean; count: number; assignments: DocenteMateria[] }> {
+  return apiFetch('/docente-materias/batch', {
+    method: 'POST',
+    body: JSON.stringify({ idUsuario, idMaterias }),
+  });
+}
+
+export async function removeDocenteMateria(id: number): Promise<void> {
+  await apiFetch(`/docente-materias/${id}`, { method: 'DELETE' });
+}
+
+// -------------------------------------------------------------
+// 4. REPRESENTANTES & ESTUDIANTES
+// -------------------------------------------------------------
+export async function fetchRepresentantes(): Promise<Representante[]> {
+  return apiFetch('/representantes');
+}
+
+export async function createRepresentante(data: {
+  usuario?: string;
+  cedula: string;
+  nombres: string;
+  apellidos: string;
+  telefono?: string;
+  email: string;
+  password?: string;
+  activo?: boolean;
+}): Promise<Representante> {
+  return apiFetch('/representantes', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateRepresentante(
+  id: number,
+  data: Partial<Representante> & {
+    password?: string;
+    currentPassword?: string;
+    newPassword?: string;
+  }
+): Promise<Representante> {
+  return apiFetch(`/representantes/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateRepresentanteCredenciales(
+  id: number,
+  data: { email?: string; usuario?: string | null; password?: string; activo?: boolean }
+): Promise<{ success: boolean; message: string; representante: Representante }> {
+  return apiFetch(`/representantes/${id}/credenciales`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteRepresentante(id: number): Promise<void> {
+  await apiFetch(`/representantes/${id}`, { method: 'DELETE' });
+}
+
+export async function fetchEstudiantes(filters?: {
+  idAno?: number;
+  idSeccion?: number;
+  idRepresentante?: number;
+}): Promise<Estudiante[]> {
+  return apiFetch(
+    `/estudiantes${buildQuery({
+      idAno: filters?.idAno,
+      idSeccion: filters?.idSeccion,
+      idRepresentante: filters?.idRepresentante,
+    })}`
+  );
+}
+
+export async function createEstudiante(data: {
+  cedula: string;
+  nombres: string;
+  apellidos: string;
+  idAnoActual: number;
+  idSeccion?: number;
+  idRepresentante: number;
+}): Promise<Estudiante> {
+  return apiFetch('/estudiantes', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateEstudiante(
+  idEstudiante: number,
+  data: Partial<Estudiante>
+): Promise<Estudiante> {
+  return apiFetch(`/estudiantes/${idEstudiante}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteEstudiante(idEstudiante: number): Promise<void> {
+  await apiFetch(`/estudiantes/${idEstudiante}`, { method: 'DELETE' });
+}
+
+// -------------------------------------------------------------
+// 5. ASISTENCIA
+// -------------------------------------------------------------
+export async function fetchAsistencia(filters?: {
+  fecha?: string;
+  mes?: string;
+  estado?: EstadoAsistencia;
+  idMateria?: number;
+  idEstudiante?: number;
+  idRepresentante?: number;
+  idSeccion?: number;
+  idAno?: number;
+}): Promise<RegistroAsistencia[]> {
+  return apiFetch(
+    `/asistencia${buildQuery({
+      fecha: filters?.fecha,
+      mes: filters?.mes,
+      estado: filters?.estado,
+      idMateria: filters?.idMateria,
+      idEstudiante: filters?.idEstudiante,
+      idRepresentante: filters?.idRepresentante,
+      idSeccion: filters?.idSeccion,
+      idAno: filters?.idAno,
+    })}`
+  );
+}
+
+export async function fetchAsistenciaGeneral(filters?: {
+  page?: number;
+  limit?: number;
+  idAno?: number;
+  idSeccion?: number;
+  idMateria?: number;
+  fecha?: string;
+  mes?: string;
+  startDate?: string;
+  endDate?: string;
+  estado?: EstadoAsistencia;
+  idEstudiante?: number;
+  search?: string;
+}): Promise<PaginatedResponse<RegistroAsistencia>> {
+  return apiFetch<PaginatedResponse<RegistroAsistencia>>(
+    `/asistencia/general${buildQuery({
+      page: filters?.page,
+      limit: filters?.limit,
+      idAno: filters?.idAno,
+      idSeccion: filters?.idSeccion,
+      idMateria: filters?.idMateria,
+      fecha: filters?.fecha,
+      mes: filters?.mes,
+      startDate: filters?.startDate,
+      endDate: filters?.endDate,
+      estado: filters?.estado,
+      idEstudiante: filters?.idEstudiante,
+      search: filters?.search,
+    })}`
+  );
+}
+
+export async function submitAsistenciaBatch(
+  idMateria: number,
+  fecha: string,
+  records: Array<{ idEstudiante: number; estado: EstadoAsistencia; horaEntrada?: string }>
+): Promise<{ success: boolean; count: number }> {
+  return apiFetch('/asistencia/batch', {
+    method: 'POST',
+    body: JSON.stringify({ idMateria, fecha, records }),
+  });
+}
+
+export async function updateAsistenciaJustificacion(
+  idAsistencia: number,
+  data: {
+    estado: EstadoAsistencia;
+    motivoJustificacion: string;
+    numeroJustificante?: string | null;
+    fechaRecepcionDocumento?: string | null;
+  }
+): Promise<{ success: boolean; mensaje: string; registro: RegistroAsistencia }> {
+  return apiFetch(`/asistencia/${idAsistencia}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function fetchPortalRepresentante(
+  idRepresentante: number
+): Promise<PortalRepresentanteData> {
+  return apiFetch(`/portal/representante/${idRepresentante}`);
+}
+
+// -------------------------------------------------------------
+// 6. HORARIOS ESCOLARES & SISTEMA ANTICONFLICTOS
+// -------------------------------------------------------------
+export async function fetchHorarios(filters?: {
+  idAno?: number;
+  idSeccion?: number;
+  diaSemana?: string;
+  idMateria?: number;
+  idDocente?: number;
+}): Promise<Horario[]> {
+  return apiFetch(
+    `/horarios${buildQuery({
+      idAno: filters?.idAno,
+      idSeccion: filters?.idSeccion,
+      diaSemana: filters?.diaSemana,
+      idMateria: filters?.idMateria,
+      idDocente: filters?.idDocente,
+    })}`
+  );
+}
+
+export async function validateHorarioConflict(data: {
+  idHorario?: number;
+  idAno: number;
+  idSeccion: number;
+  idMateria: number;
+  diaSemana: string;
+  horaInicio: string;
+  horaFin: string;
+  aula?: string;
+}): Promise<ConflictoHorarioResult> {
+  return apiFetch('/horarios/validate-conflict', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function createHorario(data: {
+  idAno: number;
+  idSeccion: number;
+  idMateria: number;
+  diaSemana: string;
+  horaInicio: string;
+  horaFin: string;
+  aula?: string;
+  forceIgnoreConflict?: boolean;
+}): Promise<Horario> {
+  return apiFetch('/horarios', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateHorario(
+  idHorario: number,
+  data: Partial<Horario> & { forceIgnoreConflict?: boolean }
+): Promise<Horario> {
+  return apiFetch(`/horarios/${idHorario}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteHorario(idHorario: number): Promise<void> {
+  await apiFetch(`/horarios/${idHorario}`, { method: 'DELETE' });
+}
+
+export async function autoResolveHorarios(): Promise<AutoResolveResult> {
+  return apiFetch('/horarios/auto-resolve', { method: 'POST' });
+}
+
+export async function fetchSuggestedSlots(data: {
+  idAno: number;
+  idSeccion: number;
+  idMateria: number;
+  aula?: string;
+  idHorarioExcluir?: number;
+}): Promise<SlotSuggestion[]> {
+  return apiFetch('/horarios/suggest-slots', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+// -------------------------------------------------------------
+// 7. RESPALDO Y RESTAURACIÓN (ROL EXCLUSIVO: DIRECTOR)
+// -------------------------------------------------------------
+export async function fetchBackupStats() {
+  return apiFetch<{
+    anosEscolares: number;
+    secciones: number;
+    materias: number;
+    estudiantes: number;
+    representantes: number;
+    asistencias: number;
+    horarios: number;
+    usuariosPersonal: number;
+    logsAuditoria: number;
+  }>('/backup/stats');
+}
+
+export async function exportDatabaseBackup(): Promise<any> {
+  return apiFetch('/backup/export');
+}
+
+export async function restoreDatabaseBackup(backupData: any): Promise<{
+  success: boolean;
+  mensaje: string;
+  tablasRestauradas: number;
+}> {
+  return apiFetch('/backup/restore', {
+    method: 'POST',
+    body: JSON.stringify(backupData),
+  });
+}
+
+export async function resetDatabaseToMaster(): Promise<{
+  success: boolean;
+  mensaje: string;
+}> {
+  return apiFetch('/backup/reset', { method: 'POST' });
+}
+
+// -------------------------------------------------------------
+// 8. NOTIFICACIONES WEB PUSH EN TIEMPO REAL
+// -------------------------------------------------------------
+export async function fetchVapidPublicKey(): Promise<{ publicKey: string }> {
+  return apiFetch('/push/vapid-public-key');
+}
+
+export async function fetchPushStatus(): Promise<{ activeDevices: number }> {
+  return apiFetch('/push/status');
+}
+
+export async function subscribeToPushNotifications(subscription: {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+}): Promise<{ success: boolean; idSubscription: number }> {
+  return apiFetch('/push/subscribe', {
+    method: 'POST',
+    body: JSON.stringify(subscription),
+  });
+}
+
+export async function unsubscribeFromPushNotifications(endpoint: string): Promise<{
+  success: boolean;
+  removed: boolean;
+}> {
+  return apiFetch('/push/unsubscribe', {
+    method: 'POST',
+    body: JSON.stringify({ endpoint }),
+  });
+}

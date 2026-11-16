@@ -1,0 +1,483 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Global Helpers
+    // -------------------------------------------------------------------------
+    function isSignedIn() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email is string
+        && request.auth.token.email.size() <= 200;
+    }
+
+    function userEmail() {
+      return request.auth.token.email.lower();
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidEmailKey(key) {
+      return key is string && key.size() >= 3 && key.size() <= 200 && key.matches('^[a-zA-Z0-9_\\-\\.@+]+$');
+    }
+
+    function isBootstrappedAdmin() {
+      return isSignedIn() && userEmail() == 'adrian0424344@gmail.com';
+    }
+
+    function hasStaffIndex() {
+      return isSignedIn() && exists(/databases/$(database)/documents/staff_emails/$(userEmail()));
+    }
+
+    function staffIndex() {
+      return get(/databases/$(database)/documents/staff_emails/$(userEmail())).data;
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() || (hasStaffIndex() && staffIndex().rol == 'director');
+    }
+
+    function isCoordinador() {
+      return hasStaffIndex() && staffIndex().rol == 'coordinador';
+    }
+
+    function isDocente() {
+      return hasStaffIndex() && staffIndex().rol == 'docente';
+    }
+
+    function isStaff() {
+      return isBootstrappedAdmin() || hasStaffIndex();
+    }
+
+    function isManager() {
+      return isAdmin() || isCoordinador();
+    }
+
+    function hasRepIndex() {
+      return isSignedIn() && exists(/databases/$(database)/documents/rep_emails/$(userEmail()));
+    }
+
+    function repIndex() {
+      return get(/databases/$(database)/documents/rep_emails/$(userEmail())).data;
+    }
+
+    function isRepresentante() {
+      return hasRepIndex();
+    }
+
+    function getRepId() {
+      return repIndex().idRepresentante;
+    }
+
+    function getStaffUserId() {
+      return staffIndex().userId;
+    }
+
+    function isDocenteAssignedTo(idMateria) {
+      return isDocente() && exists(/databases/$(database)/documents/docente_materias/$(string(getStaffUserId()) + '_' + string(idMateria)));
+    }
+
+    function isOptString(data, field, maxLen) {
+      return !(field in data) || data[field] == null || (data[field] is string && data[field].size() <= maxLen);
+    }
+
+    // -------------------------------------------------------------------------
+    // Entity Validation Blueprints
+    // -------------------------------------------------------------------------
+    function isValidConfig(data) {
+      return data.keys().hasAll(['idConfig', 'clave', 'valor'])
+        && data.keys().hasOnly(['idConfig', 'clave', 'valor', 'descripcion', 'updatedAt'])
+        && data.idConfig is number
+        && data.clave is string && data.clave.size() >= 1 && data.clave.size() <= 100
+        && data.valor is string && data.valor.size() <= 500
+        && isOptString(data, 'descripcion', 500)
+        && isOptString(data, 'updatedAt', 60);
+    }
+
+    function isValidReceso(data) {
+      return data.keys().hasAll(['idReceso', 'nombre', 'horaInicio', 'horaFin', 'activo'])
+        && data.keys().hasOnly(['idReceso', 'nombre', 'horaInicio', 'horaFin', 'activo', 'descripcion'])
+        && data.idReceso is number
+        && data.nombre is string && data.nombre.size() >= 1 && data.nombre.size() <= 150
+        && data.horaInicio is string && data.horaInicio.size() == 5 && data.horaInicio.matches('^\\d{2}:\\d{2}$')
+        && data.horaFin is string && data.horaFin.size() == 5 && data.horaFin.matches('^\\d{2}:\\d{2}$')
+        && data.activo is bool
+        && isOptString(data, 'descripcion', 500);
+    }
+
+    function isValidLapso(data) {
+      return data.keys().hasAll(['idLapso', 'nombreLapso', 'fechaInicio', 'fechaFin', 'activo'])
+        && data.keys().hasOnly(['idLapso', 'nombreLapso', 'fechaInicio', 'fechaFin', 'activo', 'orden', 'observaciones', 'updatedAt'])
+        && data.idLapso is number
+        && data.nombreLapso is string && data.nombreLapso.size() >= 1 && data.nombreLapso.size() <= 100
+        && data.fechaInicio is string && data.fechaInicio.size() == 10 && data.fechaInicio.matches('^\\d{4}-\\d{2}-\\d{2}$')
+        && data.fechaFin is string && data.fechaFin.size() == 10 && data.fechaFin.matches('^\\d{4}-\\d{2}-\\d{2}$')
+        && data.activo is bool
+        && (!('orden' in data) || data.orden == null || data.orden is number)
+        && isOptString(data, 'observaciones', 500)
+        && isOptString(data, 'updatedAt', 60);
+    }
+
+    function isValidAno(data) {
+      return data.keys().hasAll(['idAno', 'nombreNivel', 'activo'])
+        && data.keys().hasOnly(['idAno', 'nombreNivel', 'activo'])
+        && data.idAno is number
+        && data.nombreNivel is string && data.nombreNivel.size() >= 1 && data.nombreNivel.size() <= 150
+        && data.activo is bool;
+    }
+
+    function isValidSeccion(data) {
+      return data.keys().hasAll(['idSeccion', 'idAno', 'nombreSeccion'])
+        && data.keys().hasOnly(['idSeccion', 'idAno', 'nombreSeccion'])
+        && data.idSeccion is number
+        && data.idAno is number
+        && data.nombreSeccion is string && data.nombreSeccion.size() >= 1 && data.nombreSeccion.size() <= 20;
+    }
+
+    function isValidMateria(data) {
+      return data.keys().hasAll(['idMateria', 'idAno', 'nombreMateria'])
+        && data.keys().hasOnly(['idMateria', 'idAno', 'nombreMateria'])
+        && data.idMateria is number
+        && data.idAno is number
+        && data.nombreMateria is string && data.nombreMateria.size() >= 1 && data.nombreMateria.size() <= 150;
+    }
+
+    function isValidUsuario(data) {
+      return data.keys().hasAll(['id', 'uid', 'email', 'nombre', 'apellidos', 'rol'])
+        && data.keys().hasOnly(['id', 'uid', 'email', 'nombre', 'apellidos', 'cedula', 'telefono', 'rol', 'createdAt'])
+        && data.id is number
+        && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 200
+        && data.nombre is string && data.nombre.size() >= 1 && data.nombre.size() <= 120
+        && data.apellidos is string && data.apellidos.size() <= 120
+        && isOptString(data, 'cedula', 40)
+        && isOptString(data, 'telefono', 40)
+        && data.rol in ['director', 'coordinador', 'docente']
+        && isOptString(data, 'createdAt', 60);
+    }
+
+    function isValidStaffEmail(data) {
+      return data.keys().hasAll(['userId', 'email', 'rol'])
+        && data.keys().hasOnly(['userId', 'email', 'rol'])
+        && data.userId is number
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 200
+        && data.rol in ['director', 'coordinador', 'docente'];
+    }
+
+    function isValidDocenteMateria(data) {
+      return data.keys().hasAll(['idAsignacion', 'idUsuario', 'idMateria'])
+        && data.keys().hasOnly(['idAsignacion', 'idUsuario', 'idMateria', 'usuarioNombre', 'usuarioApellidos', 'usuarioRol'])
+        && data.idAsignacion is number
+        && data.idUsuario is number
+        && data.idMateria is number
+        && isOptString(data, 'usuarioNombre', 120)
+        && isOptString(data, 'usuarioApellidos', 120)
+        && (!('usuarioRol' in data) || data.usuarioRol == null || data.usuarioRol in ['director', 'coordinador', 'docente']);
+    }
+
+    function isValidHorario(data) {
+      return data.keys().hasAll(['idHorario', 'idAno', 'idSeccion', 'idMateria', 'diaSemana', 'horaInicio', 'horaFin'])
+        && data.keys().hasOnly(['idHorario', 'idAno', 'idSeccion', 'idMateria', 'diaSemana', 'horaInicio', 'horaFin', 'aula'])
+        && data.idHorario is number
+        && data.idAno is number
+        && data.idSeccion is number
+        && data.idMateria is number
+        && data.diaSemana in ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes']
+        && data.horaInicio is string && data.horaInicio.size() == 5 && data.horaInicio.matches('^\\d{2}:\\d{2}$')
+        && data.horaFin is string && data.horaFin.size() == 5 && data.horaFin.matches('^\\d{2}:\\d{2}$')
+        && isOptString(data, 'aula', 100);
+    }
+
+    function isValidRepresentante(data) {
+      return data.keys().hasAll(['idRepresentante', 'cedula', 'nombres', 'apellidos', 'email'])
+        && data.keys().hasOnly(['idRepresentante', 'cedula', 'nombres', 'apellidos', 'telefono', 'email'])
+        && data.idRepresentante is number
+        && data.cedula is string && data.cedula.size() >= 1 && data.cedula.size() <= 40
+        && data.nombres is string && data.nombres.size() >= 1 && data.nombres.size() <= 120
+        && data.apellidos is string && data.apellidos.size() >= 1 && data.apellidos.size() <= 120
+        && isOptString(data, 'telefono', 40)
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 200;
+    }
+
+    function isValidRepEmail(data) {
+      return data.keys().hasAll(['idRepresentante', 'email'])
+        && data.keys().hasOnly(['idRepresentante', 'email'])
+        && data.idRepresentante is number
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 200;
+    }
+
+    function isValidEstudiante(data) {
+      return data.keys().hasAll(['idEstudiante', 'cedula', 'nombres', 'apellidos', 'idAnoActual', 'idRepresentante'])
+        && data.keys().hasOnly(['idEstudiante', 'cedula', 'nombres', 'apellidos', 'idAnoActual', 'idSeccion', 'idRepresentante'])
+        && data.idEstudiante is number
+        && data.cedula is string && data.cedula.size() >= 1 && data.cedula.size() <= 40
+        && data.nombres is string && data.nombres.size() >= 1 && data.nombres.size() <= 120
+        && data.apellidos is string && data.apellidos.size() >= 1 && data.apellidos.size() <= 120
+        && data.idAnoActual is number
+        && (!('idSeccion' in data) || data.idSeccion == null || data.idSeccion is number)
+        && data.idRepresentante is number;
+    }
+
+    function isValidAsistencia(data) {
+      return data.keys().hasAll(['idAsistencia', 'idEstudiante', 'idMateria', 'idRepresentante', 'fecha', 'horaEntrada', 'estado'])
+        && data.keys().hasOnly(['idAsistencia', 'idEstudiante', 'idMateria', 'idRepresentante', 'fecha', 'horaEntrada', 'estado'])
+        && data.idAsistencia is number
+        && data.idEstudiante is number
+        && data.idMateria is number
+        && data.idRepresentante is number
+        && data.fecha is string && data.fecha.size() == 10 && data.fecha.matches('^\\d{4}-\\d{2}-\\d{2}$')
+        && data.horaEntrada is string && data.horaEntrada.size() >= 1 && data.horaEntrada.size() <= 20
+        && data.estado in ['Presente', 'Tarde', 'Ausente', 'Justificado'];
+    }
+
+    function isValidCalificacion(data) {
+      return data.keys().hasAll(['idCalificacion', 'idEstudiante', 'idMateria', 'idRepresentante', 'lapsoPeriodo', 'nota', 'fechaRegistro'])
+        && data.keys().hasOnly(['idCalificacion', 'idEstudiante', 'idMateria', 'idRepresentante', 'lapsoPeriodo', 'nota', 'observacion', 'fechaRegistro'])
+        && data.idCalificacion is number
+        && data.idEstudiante is number
+        && data.idMateria is number
+        && data.idRepresentante is number
+        && data.lapsoPeriodo is string && data.lapsoPeriodo.size() >= 1 && data.lapsoPeriodo.size() <= 50
+        && data.nota is number && data.nota >= 0 && data.nota <= 20
+        && isOptString(data, 'observacion', 500)
+        && data.fechaRegistro is string && data.fechaRegistro.size() == 10 && data.fechaRegistro.matches('^\\d{4}-\\d{2}-\\d{2}$');
+    }
+
+    function isValidAuditLog(data) {
+      return data.keys().hasAll(['idLog', 'accion', 'entidad', 'createdAt'])
+        && data.keys().hasOnly(['idLog', 'idUsuario', 'emailOCedula', 'rol', 'accion', 'entidad', 'idEntidad', 'detalles', 'createdAt'])
+        && data.idLog is number
+        && (!('idUsuario' in data) || data.idUsuario == null || data.idUsuario is number)
+        && isOptString(data, 'emailOCedula', 200)
+        && isOptString(data, 'rol', 40)
+        && data.accion is string && data.accion.size() >= 1 && data.accion.size() <= 120
+        && data.entidad is string && data.entidad.size() >= 1 && data.entidad.size() <= 100
+        && isOptString(data, 'idEntidad', 120)
+        && (!('detalles' in data) || data.detalles == null || data.detalles is map || data.detalles is string)
+        && data.createdAt is string && data.createdAt.size() <= 60;
+    }
+
+    function isValidPushSubscription(data) {
+      return data.keys().hasAll(['idSubscription', 'idRepresentante', 'endpoint', 'p256dh', 'auth', 'activa', 'createdAt'])
+        && data.keys().hasOnly(['idSubscription', 'idRepresentante', 'endpoint', 'p256dh', 'auth', 'userAgent', 'activa', 'createdAt', 'lastUsed'])
+        && data.idSubscription is number
+        && data.idRepresentante is number
+        && data.endpoint is string && data.endpoint.size() >= 1 && data.endpoint.size() <= 1000
+        && data.p256dh is string && data.p256dh.size() >= 1 && data.p256dh.size() <= 500
+        && data.auth is string && data.auth.size() >= 1 && data.auth.size() <= 500
+        && isOptString(data, 'userAgent', 500)
+        && data.activa is bool
+        && data.createdAt is string && data.createdAt.size() <= 60
+        && isOptString(data, 'lastUsed', 60);
+    }
+
+    function isValidCounter(data) {
+      return data.keys().hasAll(['nextId'])
+        && data.keys().hasOnly(['nextId'])
+        && data.nextId is number && data.nextId >= 1;
+    }
+
+    // -------------------------------------------------------------------------
+    // Collections Rules
+    // -------------------------------------------------------------------------
+    match /configuracion_institucional/{clave} {
+      allow get: if isValidId(clave) && (isStaff() || isRepresentante());
+      allow list: if isStaff() || isRepresentante();
+      allow create: if isValidId(clave) && isValidConfig(incoming()) && isAdmin();
+      allow update: if isValidId(clave) && isValidConfig(incoming()) && isAdmin()
+        && incoming().diff(existing()).affectedKeys().hasOnly(['valor', 'descripcion', 'updatedAt']);
+      allow delete: if isValidId(clave) && isAdmin();
+    }
+
+    match /recesos_institucionales/{idReceso} {
+      allow get: if isValidId(idReceso) && (isStaff() || isRepresentante());
+      allow list: if isStaff() || isRepresentante();
+      allow create: if isValidId(idReceso) && isValidReceso(incoming()) && isManager();
+      allow update: if isValidId(idReceso) && isValidReceso(incoming()) && isManager()
+        && incoming().diff(existing()).affectedKeys().hasOnly(['nombre', 'horaInicio', 'horaFin', 'activo', 'descripcion']);
+      allow delete: if isValidId(idReceso) && isManager();
+    }
+
+    match /lapsos_escolares/{idLapso} {
+      allow get: if isValidId(idLapso) && (isStaff() || isRepresentante());
+      allow list: if isStaff() || isRepresentante();
+      allow create: if isValidId(idLapso) && isValidLapso(incoming()) && isAdmin();
+      allow update: if isValidId(idLapso) && isValidLapso(incoming()) && isAdmin()
+        && incoming().diff(existing()).affectedKeys().hasOnly(['nombreLapso', 'fechaInicio', 'fechaFin', 'activo', 'orden', 'observaciones', 'updatedAt']);
+      allow delete: if isValidId(idLapso) && isAdmin();
+    }
+
+    match /anos_escolares/{idAno} {
+      allow get: if isValidId(idAno) && (isStaff() || isRepresentante());
+      allow list: if isStaff() || isRepresentante();
+      allow create: if isValidId(idAno) && isValidAno(incoming()) && isManager();
+      allow update: if isValidId(idAno) && isValidAno(incoming()) && isManager()
+        && incoming().diff(existing()).affectedKeys().hasOnly(['nombreNivel', 'activo']);
+      allow delete: if isValidId(idAno) && isManager();
+    }
+
+    match /secciones/{idSeccion} {
+      allow get: if isValidId(idSeccion) && (isStaff() || isRepresentante());
+      allow list: if isStaff() || isRepresentante();
+      allow create: if isValidId(idSeccion) && isValidSeccion(incoming()) && isManager();
+      allow update: if isValidId(idSeccion) && isValidSeccion(incoming()) && isManager()
+        && incoming().diff(existing()).affectedKeys().hasOnly(['idAno', 'nombreSeccion']);
+      allow delete: if isValidId(idSeccion) && isManager();
+    }
+
+    match /materias/{idMateria} {
+      allow get: if isValidId(idMateria) && (isStaff() || isRepresentante());
+      allow list: if isStaff() || isRepresentante();
+      allow create: if isValidId(idMateria) && isValidMateria(incoming()) && isManager();
+      allow update: if isValidId(idMateria) && isValidMateria(incoming()) && isManager()
+        && incoming().diff(existing()).affectedKeys().hasOnly(['idAno', 'nombreMateria']);
+      allow delete: if isValidId(idMateria) && isManager();
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isManager() || (isStaff() && existing().email.lower() == userEmail()));
+      allow list: if isManager() || (isStaff() && resource.data.email == userEmail());
+      allow create: if isValidId(userId) && isValidUsuario(incoming()) && isAdmin();
+      allow update: if isValidId(userId) && isValidUsuario(incoming()) && isAdmin()
+        && incoming().diff(existing()).affectedKeys().hasOnly(['uid', 'email', 'nombre', 'apellidos', 'cedula', 'telefono', 'rol']);
+      allow delete: if isValidId(userId) && isAdmin();
+    }
+
+    match /staff_emails/{emailKey} {
+      allow get: if isValidEmailKey(emailKey) && (isAdmin() || (isSignedIn() && emailKey == userEmail()));
+      allow list: if isAdmin();
+      allow create: if isValidEmailKey(emailKey) && isValidStaffEmail(incoming()) && isAdmin();
+      allow update: if isValidEmailKey(emailKey) && isValidStaffEmail(incoming()) && isAdmin()
+        && incoming().diff(existing()).affectedKeys().hasOnly(['userId', 'email', 'rol']);
+      allow delete: if isValidEmailKey(emailKey) && isAdmin();
+    }
+
+    match /docente_materias/{idAsignacion} {
+      allow get: if isValidId(idAsignacion) && (isStaff() || isRepresentante());
+      allow list: if isStaff() || isRepresentante();
+      allow create: if isValidId(idAsignacion) && isValidDocenteMateria(incoming()) && isManager();
+      allow update: if isValidId(idAsignacion) && isValidDocenteMateria(incoming()) && isManager()
+        && incoming().diff(existing()).affectedKeys().hasOnly(['idUsuario', 'idMateria', 'usuarioNombre', 'usuarioApellidos', 'usuarioRol']);
+      allow delete: if isValidId(idAsignacion) && isManager();
+    }
+
+    match /horarios/{idHorario} {
+      allow get: if isValidId(idHorario) && (isStaff() || isRepresentante());
+      allow list: if isStaff() || isRepresentante();
+      allow create: if isValidId(idHorario) && isValidHorario(incoming()) && isManager();
+      allow update: if isValidId(idHorario) && isValidHorario(incoming()) && isManager()
+        && incoming().diff(existing()).affectedKeys().hasOnly(['idAno', 'idSeccion', 'idMateria', 'diaSemana', 'horaInicio', 'horaFin', 'aula']);
+      allow delete: if isValidId(idHorario) && isManager();
+    }
+
+    match /representantes/{idRepresentante} {
+      allow get: if isValidId(idRepresentante) && (
+        isManager() || (isRepresentante() && existing().email.lower() == userEmail())
+      );
+      allow list: if isManager() || (isRepresentante() && resource.data.email == userEmail());
+      allow create: if isValidId(idRepresentante) && isValidRepresentante(incoming()) && isManager();
+      allow update: if isValidId(idRepresentante) && isValidRepresentante(incoming()) && (
+        (isManager() && incoming().diff(existing()).affectedKeys().hasOnly(['cedula', 'nombres', 'apellidos', 'telefono', 'email'])) ||
+        (isRepresentante() && existing().email.lower() == userEmail() && incoming().diff(existing()).affectedKeys().hasOnly(['telefono']))
+      );
+      allow delete: if isValidId(idRepresentante) && isManager();
+    }
+
+    match /rep_emails/{emailKey} {
+      allow get: if isValidEmailKey(emailKey) && (isManager() || (isSignedIn() && emailKey == userEmail()));
+      allow list: if isManager();
+      allow create: if isValidEmailKey(emailKey) && isValidRepEmail(incoming()) && isManager();
+      allow update: if isValidEmailKey(emailKey) && isValidRepEmail(incoming()) && isManager()
+        && incoming().diff(existing()).affectedKeys().hasOnly(['idRepresentante', 'email']);
+      allow delete: if isValidEmailKey(emailKey) && isManager();
+    }
+
+    match /estudiantes/{idEstudiante} {
+      allow get: if isValidId(idEstudiante) && (
+        isStaff() || (isRepresentante() && existing().idRepresentante == getRepId())
+      );
+      allow list: if isStaff() || (isRepresentante() && resource.data.idRepresentante == getRepId());
+      allow create: if isValidId(idEstudiante) && isValidEstudiante(incoming()) && isManager();
+      allow update: if isValidId(idEstudiante) && isValidEstudiante(incoming()) && isManager()
+        && incoming().diff(existing()).affectedKeys().hasOnly(['cedula', 'nombres', 'apellidos', 'idAnoActual', 'idSeccion', 'idRepresentante']);
+      allow delete: if isValidId(idEstudiante) && isManager();
+    }
+
+    match /asistencia/{docId} {
+      allow get: if isValidId(docId) && (
+        isStaff() || (isRepresentante() && existing().idRepresentante == getRepId())
+      );
+      allow list: if isStaff() || (isRepresentante() && resource.data.idRepresentante == getRepId());
+      allow create: if isValidId(docId) && isValidAsistencia(incoming()) && (
+        isManager() || isDocenteAssignedTo(incoming().idMateria)
+      );
+      allow update: if isValidId(docId) && isValidAsistencia(incoming()) && (
+        isManager() || isDocenteAssignedTo(incoming().idMateria)
+      ) && incoming().diff(existing()).affectedKeys().hasOnly(['horaEntrada', 'estado', 'idRepresentante']);
+      allow delete: if isValidId(docId) && isAdmin();
+    }
+
+    match /calificaciones/{docId} {
+      allow get: if isValidId(docId) && (
+        isStaff() || (isRepresentante() && existing().idRepresentante == getRepId())
+      );
+      allow list: if isStaff() || (isRepresentante() && resource.data.idRepresentante == getRepId());
+      allow create: if isValidId(docId) && isValidCalificacion(incoming()) && (
+        isManager() || isDocenteAssignedTo(incoming().idMateria)
+      );
+      allow update: if isValidId(docId) && isValidCalificacion(incoming()) && (
+        isManager() || isDocenteAssignedTo(incoming().idMateria)
+      ) && incoming().diff(existing()).affectedKeys().hasOnly(['nota', 'observacion', 'fechaRegistro', 'idRepresentante']);
+      allow delete: if isValidId(docId) && isAdmin();
+    }
+
+    match /audit_logs/{idLog} {
+      allow get: if isValidId(idLog) && isAdmin();
+      allow list: if isAdmin();
+      allow create: if isValidId(idLog) && isValidAuditLog(incoming()) && (isStaff() || isRepresentante());
+      allow update: if false;
+      allow delete: if isValidId(idLog) && isAdmin();
+    }
+
+    match /push_subscriptions/{subId} {
+      allow get: if isValidId(subId) && (
+        isAdmin() || (isRepresentante() && existing().idRepresentante == getRepId())
+      );
+      allow list: if isAdmin() || (isRepresentante() && resource.data.idRepresentante == getRepId());
+      allow create: if isValidId(subId) && isValidPushSubscription(incoming()) && isRepresentante()
+        && incoming().idRepresentante == getRepId();
+      allow update: if isValidId(subId) && isValidPushSubscription(incoming()) && (
+        isAdmin() || (isRepresentante() && existing().idRepresentante == getRepId() && incoming().idRepresentante == getRepId())
+      ) && incoming().diff(existing()).affectedKeys().hasOnly(['p256dh', 'auth', 'userAgent', 'activa', 'lastUsed']);
+      allow delete: if isValidId(subId) && (
+        isAdmin() || (isRepresentante() && existing().idRepresentante == getRepId())
+      );
+    }
+
+    match /meta_counters/{name} {
+      allow get: if isValidId(name) && (isStaff() || isRepresentante());
+      allow list: if isAdmin();
+      allow create: if isValidId(name) && isValidCounter(incoming()) && isManager();
+      allow update: if isValidId(name) && isValidCounter(incoming()) && isManager()
+        && incoming().diff(existing()).affectedKeys().hasOnly(['nextId']);
+      allow delete: if isValidId(name) && isAdmin();
+    }
+  }
+}

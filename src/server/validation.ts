@@ -1,0 +1,382 @@
+import type { Request, Response, NextFunction } from 'express';
+import { z, ZodError, type ZodSchema } from 'zod';
+
+// Regex estricto para validar nombres y apellidos venezolanos sin números
+export const NAME_REGEX = /^[A-Za-zÁÉÍÓÚáéíóúÑñÄËÏÖÜäëïöü\s'-]+$/;
+
+export const loginCredentialsSchema = z
+  .object({
+    usuario: z.string().trim().optional(),
+    identificador: z.string().trim().optional(),
+    emailOrCedula: z.string().trim().optional(),
+    cedulaOrEmail: z.string().trim().optional(),
+    email: z.string().trim().optional(),
+    cedula: z.string().trim().optional(),
+    password: z.string().min(1, 'Debe ingresar su contraseña.'),
+    preferredPortal: z.enum(['staff', 'representante']).optional(),
+  })
+  .refine(
+    (data) => {
+      const id =
+        data.usuario ||
+        data.identificador ||
+        data.emailOrCedula ||
+        data.cedulaOrEmail ||
+        data.email ||
+        data.cedula ||
+        '';
+      return id.trim().length >= 2;
+    },
+    { message: 'Debe ingresar su usuario, correo institucional o cédula.' }
+  );
+
+export const createStaffUserSchema = z.object({
+  usuario: z
+    .string()
+    .trim()
+    .min(3, 'El usuario debe tener al menos 3 caracteres')
+    .max(50, 'El usuario no puede exceder 50 caracteres')
+    .optional()
+    .nullable(),
+  email: z.string().trim().email('Formato de correo inválido'),
+  nombre: z
+    .string()
+    .trim()
+    .min(2, 'El nombre debe tener al menos 2 caracteres')
+    .regex(NAME_REGEX, 'El nombre no puede contener números ni caracteres especiales no permitidos'),
+  apellidos: z
+    .string()
+    .trim()
+    .min(2, 'Los apellidos deben tener al menos 2 caracteres')
+    .regex(NAME_REGEX, 'Los apellidos no pueden contener números ni caracteres especiales no permitidos'),
+  cedula: z.string().trim().optional().nullable(),
+  telefono: z.string().trim().optional().nullable(),
+  rol: z.enum(['director', 'coordinador', 'docente']),
+  password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres').optional().or(z.literal('')),
+  activo: z.boolean().optional(),
+});
+
+export const updateStaffUserSchema = z.object({
+  usuario: z
+    .string()
+    .trim()
+    .min(3, 'El usuario debe tener al menos 3 caracteres')
+    .max(50)
+    .optional()
+    .nullable()
+    .or(z.literal('')),
+  email: z.string().trim().email('Formato de correo inválido').optional(),
+  nombre: z
+    .string()
+    .trim()
+    .min(2)
+    .regex(NAME_REGEX, 'El nombre no puede contener números')
+    .optional(),
+  apellidos: z
+    .string()
+    .trim()
+    .min(2)
+    .regex(NAME_REGEX, 'Los apellidos no pueden contener números')
+    .optional(),
+  cedula: z.string().trim().optional().nullable(),
+  telefono: z.string().trim().optional().nullable(),
+  rol: z.enum(['director', 'coordinador', 'docente']).optional(),
+  password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres').optional().or(z.literal('')),
+  activo: z.boolean().optional(),
+});
+
+export const createRepresentanteSchema = z.object({
+  usuario: z
+    .string()
+    .trim()
+    .min(3, 'El usuario debe tener al menos 3 caracteres')
+    .max(50)
+    .optional()
+    .nullable()
+    .or(z.literal('')),
+  cedula: z.string().trim().min(4, 'La cédula del representante es obligatoria'),
+  nombres: z
+    .string()
+    .trim()
+    .min(2, 'Los nombres son obligatorios')
+    .regex(NAME_REGEX, 'Los nombres no pueden contener números'),
+  apellidos: z
+    .string()
+    .trim()
+    .min(2, 'Los apellidos son obligatorios')
+    .regex(NAME_REGEX, 'Los apellidos no pueden contener números'),
+  telefono: z.string().trim().optional().nullable(),
+  email: z.string().trim().email('Formato de correo inválido'),
+  password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres').optional().or(z.literal('')),
+  activo: z.boolean().optional(),
+});
+
+export const updateRepresentanteSchema = z.object({
+  usuario: z
+    .string()
+    .trim()
+    .min(3, 'El usuario debe tener al menos 3 caracteres')
+    .max(50)
+    .optional()
+    .nullable()
+    .or(z.literal('')),
+  cedula: z.string().trim().min(4).optional(),
+  nombres: z
+    .string()
+    .trim()
+    .min(2)
+    .regex(NAME_REGEX, 'Los nombres no pueden contener números')
+    .optional(),
+  apellidos: z
+    .string()
+    .trim()
+    .min(2)
+    .regex(NAME_REGEX, 'Los apellidos no pueden contener números')
+    .optional(),
+  telefono: z.string().trim().optional().nullable(),
+  email: z.string().trim().email('Formato de correo inválido').optional(),
+  password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres').optional().or(z.literal('')),
+  activo: z.boolean().optional(),
+  currentPassword: z.string().optional(),
+  newPassword: z.string().min(6, 'La nueva contraseña debe tener al menos 6 caracteres').optional().or(z.literal('')),
+});
+
+export const updateRepresentanteCredencialesSchema = z.object({
+  email: z.string().trim().email('Formato de correo inválido').optional(),
+  usuario: z
+    .string()
+    .trim()
+    .min(3, 'El usuario debe tener al menos 3 caracteres')
+    .max(50)
+    .optional()
+    .nullable()
+    .or(z.literal('')),
+  password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres').optional().or(z.literal('')),
+  activo: z.boolean().optional(),
+});
+
+export const asistenciaRecordItemSchema = z.object({
+  idEstudiante: z.coerce.number().positive(),
+  estado: z.enum(['Presente', 'Tarde', 'Ausente', 'Justificado', 'Reposo Médico']),
+  horaEntrada: z.string().optional(),
+});
+
+export const asistenciaBatchSchema = z.object({
+  idMateria: z.coerce.number().positive('ID de materia inválido'),
+  fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido. Utilice YYYY-MM-DD'),
+  records: z.array(asistenciaRecordItemSchema).min(1, 'Debe enviar al menos un registro de estudiante'),
+});
+
+export const updateAsistenciaJustificacionSchema = z.object({
+  estado: z.enum(['Presente', 'Tarde', 'Ausente', 'Justificado', 'Reposo Médico']),
+  motivoJustificacion: z
+    .string()
+    .trim()
+    .min(3, 'El motivo o detalle del justificante debe tener al menos 3 caracteres.')
+    .max(500, 'El motivo de justificación no puede exceder los 500 caracteres.'),
+  numeroJustificante: z
+    .string()
+    .trim()
+    .max(80, 'El número de justificante o reposo no puede exceder los 80 caracteres.')
+    .optional()
+    .nullable()
+    .or(z.literal('')),
+  fechaRecepcionDocumento: z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha de recepción inválido. Utilice YYYY-MM-DD')
+    .optional()
+    .nullable()
+    .or(z.literal('')),
+});
+
+export const createHorarioSchema = z.object({
+  idAno: z.coerce.number().positive(),
+  idSeccion: z.coerce.number().positive(),
+  idMateria: z.coerce.number().positive(),
+  diaSemana: z.enum(['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes']),
+  horaInicio: z.string().regex(/^\d{2}:\d{2}$/, 'Formato HH:MM requerido para horaInicio'),
+  horaFin: z.string().regex(/^\d{2}:\d{2}$/, 'Formato HH:MM requerido para horaFin'),
+  aula: z.string().trim().max(50).optional(),
+  forceIgnoreConflict: z.boolean().optional(),
+});
+
+export const recesoSchema = z.object({
+  nombre: z.string().trim().min(2, 'El nombre del receso es obligatorio'),
+  horaInicio: z.string().regex(/^\d{2}:\d{2}$/, 'Formato HH:MM requerido'),
+  horaFin: z.string().regex(/^\d{2}:\d{2}$/, 'Formato HH:MM requerido'),
+  activo: z.boolean().optional(),
+  descripcion: z.string().trim().optional().nullable(),
+});
+
+export const pushSubscriptionSchema = z.object({
+  endpoint: z.string().url('Endpoint de suscripción push inválido').min(10),
+  keys: z.object({
+    p256dh: z.string().trim().min(10, 'Clave pública p256dh requerida'),
+    auth: z.string().trim().min(6, 'Secreto auth requerido'),
+  }),
+});
+
+export const pushUnsubscribeSchema = z.object({
+  endpoint: z.string().url('Endpoint de suscripción push inválido').min(10),
+});
+
+const emptyToUndefined = (val: unknown) =>
+  typeof val === 'string' && val.trim() === '' ? undefined : val;
+
+const optionalPositiveIntQuery = z.preprocess(
+  emptyToUndefined,
+  z.coerce.number().int('Debe ser un número entero').positive('Debe ser mayor a 0').optional()
+);
+
+const optionalDateYmdQuery = z.preprocess(
+  emptyToUndefined,
+  z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido. Utilice YYYY-MM-DD')
+    .optional()
+);
+
+const optionalMonthYmQuery = z.preprocess(
+  emptyToUndefined,
+  z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}$/, 'Formato de mes inválido. Utilice YYYY-MM')
+    .optional()
+);
+
+export const attendanceHistoryQuerySchema = z
+  .object({
+    page: z.preprocess(
+      emptyToUndefined,
+      z.coerce
+        .number()
+        .int('El número de página debe ser un entero')
+        .min(1, 'La página mínima es 1')
+        .max(10000, 'Número de página fuera de rango')
+        .default(1)
+    ),
+    limit: z.preprocess(
+      emptyToUndefined,
+      z.coerce
+        .number()
+        .int('El límite por página debe ser un entero')
+        .min(1, 'El límite mínimo por página es 1')
+        .max(500, 'El límite máximo por página es 500')
+        .default(25)
+    ),
+    idAno: optionalPositiveIntQuery,
+    idSeccion: optionalPositiveIntQuery,
+    idMateria: optionalPositiveIntQuery,
+    idEstudiante: optionalPositiveIntQuery,
+    fecha: optionalDateYmdQuery,
+    mes: optionalMonthYmQuery,
+    startDate: optionalDateYmdQuery,
+    endDate: optionalDateYmdQuery,
+    estado: z.preprocess(
+      emptyToUndefined,
+      z.enum(['Presente', 'Tarde', 'Ausente', 'Justificado', 'Reposo Médico']).optional()
+    ),
+    search: z.preprocess(
+      emptyToUndefined,
+      z.string().trim().max(100, 'El criterio de búsqueda es demasiado largo').optional()
+    ),
+  })
+  .refine(
+    (q) => !q.startDate || !q.endDate || q.startDate <= q.endDate,
+    { message: 'La fecha inicial (startDate) no puede ser mayor que la fecha final (endDate).' }
+  );
+
+export const auditLogsQuerySchema = z
+  .object({
+    page: z.preprocess(
+      emptyToUndefined,
+      z.coerce
+        .number()
+        .int('El número de página debe ser un entero')
+        .min(1, 'La página mínima es 1')
+        .max(10000, 'Número de página fuera de rango')
+        .default(1)
+    ),
+    limit: z.preprocess(
+      emptyToUndefined,
+      z.coerce
+        .number()
+        .int('El límite por página debe ser un entero')
+        .min(1, 'El límite mínimo por página es 1')
+        .max(500, 'El límite máximo por página es 500')
+        .default(25)
+    ),
+    accion: z.preprocess(
+      emptyToUndefined,
+      z.string().trim().max(80, 'Filtro de acción demasiado largo').optional()
+    ),
+    entidad: z.preprocess(
+      emptyToUndefined,
+      z.string().trim().max(80, 'Filtro de entidad demasiado largo').optional()
+    ),
+    search: z.preprocess(
+      emptyToUndefined,
+      z.string().trim().max(100, 'Criterio de búsqueda demasiado largo').optional()
+    ),
+    startDate: optionalDateYmdQuery,
+    endDate: optionalDateYmdQuery,
+  })
+  .refine(
+    (q) => !q.startDate || !q.endDate || q.startDate <= q.endDate,
+    { message: 'La fecha inicial (startDate) no puede ser mayor que la fecha final (endDate).' }
+  );
+
+/**
+ * Middleware de validación con Zod para req.body
+ * Si el cuerpo no cumple con el esquema, devuelve 400 Bad Request estructurado
+ */
+export function validateBody<T>(schema: ZodSchema<T>) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    try {
+      req.body = schema.parse(req.body);
+      next();
+    } catch (err: any) {
+      if (err instanceof ZodError) {
+        const issues = err.issues.map((i) => ({
+          field: i.path.join('.'),
+          message: i.message,
+        }));
+        return res.status(400).json({
+          error: issues[0]?.message || 'Validación de datos fallida',
+          detalles: issues,
+          mensaje: issues[0]?.message || 'Entrada inválida',
+        });
+      }
+      return res.status(400).json({ error: 'Entrada con formato no permitido' });
+    }
+  };
+}
+
+/**
+ * Middleware de validación con Zod para req.query
+ * Previene valores negativos, límites excesivos e inyecciones de tipo en query params
+ */
+export function validateQuery<T>(schema: ZodSchema<T>) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    try {
+      res.locals.validatedQuery = schema.parse(req.query);
+      next();
+    } catch (err: any) {
+      if (err instanceof ZodError) {
+        const issues = err.issues.map((i) => ({
+          field: i.path.join('.'),
+          message: i.message,
+        }));
+        return res.status(400).json({
+          error: issues[0]?.message || 'Parámetros de consulta inválidos',
+          detalles: issues,
+          mensaje: issues[0]?.message || 'Parámetros de consulta inválidos',
+        });
+      }
+      return res.status(400).json({ error: 'Parámetros de consulta con formato no permitido' });
+    }
+  };
+}

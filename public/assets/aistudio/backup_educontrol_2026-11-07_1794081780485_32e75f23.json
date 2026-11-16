@@ -1,0 +1,5682 @@
+{
+  "metadata": {
+    "sistema": "EduAsist - Sistema de Control y Reporte de Asistencia Escolar",
+    "version": "1.0.0",
+    "fechaGeneracion": "2026-11-07T20:03:01.004Z",
+    "generadoPor": {
+      "id": 16,
+      "email": "admin@educontrol.edu",
+      "rol": "director"
+    },
+    "resumenConteos": {
+      "configuracion": 3,
+      "recesos": 3,
+      "anosEscolares": 10,
+      "secciones": 10,
+      "materias": 51,
+      "asignacionesDocentes": 51,
+      "representantes": 21,
+      "estudiantes": 111,
+      "asistencias": 76,
+      "horarios": 300,
+      "usuariosPersonal": 15
+    }
+  },
+  "data": {
+    "configuracionInstitucional": [
+      {
+        "idConfig": 2,
+        "clave": "ano_lectivo",
+        "valor": "2025 - 2026",
+        "descripcion": "Año lectivo escolar en curso",
+        "updatedAt": "2026-10-30T13:04:27.045Z"
+      },
+      {
+        "idConfig": 3,
+        "clave": "nombre_institucion",
+        "valor": "Liceo Nacional Bolivariano Gran Mariscal de Ayacucho",
+        "descripcion": "Nombre oficial del plantel educativo",
+        "updatedAt": "2026-10-30T13:04:27.045Z"
+      },
+      {
+        "idConfig": 4,
+        "clave": "codigo_plantel",
+        "valor": "S0424D0101",
+        "descripcion": "Código DEA oficial del Ministerio del Poder Popular para la Educación",
+        "updatedAt": "2026-11-07T19:47:04.043Z"
+      }
+    ],
+    "recesosInstitucionales": [
+      {
+        "idReceso": 1,
+        "nombre": "Receso de la Mañana",
+        "horaInicio": "09:15",
+        "horaFin": "09:45",
+        "activo": true,
+        "descripcion": "Descanso pedagógico matutino para desayuno y recreación"
+      },
+      {
+        "idReceso": 3,
+        "nombre": "Receso Institucional",
+        "horaInicio": "09:15",
+        "horaFin": "09:45",
+        "activo": true,
+        "descripcion": "Pausa para desayuno y recreación escolar"
+      },
+      {
+        "idReceso": 4,
+        "nombre": "Receso del Mediodía",
+        "horaInicio": "12:00",
+        "horaFin": "12:45",
+        "activo": true,
+        "descripcion": "Almuerzo escolar"
+      }
+    ],
+    "anosEscolares": [
+      {
+        "idAno": 1,
+        "nombreNivel": "1er Año - Educación Media General",
+        "activo": true
+      },
+      {
+        "idAno": 2,
+        "nombreNivel": "2do Año - Educación Media General",
+        "activo": true
+      },
+      {
+        "idAno": 3,
+        "nombreNivel": "3er Año - Educación Media General",
+        "activo": true
+      },
+      {
+        "idAno": 4,
+        "nombreNivel": "4to Año - Ciencias y Tecnología",
+        "activo": true
+      },
+      {
+        "idAno": 5,
+        "nombreNivel": "5to Año - Ciencias y Tecnología",
+        "activo": true
+      },
+      {
+        "idAno": 6,
+        "nombreNivel": "1er Año",
+        "activo": true
+      },
+      {
+        "idAno": 7,
+        "nombreNivel": "2do Año",
+        "activo": true
+      },
+      {
+        "idAno": 8,
+        "nombreNivel": "3er Año",
+        "activo": true
+      },
+      {
+        "idAno": 9,
+        "nombreNivel": "4to Año",
+        "activo": true
+      },
+      {
+        "idAno": 10,
+        "nombreNivel": "5to Año",
+        "activo": true
+      }
+    ],
+    "secciones": [
+      {
+        "idSeccion": 1,
+        "idAno": 1,
+        "nombreSeccion": "A"
+      },
+      {
+        "idSeccion": 2,
+        "idAno": 1,
+        "nombreSeccion": "B"
+      },
+      {
+        "idSeccion": 3,
+        "idAno": 2,
+        "nombreSeccion": "A"
+      },
+      {
+        "idSeccion": 4,
+        "idAno": 2,
+        "nombreSeccion": "B"
+      },
+      {
+        "idSeccion": 5,
+        "idAno": 3,
+        "nombreSeccion": "A"
+      },
+      {
+        "idSeccion": 6,
+        "idAno": 4,
+        "nombreSeccion": "A"
+      },
+      {
+        "idSeccion": 7,
+        "idAno": 5,
+        "nombreSeccion": "A"
+      },
+      {
+        "idSeccion": 8,
+        "idAno": 3,
+        "nombreSeccion": "B"
+      },
+      {
+        "idSeccion": 9,
+        "idAno": 4,
+        "nombreSeccion": "B"
+      },
+      {
+        "idSeccion": 10,
+        "idAno": 5,
+        "nombreSeccion": "B"
+      }
+    ],
+    "materias": [
+      {
+        "idMateria": 2,
+        "idAno": 1,
+        "nombreMateria": "Castellano I"
+      },
+      {
+        "idMateria": 1,
+        "idAno": 1,
+        "nombreMateria": "Matemáticas I"
+      },
+      {
+        "idMateria": 5,
+        "idAno": 1,
+        "nombreMateria": "Inglés I"
+      },
+      {
+        "idMateria": 3,
+        "idAno": 1,
+        "nombreMateria": "Ciencias Naturales I"
+      },
+      {
+        "idMateria": 23,
+        "idAno": 1,
+        "nombreMateria": "Educación Física I"
+      },
+      {
+        "idMateria": 27,
+        "idAno": 1,
+        "nombreMateria": "Arte y Patrimonio I"
+      },
+      {
+        "idMateria": 4,
+        "idAno": 1,
+        "nombreMateria": "Geografía, Historia y Ciudadanía (GHC) I"
+      },
+      {
+        "idMateria": 28,
+        "idAno": 1,
+        "nombreMateria": "Orientación y Convivencia I"
+      },
+      {
+        "idMateria": 25,
+        "idAno": 1,
+        "nombreMateria": "Grupos de Creación, Recreación y Producción (CRP) I"
+      },
+      {
+        "idMateria": 29,
+        "idAno": 2,
+        "nombreMateria": "Castellano II"
+      },
+      {
+        "idMateria": 6,
+        "idAno": 2,
+        "nombreMateria": "Matemáticas II"
+      },
+      {
+        "idMateria": 35,
+        "idAno": 2,
+        "nombreMateria": "Inglés II"
+      },
+      {
+        "idMateria": 31,
+        "idAno": 2,
+        "nombreMateria": "Ciencias Naturales II"
+      },
+      {
+        "idMateria": 32,
+        "idAno": 2,
+        "nombreMateria": "Educación Física II"
+      },
+      {
+        "idMateria": 36,
+        "idAno": 2,
+        "nombreMateria": "Arte y Patrimonio II"
+      },
+      {
+        "idMateria": 33,
+        "idAno": 2,
+        "nombreMateria": "Geografía, Historia y Ciudadanía (GHC) II"
+      },
+      {
+        "idMateria": 37,
+        "idAno": 2,
+        "nombreMateria": "Orientación y Convivencia II"
+      },
+      {
+        "idMateria": 34,
+        "idAno": 2,
+        "nombreMateria": "Grupos de Creación, Recreación y Producción (CRP) II"
+      },
+      {
+        "idMateria": 38,
+        "idAno": 3,
+        "nombreMateria": "Castellano III"
+      },
+      {
+        "idMateria": 13,
+        "idAno": 3,
+        "nombreMateria": "Matemáticas III"
+      },
+      {
+        "idMateria": 16,
+        "idAno": 3,
+        "nombreMateria": "Inglés III"
+      },
+      {
+        "idMateria": 46,
+        "idAno": 3,
+        "nombreMateria": "Biología I"
+      },
+      {
+        "idMateria": 15,
+        "idAno": 3,
+        "nombreMateria": "Física I"
+      },
+      {
+        "idMateria": 39,
+        "idAno": 3,
+        "nombreMateria": "Química I"
+      },
+      {
+        "idMateria": 41,
+        "idAno": 3,
+        "nombreMateria": "Educación Física III"
+      },
+      {
+        "idMateria": 42,
+        "idAno": 3,
+        "nombreMateria": "Geografía, Historia y Ciudadanía (GHC) III"
+      },
+      {
+        "idMateria": 45,
+        "idAno": 3,
+        "nombreMateria": "Orientación y Convivencia III"
+      },
+      {
+        "idMateria": 43,
+        "idAno": 3,
+        "nombreMateria": "Grupos de Creación, Recreación y Producción (CRP) III"
+      },
+      {
+        "idMateria": 47,
+        "idAno": 4,
+        "nombreMateria": "Castellano IV"
+      },
+      {
+        "idMateria": 17,
+        "idAno": 4,
+        "nombreMateria": "Matemáticas IV"
+      },
+      {
+        "idMateria": 54,
+        "idAno": 4,
+        "nombreMateria": "Inglés IV"
+      },
+      {
+        "idMateria": 57,
+        "idAno": 4,
+        "nombreMateria": "Biología II"
+      },
+      {
+        "idMateria": 55,
+        "idAno": 4,
+        "nombreMateria": "Física II"
+      },
+      {
+        "idMateria": 48,
+        "idAno": 4,
+        "nombreMateria": "Química II"
+      },
+      {
+        "idMateria": 50,
+        "idAno": 4,
+        "nombreMateria": "Educación Física IV"
+      },
+      {
+        "idMateria": 51,
+        "idAno": 4,
+        "nombreMateria": "Geografía, Historia y Ciudadanía (GHC) IV"
+      },
+      {
+        "idMateria": 53,
+        "idAno": 4,
+        "nombreMateria": "Formación para la Soberanía Nacional (FSN) I"
+      },
+      {
+        "idMateria": 56,
+        "idAno": 4,
+        "nombreMateria": "Orientación y Convivencia IV"
+      },
+      {
+        "idMateria": 52,
+        "idAno": 4,
+        "nombreMateria": "Grupos de Creación, Recreación y Producción (CRP) IV"
+      },
+      {
+        "idMateria": 20,
+        "idAno": 5,
+        "nombreMateria": "Castellano V"
+      },
+      {
+        "idMateria": 61,
+        "idAno": 5,
+        "nombreMateria": "Matemáticas V"
+      },
+      {
+        "idMateria": 66,
+        "idAno": 5,
+        "nombreMateria": "Inglés V"
+      },
+      {
+        "idMateria": 69,
+        "idAno": 5,
+        "nombreMateria": "Biología III"
+      },
+      {
+        "idMateria": 67,
+        "idAno": 5,
+        "nombreMateria": "Física III"
+      },
+      {
+        "idMateria": 60,
+        "idAno": 5,
+        "nombreMateria": "Química III"
+      },
+      {
+        "idMateria": 59,
+        "idAno": 5,
+        "nombreMateria": "Ciencias de la Tierra"
+      },
+      {
+        "idMateria": 62,
+        "idAno": 5,
+        "nombreMateria": "Educación Física V"
+      },
+      {
+        "idMateria": 63,
+        "idAno": 5,
+        "nombreMateria": "Geografía, Historia y Ciudadanía (GHC) V"
+      },
+      {
+        "idMateria": 65,
+        "idAno": 5,
+        "nombreMateria": "Formación para la Soberanía Nacional (FSN) II"
+      },
+      {
+        "idMateria": 68,
+        "idAno": 5,
+        "nombreMateria": "Orientación y Convivencia V"
+      },
+      {
+        "idMateria": 64,
+        "idAno": 5,
+        "nombreMateria": "Proyecto de Investigación / CRP V"
+      }
+    ],
+    "docenteMaterias": [
+      {
+        "idAsignacion": 1,
+        "idUsuario": 3,
+        "idMateria": 1
+      },
+      {
+        "idAsignacion": 2,
+        "idUsuario": 3,
+        "idMateria": 6
+      },
+      {
+        "idAsignacion": 3,
+        "idUsuario": 3,
+        "idMateria": 13
+      },
+      {
+        "idAsignacion": 4,
+        "idUsuario": 3,
+        "idMateria": 56
+      },
+      {
+        "idAsignacion": 5,
+        "idUsuario": 13,
+        "idMateria": 17
+      },
+      {
+        "idAsignacion": 6,
+        "idUsuario": 13,
+        "idMateria": 61
+      },
+      {
+        "idAsignacion": 7,
+        "idUsuario": 13,
+        "idMateria": 15
+      },
+      {
+        "idAsignacion": 8,
+        "idUsuario": 13,
+        "idMateria": 55
+      },
+      {
+        "idAsignacion": 9,
+        "idUsuario": 13,
+        "idMateria": 68
+      },
+      {
+        "idAsignacion": 10,
+        "idUsuario": 4,
+        "idMateria": 2
+      },
+      {
+        "idAsignacion": 11,
+        "idUsuario": 4,
+        "idMateria": 29
+      },
+      {
+        "idAsignacion": 12,
+        "idUsuario": 4,
+        "idMateria": 38
+      },
+      {
+        "idAsignacion": 13,
+        "idUsuario": 4,
+        "idMateria": 28
+      },
+      {
+        "idAsignacion": 14,
+        "idUsuario": 14,
+        "idMateria": 47
+      },
+      {
+        "idAsignacion": 15,
+        "idUsuario": 14,
+        "idMateria": 20
+      },
+      {
+        "idAsignacion": 16,
+        "idUsuario": 14,
+        "idMateria": 27
+      },
+      {
+        "idAsignacion": 17,
+        "idUsuario": 14,
+        "idMateria": 36
+      },
+      {
+        "idAsignacion": 18,
+        "idUsuario": 14,
+        "idMateria": 64
+      },
+      {
+        "idAsignacion": 19,
+        "idUsuario": 9,
+        "idMateria": 3
+      },
+      {
+        "idAsignacion": 20,
+        "idUsuario": 9,
+        "idMateria": 31
+      },
+      {
+        "idAsignacion": 21,
+        "idUsuario": 9,
+        "idMateria": 46
+      },
+      {
+        "idAsignacion": 22,
+        "idUsuario": 9,
+        "idMateria": 59
+      },
+      {
+        "idAsignacion": 23,
+        "idUsuario": 9,
+        "idMateria": 52
+      },
+      {
+        "idAsignacion": 24,
+        "idUsuario": 6,
+        "idMateria": 39
+      },
+      {
+        "idAsignacion": 25,
+        "idUsuario": 6,
+        "idMateria": 48
+      },
+      {
+        "idAsignacion": 26,
+        "idUsuario": 6,
+        "idMateria": 60
+      },
+      {
+        "idAsignacion": 27,
+        "idUsuario": 6,
+        "idMateria": 67
+      },
+      {
+        "idAsignacion": 28,
+        "idUsuario": 6,
+        "idMateria": 57
+      },
+      {
+        "idAsignacion": 29,
+        "idUsuario": 10,
+        "idMateria": 4
+      },
+      {
+        "idAsignacion": 30,
+        "idUsuario": 10,
+        "idMateria": 33
+      },
+      {
+        "idAsignacion": 31,
+        "idUsuario": 10,
+        "idMateria": 42
+      },
+      {
+        "idAsignacion": 32,
+        "idUsuario": 10,
+        "idMateria": 69
+      },
+      {
+        "idAsignacion": 33,
+        "idUsuario": 12,
+        "idMateria": 51
+      },
+      {
+        "idAsignacion": 34,
+        "idUsuario": 12,
+        "idMateria": 63
+      },
+      {
+        "idAsignacion": 35,
+        "idUsuario": 12,
+        "idMateria": 53
+      },
+      {
+        "idAsignacion": 36,
+        "idUsuario": 12,
+        "idMateria": 65
+      },
+      {
+        "idAsignacion": 37,
+        "idUsuario": 12,
+        "idMateria": 25
+      },
+      {
+        "idAsignacion": 38,
+        "idUsuario": 12,
+        "idMateria": 34
+      },
+      {
+        "idAsignacion": 39,
+        "idUsuario": 12,
+        "idMateria": 43
+      },
+      {
+        "idAsignacion": 40,
+        "idUsuario": 11,
+        "idMateria": 5
+      },
+      {
+        "idAsignacion": 41,
+        "idUsuario": 11,
+        "idMateria": 35
+      },
+      {
+        "idAsignacion": 42,
+        "idUsuario": 11,
+        "idMateria": 16
+      },
+      {
+        "idAsignacion": 43,
+        "idUsuario": 11,
+        "idMateria": 54
+      },
+      {
+        "idAsignacion": 44,
+        "idUsuario": 11,
+        "idMateria": 66
+      },
+      {
+        "idAsignacion": 45,
+        "idUsuario": 8,
+        "idMateria": 23
+      },
+      {
+        "idAsignacion": 46,
+        "idUsuario": 8,
+        "idMateria": 32
+      },
+      {
+        "idAsignacion": 47,
+        "idUsuario": 8,
+        "idMateria": 41
+      },
+      {
+        "idAsignacion": 48,
+        "idUsuario": 8,
+        "idMateria": 50
+      },
+      {
+        "idAsignacion": 49,
+        "idUsuario": 8,
+        "idMateria": 62
+      },
+      {
+        "idAsignacion": 50,
+        "idUsuario": 8,
+        "idMateria": 37
+      },
+      {
+        "idAsignacion": 51,
+        "idUsuario": 8,
+        "idMateria": 45
+      }
+    ],
+    "representantes": [
+      {
+        "idRepresentante": 1,
+        "cedula": "V-14589230",
+        "nombres": "Carlos Alberto",
+        "apellidos": "Mendoza Ramos",
+        "telefono": "+58 414 1234567",
+        "email": "carlos.mendoza@email.com",
+        "passwordHash": "$2b$10$w63cBS.k3rc9Bs00qC1mPuN4C4PhIENNJNlJ/3UHw1T.yseyAUzTm"
+      },
+      {
+        "idRepresentante": 5,
+        "cedula": "11759434",
+        "nombres": "Maria",
+        "apellidos": "Mota",
+        "telefono": "04243433282",
+        "email": "asd@gmail.com",
+        "passwordHash": "$2b$10$zJMrodG42P2khK/5lN8OHOKNcouX65uAw1W7.u9Un0JZ90NGZ6hA2"
+      },
+      {
+        "idRepresentante": 2,
+        "cedula": "V-16892451",
+        "nombres": "María Elena",
+        "apellidos": "Gómez de Silva",
+        "telefono": "+58 412 9876543",
+        "email": "maria.gomez@email.com",
+        "passwordHash": "$2b$10$VkjVw/.22SqZBaWARkzX0OnWhzx42IGqNPhm5WWKz0alBDkenaECi"
+      },
+      {
+        "idRepresentante": 3,
+        "cedula": "V-18340192",
+        "nombres": "José Gregorio",
+        "apellidos": "Torres Benítez",
+        "telefono": "+58 424 5551234",
+        "email": "jose.torres@email.com",
+        "passwordHash": "$2b$10$rMs8fBACH9/7aiJ38ERC/.ieam3h5i0MDVjt/Wy75orlQZ5BGFl7a"
+      },
+      {
+        "idRepresentante": 4,
+        "cedula": "V-19762110",
+        "nombres": "Ana Patricia",
+        "apellidos": "Rivas Peña",
+        "telefono": "+58 416 3338901",
+        "email": "ana.rivas@email.com",
+        "passwordHash": "$2b$10$tfQz5RaUHjS5B1ZS0lgLK.Q/wZS1rNWLXHr3LvJ4ECNTFoCiFIsby"
+      },
+      {
+        "idRepresentante": 6,
+        "cedula": "V-12450890",
+        "nombres": "Luis Enrique",
+        "apellidos": "Castillo Morales",
+        "telefono": "+58 414 7891234",
+        "email": "luis.castillo@ejemplo.com",
+        "passwordHash": "$2b$10$lAiicADi5AXJfhixvfLgoeu7BLWc/MM5DHEYMf/rx.W6ODScVUDrS"
+      },
+      {
+        "idRepresentante": 7,
+        "cedula": "V-13890214",
+        "nombres": "Yolanda Beatriz",
+        "apellidos": "Navarro Rojas",
+        "telefono": "+58 424 6543210",
+        "email": "yolanda.navarro@ejemplo.com",
+        "passwordHash": "$2b$10$tvQ7rmUKGmexlRDi3kRCLeI2Wpn/8sjQX3WRH9Z9IvSAgbCvR8Ugu"
+      },
+      {
+        "idRepresentante": 8,
+        "cedula": "V-15234789",
+        "nombres": "Héctor Manuel",
+        "apellidos": "Padrón Alvarado",
+        "telefono": "+58 412 3214567",
+        "email": "hector.padron@ejemplo.com",
+        "passwordHash": "$2b$10$pctbVoAJcYz54xEBKZP/O.5ZkVvELAu4AbpnoclQ7DGmz58nnbSMG"
+      },
+      {
+        "idRepresentante": 9,
+        "cedula": "V-16781230",
+        "nombres": "Carmen Elena",
+        "apellidos": "Hernández Quintero",
+        "telefono": "+58 416 8901234",
+        "email": "carmen.hernandez@ejemplo.com",
+        "passwordHash": "$2b$10$Ac8TaA/gZZGfdMOibfs4pepTBLASueBWmXO0whYM9O9asbu1r7V2K"
+      },
+      {
+        "idRepresentante": 10,
+        "cedula": "V-17456123",
+        "nombres": "Fernando José",
+        "apellidos": "Vargas Delgado",
+        "telefono": "+58 414 4321098",
+        "email": "fernando.vargas@ejemplo.com",
+        "passwordHash": "$2b$10$XpaXWZ3dB5Y0TImPOpvM5OAxv1/cacuu4FKMkZbTZlDSWCju7Dhn6"
+      },
+      {
+        "idRepresentante": 11,
+        "cedula": "V-18902341",
+        "nombres": "Rosa Angélica",
+        "apellidos": "Contreras Blanco",
+        "telefono": "+58 424 8765432",
+        "email": "rosa.contreras@ejemplo.com",
+        "passwordHash": "$2b$10$UKP20cQv9O7SDXp4zfIueexiBqDy8za6JBczmQ.QgwBglXGWNsrbO"
+      },
+      {
+        "idRepresentante": 12,
+        "cedula": "V-19345678",
+        "nombres": "Gabriel Alejandro",
+        "apellidos": "Chávez Romero",
+        "telefono": "+58 412 5678901",
+        "email": "gabriel.chavez@ejemplo.com",
+        "passwordHash": "$2b$10$JSgsNBbXBU1VDgSAzZQrOuvCdUn2ZjFRZFq0hrdrohzV07dc5hLuK"
+      },
+      {
+        "idRepresentante": 13,
+        "cedula": "V-20123456",
+        "nombres": "Daniela Paola",
+        "apellidos": "Gutiérrez Medina",
+        "telefono": "+58 416 2345678",
+        "email": "daniela.gutierrez@ejemplo.com",
+        "passwordHash": "$2b$10$YZfcEHrmMgWOvmWRjkvddeRb4x6xOqeXGzMaop/b2tNpMYKlZeZma"
+      },
+      {
+        "idRepresentante": 14,
+        "cedula": "V-14789632",
+        "nombres": "Andrés Eloy",
+        "apellidos": "Montero Paredes",
+        "telefono": "+58 414 9012345",
+        "email": "andres.montero@ejemplo.com",
+        "passwordHash": "$2b$10$eX4V8J/bhKEvTCjOhTcKDumpfLzRcUY.qZI1LEyDS2wIP0PdsA08e"
+      },
+      {
+        "idRepresentante": 15,
+        "cedula": "V-15632147",
+        "nombres": "Silvia Carolina",
+        "apellidos": "Bermúdez Ochoa",
+        "telefono": "+58 424 3456789",
+        "email": "silvia.bermudez@ejemplo.com",
+        "passwordHash": "$2b$10$qqmmssjkCwlybABUGNLVr.lpkBtkiWT1ZfMHka9zHZ5h6GGFfdtvi"
+      },
+      {
+        "idRepresentante": 16,
+        "cedula": "V-16987452",
+        "nombres": "Rafael Eduardo",
+        "apellidos": "Sánchez Villegas",
+        "telefono": "+58 412 6789012",
+        "email": "rafael.sanchez@ejemplo.com",
+        "passwordHash": "$2b$10$h7fiVEkztwwsrJNG1bogFOKnxhwY.fQl7VSScQN0FsvKF8h2YcoJ."
+      },
+      {
+        "idRepresentante": 17,
+        "cedula": "V-17852369",
+        "nombres": "Mónica Isabel",
+        "apellidos": "Fuentes Valero",
+        "telefono": "+58 416 4567890",
+        "email": "monica.fuentes@ejemplo.com",
+        "passwordHash": "$2b$10$qL.tStBWN85T2P2em74X0.zUGujrcLLxv9exGld5XW8YPqn2eONQm"
+      },
+      {
+        "idRepresentante": 18,
+        "cedula": "V-18741258",
+        "nombres": "Gustavo Adolfo",
+        "apellidos": "Pacheco Briceño",
+        "telefono": "+58 414 1237890",
+        "email": "gustavo.pacheco@ejemplo.com",
+        "passwordHash": "$2b$10$gcSW7dEgj8rnvZtCtpL1c.3gvGlV7Mo3yrdQ0zQ.PaoCSJ1jdZfA."
+      },
+      {
+        "idRepresentante": 19,
+        "cedula": "V-19852147",
+        "nombres": "Elena Margarita",
+        "apellidos": "Salas Zambrano",
+        "telefono": "+58 424 7890123",
+        "email": "elena.salas@ejemplo.com",
+        "passwordHash": "$2b$10$KnxdbkM342FtntJZpxb3e.92nPXBdJ6kcn1z4v2RFRFLWDtzgETEy"
+      },
+      {
+        "idRepresentante": 20,
+        "cedula": "V-20963258",
+        "nombres": "Jorge Luis",
+        "apellidos": "Carrillo Domínguez",
+        "telefono": "+58 412 8901234",
+        "email": "jorge.carrillo@ejemplo.com",
+        "passwordHash": "$2b$10$Ks3d4r.JQ/ajFvp6esj0Ae1rRxt3TlkP49.I9eUo5Rxyr6zlhs9Cy"
+      },
+      {
+        "idRepresentante": 21,
+        "cedula": "V11745989",
+        "nombres": "Carlos",
+        "apellidos": "Mendoza",
+        "telefono": "04248794344",
+        "email": "carlos@gmail.com",
+        "passwordHash": "$2b$10$FtPmuPbcds4fnhTfMpsC6eY4IE22OsM/b4PFqAKH/3DUlZRwovIKu"
+      }
+    ],
+    "estudiantes": [
+      {
+        "idEstudiante": 1,
+        "cedula": "V-31200115",
+        "nombres": "Valentina Sofía",
+        "apellidos": "Mendoza Silva",
+        "idAnoActual": 1,
+        "idSeccion": 1,
+        "idRepresentante": 1
+      },
+      {
+        "idEstudiante": 2,
+        "cedula": "V-31845902",
+        "nombres": "Alejandro José",
+        "apellidos": "Gómez Silva",
+        "idAnoActual": 1,
+        "idSeccion": 1,
+        "idRepresentante": 2
+      },
+      {
+        "idEstudiante": 3,
+        "cedula": "V-32104550",
+        "nombres": "Santiago Andrés",
+        "apellidos": "Torres Benítez",
+        "idAnoActual": 1,
+        "idSeccion": 1,
+        "idRepresentante": 3
+      },
+      {
+        "idEstudiante": 4,
+        "cedula": "V-32490120",
+        "nombres": "Camila Nicole",
+        "apellidos": "Rivas Peña",
+        "idAnoActual": 1,
+        "idSeccion": 1,
+        "idRepresentante": 4
+      },
+      {
+        "idEstudiante": 7,
+        "cedula": "35355355a",
+        "nombres": "Sofía123",
+        "apellidos": "Pérez",
+        "idAnoActual": 1,
+        "idSeccion": 1,
+        "idRepresentante": 5
+      },
+      {
+        "idEstudiante": 5,
+        "cedula": "V-32780400",
+        "nombres": "Diego Armando",
+        "apellidos": "Mendoza Silva",
+        "idAnoActual": 2,
+        "idSeccion": 3,
+        "idRepresentante": 1
+      },
+      {
+        "idEstudiante": 6,
+        "cedula": "V-33015820",
+        "nombres": "Mariana Isabel",
+        "apellidos": "Gómez Silva",
+        "idAnoActual": 2,
+        "idSeccion": 3,
+        "idRepresentante": 2
+      },
+      {
+        "idEstudiante": 8,
+        "cedula": "V-32511204",
+        "nombres": "Isabella Sofia",
+        "apellidos": "Castillo Navarro",
+        "idAnoActual": 1,
+        "idSeccion": 1,
+        "idRepresentante": 6
+      },
+      {
+        "idEstudiante": 9,
+        "cedula": "V-32604812",
+        "nombres": "Sebastián David",
+        "apellidos": "Padrón Hernández",
+        "idAnoActual": 1,
+        "idSeccion": 1,
+        "idRepresentante": 8
+      },
+      {
+        "idEstudiante": 10,
+        "cedula": "V-32715923",
+        "nombres": "Valeria Valentina",
+        "apellidos": "Vargas Contreras",
+        "idAnoActual": 1,
+        "idSeccion": 1,
+        "idRepresentante": 10
+      },
+      {
+        "idEstudiante": 11,
+        "cedula": "V-32801456",
+        "nombres": "Mathias Alejandro",
+        "apellidos": "Chávez Gutiérrez",
+        "idAnoActual": 1,
+        "idSeccion": 1,
+        "idRepresentante": 12
+      },
+      {
+        "idEstudiante": 12,
+        "cedula": "V-32912389",
+        "nombres": "Samuel José",
+        "apellidos": "Montero Bermúdez",
+        "idAnoActual": 1,
+        "idSeccion": 1,
+        "idRepresentante": 14
+      },
+      {
+        "idEstudiante": 13,
+        "cedula": "V-33045612",
+        "nombres": "Lucía Antonella",
+        "apellidos": "Sánchez Fuentes",
+        "idAnoActual": 1,
+        "idSeccion": 1,
+        "idRepresentante": 16
+      },
+      {
+        "idEstudiante": 14,
+        "cedula": "V-32115980",
+        "nombres": "Leonardo Gabriel",
+        "apellidos": "Pacheco Salas",
+        "idAnoActual": 1,
+        "idSeccion": 2,
+        "idRepresentante": 18
+      },
+      {
+        "idEstudiante": 15,
+        "cedula": "V-32240189",
+        "nombres": "Victoria Camila",
+        "apellidos": "Carrillo Gómez",
+        "idAnoActual": 1,
+        "idSeccion": 2,
+        "idRepresentante": 20
+      },
+      {
+        "idEstudiante": 16,
+        "cedula": "V-32389410",
+        "nombres": "Daniel Eduardo",
+        "apellidos": "Mendoza Rivas",
+        "idAnoActual": 1,
+        "idSeccion": 2,
+        "idRepresentante": 1
+      },
+      {
+        "idEstudiante": 17,
+        "cedula": "V-32456712",
+        "nombres": "Andrea Carolina",
+        "apellidos": "Torres Silva",
+        "idAnoActual": 1,
+        "idSeccion": 2,
+        "idRepresentante": 3
+      },
+      {
+        "idEstudiante": 18,
+        "cedula": "V-32598124",
+        "nombres": "Andrés Ignacio",
+        "apellidos": "Castillo Bermúdez",
+        "idAnoActual": 1,
+        "idSeccion": 2,
+        "idRepresentante": 6
+      },
+      {
+        "idEstudiante": 19,
+        "cedula": "V-32689014",
+        "nombres": "Paula Alejandra",
+        "apellidos": "Navarro Padrón",
+        "idAnoActual": 1,
+        "idSeccion": 2,
+        "idRepresentante": 7
+      },
+      {
+        "idEstudiante": 20,
+        "cedula": "V-32778129",
+        "nombres": "Gabriel Enrique",
+        "apellidos": "Hernández Vargas",
+        "idAnoActual": 1,
+        "idSeccion": 2,
+        "idRepresentante": 9
+      },
+      {
+        "idEstudiante": 21,
+        "cedula": "V-32890145",
+        "nombres": "Mariana Sofía",
+        "apellidos": "Contreras Chávez",
+        "idAnoActual": 1,
+        "idSeccion": 2,
+        "idRepresentante": 11
+      },
+      {
+        "idEstudiante": 22,
+        "cedula": "V-32956781",
+        "nombres": "Lucas Mateo",
+        "apellidos": "Gutiérrez Montero",
+        "idAnoActual": 1,
+        "idSeccion": 2,
+        "idRepresentante": 13
+      },
+      {
+        "idEstudiante": 23,
+        "cedula": "V-33098124",
+        "nombres": "Daniela Valentina",
+        "apellidos": "Sánchez Pacheco",
+        "idAnoActual": 1,
+        "idSeccion": 2,
+        "idRepresentante": 16
+      },
+      {
+        "idEstudiante": 24,
+        "cedula": "V-33145678",
+        "nombres": "Nicolás Alejandro",
+        "apellidos": "Fuentes Carrillo",
+        "idAnoActual": 1,
+        "idSeccion": 2,
+        "idRepresentante": 17
+      },
+      {
+        "idEstudiante": 25,
+        "cedula": "V-31456789",
+        "nombres": "Santiago Manuel",
+        "apellidos": "Padrón Blanco",
+        "idAnoActual": 2,
+        "idSeccion": 3,
+        "idRepresentante": 8
+      },
+      {
+        "idEstudiante": 26,
+        "cedula": "V-31567890",
+        "nombres": "Camila Victoria",
+        "apellidos": "Vargas Delgado",
+        "idAnoActual": 2,
+        "idSeccion": 3,
+        "idRepresentante": 10
+      },
+      {
+        "idEstudiante": 27,
+        "cedula": "V-31678901",
+        "nombres": "Mateo Alexander",
+        "apellidos": "Chávez Romero",
+        "idAnoActual": 2,
+        "idSeccion": 3,
+        "idRepresentante": 12
+      },
+      {
+        "idEstudiante": 28,
+        "cedula": "V-31789012",
+        "nombres": "Valeria Nicole",
+        "apellidos": "Gutiérrez Medina",
+        "idAnoActual": 2,
+        "idSeccion": 3,
+        "idRepresentante": 13
+      },
+      {
+        "idEstudiante": 29,
+        "cedula": "V-31890123",
+        "nombres": "Emilio José",
+        "apellidos": "Montero Paredes",
+        "idAnoActual": 2,
+        "idSeccion": 3,
+        "idRepresentante": 14
+      },
+      {
+        "idEstudiante": 30,
+        "cedula": "V-31901234",
+        "nombres": "Natalia Carolina",
+        "apellidos": "Bermúdez Ochoa",
+        "idAnoActual": 2,
+        "idSeccion": 3,
+        "idRepresentante": 15
+      },
+      {
+        "idEstudiante": 31,
+        "cedula": "V-32012345",
+        "nombres": "Adrián Felipe",
+        "apellidos": "Sánchez Villegas",
+        "idAnoActual": 2,
+        "idSeccion": 3,
+        "idRepresentante": 16
+      },
+      {
+        "idEstudiante": 32,
+        "cedula": "V-32123456",
+        "nombres": "Fabiana Sofía",
+        "apellidos": "Fuentes Valero",
+        "idAnoActual": 2,
+        "idSeccion": 3,
+        "idRepresentante": 17
+      },
+      {
+        "idEstudiante": 33,
+        "cedula": "V-32234567",
+        "nombres": "Gonzalo Antonio",
+        "apellidos": "Pacheco Briceño",
+        "idAnoActual": 2,
+        "idSeccion": 3,
+        "idRepresentante": 18
+      },
+      {
+        "idEstudiante": 34,
+        "cedula": "V-31321456",
+        "nombres": "Joaquín Ignacio",
+        "apellidos": "Salas Zambrano",
+        "idAnoActual": 2,
+        "idSeccion": 4,
+        "idRepresentante": 19
+      },
+      {
+        "idEstudiante": 35,
+        "cedula": "V-31432567",
+        "nombres": "Rebeca Daniela",
+        "apellidos": "Carrillo Domínguez",
+        "idAnoActual": 2,
+        "idSeccion": 4,
+        "idRepresentante": 20
+      },
+      {
+        "idEstudiante": 36,
+        "cedula": "V-31543678",
+        "nombres": "Manuel Enrique",
+        "apellidos": "Mendoza Ramos",
+        "idAnoActual": 2,
+        "idSeccion": 4,
+        "idRepresentante": 1
+      },
+      {
+        "idEstudiante": 37,
+        "cedula": "V-31654789",
+        "nombres": "Bárbara Patricia",
+        "apellidos": "Gómez Silva",
+        "idAnoActual": 2,
+        "idSeccion": 4,
+        "idRepresentante": 2
+      },
+      {
+        "idEstudiante": 38,
+        "cedula": "V-31765890",
+        "nombres": "Fernando David",
+        "apellidos": "Torres Benítez",
+        "idAnoActual": 2,
+        "idSeccion": 4,
+        "idRepresentante": 3
+      },
+      {
+        "idEstudiante": 39,
+        "cedula": "V-31876901",
+        "nombres": "Silvana Paola",
+        "apellidos": "Rivas Peña",
+        "idAnoActual": 2,
+        "idSeccion": 4,
+        "idRepresentante": 4
+      },
+      {
+        "idEstudiante": 40,
+        "cedula": "V-31987012",
+        "nombres": "Esteban Alejandro",
+        "apellidos": "Castillo Morales",
+        "idAnoActual": 2,
+        "idSeccion": 4,
+        "idRepresentante": 6
+      },
+      {
+        "idEstudiante": 41,
+        "cedula": "V-32098123",
+        "nombres": "Renata Isabel",
+        "apellidos": "Navarro Rojas",
+        "idAnoActual": 2,
+        "idSeccion": 4,
+        "idRepresentante": 7
+      },
+      {
+        "idEstudiante": 42,
+        "cedula": "V-32109234",
+        "nombres": "Guillermo José",
+        "apellidos": "Padrón Alvarado",
+        "idAnoActual": 2,
+        "idSeccion": 4,
+        "idRepresentante": 8
+      },
+      {
+        "idEstudiante": 43,
+        "cedula": "V-32210345",
+        "nombres": "Antonella Beatriz",
+        "apellidos": "Hernández Quintero",
+        "idAnoActual": 2,
+        "idSeccion": 4,
+        "idRepresentante": 9
+      },
+      {
+        "idEstudiante": 44,
+        "cedula": "V-32321456",
+        "nombres": "Mauricio Andrés",
+        "apellidos": "Vargas Contreras",
+        "idAnoActual": 2,
+        "idSeccion": 4,
+        "idRepresentante": 10
+      },
+      {
+        "idEstudiante": 45,
+        "cedula": "V-30111222",
+        "nombres": "Alejandra Lucía",
+        "apellidos": "Chávez Romero",
+        "idAnoActual": 3,
+        "idSeccion": 5,
+        "idRepresentante": 12
+      },
+      {
+        "idEstudiante": 46,
+        "cedula": "V-30222333",
+        "nombres": "Rodrigo Javier",
+        "apellidos": "Gutiérrez Medina",
+        "idAnoActual": 3,
+        "idSeccion": 5,
+        "idRepresentante": 13
+      },
+      {
+        "idEstudiante": 47,
+        "cedula": "V-30333444",
+        "nombres": "Claudia Andrea",
+        "apellidos": "Montero Paredes",
+        "idAnoActual": 3,
+        "idSeccion": 5,
+        "idRepresentante": 14
+      },
+      {
+        "idEstudiante": 48,
+        "cedula": "V-30444555",
+        "nombres": "Fabián Eduardo",
+        "apellidos": "Bermúdez Ochoa",
+        "idAnoActual": 3,
+        "idSeccion": 5,
+        "idRepresentante": 15
+      },
+      {
+        "idEstudiante": 49,
+        "cedula": "V-30555666",
+        "nombres": "Micaela Elena",
+        "apellidos": "Sánchez Villegas",
+        "idAnoActual": 3,
+        "idSeccion": 5,
+        "idRepresentante": 16
+      },
+      {
+        "idEstudiante": 50,
+        "cedula": "V-30666777",
+        "nombres": "Víctor Daniel",
+        "apellidos": "Fuentes Valero",
+        "idAnoActual": 3,
+        "idSeccion": 5,
+        "idRepresentante": 17
+      },
+      {
+        "idEstudiante": 51,
+        "cedula": "V-30777888",
+        "nombres": "Constanza Sofia",
+        "apellidos": "Pacheco Briceño",
+        "idAnoActual": 3,
+        "idSeccion": 5,
+        "idRepresentante": 18
+      },
+      {
+        "idEstudiante": 52,
+        "cedula": "V-30888999",
+        "nombres": "Tomás Ignacio",
+        "apellidos": "Salas Zambrano",
+        "idAnoActual": 3,
+        "idSeccion": 5,
+        "idRepresentante": 19
+      },
+      {
+        "idEstudiante": 53,
+        "cedula": "V-30999000",
+        "nombres": "Luciana María",
+        "apellidos": "Carrillo Domínguez",
+        "idAnoActual": 3,
+        "idSeccion": 5,
+        "idRepresentante": 20
+      },
+      {
+        "idEstudiante": 54,
+        "cedula": "V-31011122",
+        "nombres": "Benjamín Andrés",
+        "apellidos": "Mendoza Ramos",
+        "idAnoActual": 3,
+        "idSeccion": 5,
+        "idRepresentante": 1
+      },
+      {
+        "idEstudiante": 55,
+        "cedula": "V-31122233",
+        "nombres": "Adriana Paola",
+        "apellidos": "Gómez Silva",
+        "idAnoActual": 3,
+        "idSeccion": 5,
+        "idRepresentante": 2
+      },
+      {
+        "idEstudiante": 56,
+        "cedula": "V-30155667",
+        "nombres": "Maximiliano José",
+        "apellidos": "Torres Benítez",
+        "idAnoActual": 3,
+        "idSeccion": 8,
+        "idRepresentante": 3
+      },
+      {
+        "idEstudiante": 57,
+        "cedula": "V-30266778",
+        "nombres": "Juliana Valentina",
+        "apellidos": "Rivas Peña",
+        "idAnoActual": 3,
+        "idSeccion": 8,
+        "idRepresentante": 4
+      },
+      {
+        "idEstudiante": 58,
+        "cedula": "V-30377889",
+        "nombres": "Bruno Alejandro",
+        "apellidos": "Castillo Morales",
+        "idAnoActual": 3,
+        "idSeccion": 8,
+        "idRepresentante": 6
+      },
+      {
+        "idEstudiante": 59,
+        "cedula": "V-30488990",
+        "nombres": "Florencia Nicole",
+        "apellidos": "Navarro Rojas",
+        "idAnoActual": 3,
+        "idSeccion": 8,
+        "idRepresentante": 7
+      },
+      {
+        "idEstudiante": 60,
+        "cedula": "V-30599001",
+        "nombres": "Ignacio Gabriel",
+        "apellidos": "Padrón Alvarado",
+        "idAnoActual": 3,
+        "idSeccion": 8,
+        "idRepresentante": 8
+      },
+      {
+        "idEstudiante": 61,
+        "cedula": "V-30611223",
+        "nombres": "Eugenia Isabel",
+        "apellidos": "Hernández Quintero",
+        "idAnoActual": 3,
+        "idSeccion": 8,
+        "idRepresentante": 9
+      },
+      {
+        "idEstudiante": 62,
+        "cedula": "V-30722334",
+        "nombres": "Vicente Enrique",
+        "apellidos": "Vargas Delgado",
+        "idAnoActual": 3,
+        "idSeccion": 8,
+        "idRepresentante": 10
+      },
+      {
+        "idEstudiante": 63,
+        "cedula": "V-30833445",
+        "nombres": "Clara Carolina",
+        "apellidos": "Contreras Blanco",
+        "idAnoActual": 3,
+        "idSeccion": 8,
+        "idRepresentante": 11
+      },
+      {
+        "idEstudiante": 64,
+        "cedula": "V-30944556",
+        "nombres": "Simón Alberto",
+        "apellidos": "Chávez Romero",
+        "idAnoActual": 3,
+        "idSeccion": 8,
+        "idRepresentante": 12
+      },
+      {
+        "idEstudiante": 65,
+        "cedula": "V-31055667",
+        "nombres": "Amanda Sofía",
+        "apellidos": "Gutiérrez Medina",
+        "idAnoActual": 3,
+        "idSeccion": 8,
+        "idRepresentante": 13
+      },
+      {
+        "idEstudiante": 66,
+        "cedula": "V-31166778",
+        "nombres": "Álvaro David",
+        "apellidos": "Montero Paredes",
+        "idAnoActual": 3,
+        "idSeccion": 8,
+        "idRepresentante": 14
+      },
+      {
+        "idEstudiante": 67,
+        "cedula": "V-29112233",
+        "nombres": "Facundo Javier",
+        "apellidos": "Bermúdez Ochoa",
+        "idAnoActual": 4,
+        "idSeccion": 6,
+        "idRepresentante": 15
+      },
+      {
+        "idEstudiante": 68,
+        "cedula": "V-29223344",
+        "nombres": "Martina Daniela",
+        "apellidos": "Sánchez Villegas",
+        "idAnoActual": 4,
+        "idSeccion": 6,
+        "idRepresentante": 16
+      },
+      {
+        "idEstudiante": 69,
+        "cedula": "V-29334455",
+        "nombres": "Lorenzo Antonio",
+        "apellidos": "Fuentes Valero",
+        "idAnoActual": 4,
+        "idSeccion": 6,
+        "idRepresentante": 17
+      },
+      {
+        "idEstudiante": 70,
+        "cedula": "V-29445566",
+        "nombres": "Josefina Beatriz",
+        "apellidos": "Pacheco Briceño",
+        "idAnoActual": 4,
+        "idSeccion": 6,
+        "idRepresentante": 18
+      },
+      {
+        "idEstudiante": 71,
+        "cedula": "V-29556677",
+        "nombres": "Gaspar Manuel",
+        "apellidos": "Salas Zambrano",
+        "idAnoActual": 4,
+        "idSeccion": 6,
+        "idRepresentante": 19
+      },
+      {
+        "idEstudiante": 72,
+        "cedula": "V-29667788",
+        "nombres": "Victoria Elena",
+        "apellidos": "Carrillo Domínguez",
+        "idAnoActual": 4,
+        "idSeccion": 6,
+        "idRepresentante": 20
+      },
+      {
+        "idEstudiante": 73,
+        "cedula": "V-29778899",
+        "nombres": "Renzo Alejandro",
+        "apellidos": "Mendoza Ramos",
+        "idAnoActual": 4,
+        "idSeccion": 6,
+        "idRepresentante": 1
+      },
+      {
+        "idEstudiante": 74,
+        "cedula": "V-29889900",
+        "nombres": "Paloma Isabel",
+        "apellidos": "Gómez Silva",
+        "idAnoActual": 4,
+        "idSeccion": 6,
+        "idRepresentante": 2
+      },
+      {
+        "idEstudiante": 75,
+        "cedula": "V-29990011",
+        "nombres": "Santino José",
+        "apellidos": "Torres Benítez",
+        "idAnoActual": 4,
+        "idSeccion": 6,
+        "idRepresentante": 3
+      },
+      {
+        "idEstudiante": 76,
+        "cedula": "V-30001122",
+        "nombres": "Rocío Valentina",
+        "apellidos": "Rivas Peña",
+        "idAnoActual": 4,
+        "idSeccion": 6,
+        "idRepresentante": 4
+      },
+      {
+        "idEstudiante": 77,
+        "cedula": "V-30112233",
+        "nombres": "Camilo Andrés",
+        "apellidos": "Castillo Morales",
+        "idAnoActual": 4,
+        "idSeccion": 6,
+        "idRepresentante": 6
+      },
+      {
+        "idEstudiante": 78,
+        "cedula": "V-29155667",
+        "nombres": "Milagros Sofía",
+        "apellidos": "Navarro Rojas",
+        "idAnoActual": 4,
+        "idSeccion": 9,
+        "idRepresentante": 7
+      },
+      {
+        "idEstudiante": 79,
+        "cedula": "V-29266778",
+        "nombres": "Augusto Gabriel",
+        "apellidos": "Padrón Alvarado",
+        "idAnoActual": 4,
+        "idSeccion": 9,
+        "idRepresentante": 8
+      },
+      {
+        "idEstudiante": 80,
+        "cedula": "V-29377889",
+        "nombres": "Delfina Carolina",
+        "apellidos": "Hernández Quintero",
+        "idAnoActual": 4,
+        "idSeccion": 9,
+        "idRepresentante": 9
+      },
+      {
+        "idEstudiante": 81,
+        "cedula": "V-29488990",
+        "nombres": "Bautista Enrique",
+        "apellidos": "Vargas Delgado",
+        "idAnoActual": 4,
+        "idSeccion": 9,
+        "idRepresentante": 10
+      },
+      {
+        "idEstudiante": 82,
+        "cedula": "V-29599001",
+        "nombres": "Zoe Valentina",
+        "apellidos": "Contreras Blanco",
+        "idAnoActual": 4,
+        "idSeccion": 9,
+        "idRepresentante": 11
+      },
+      {
+        "idEstudiante": 83,
+        "cedula": "V-29611223",
+        "nombres": "Franco Alberto",
+        "apellidos": "Chávez Romero",
+        "idAnoActual": 4,
+        "idSeccion": 9,
+        "idRepresentante": 12
+      },
+      {
+        "idEstudiante": 84,
+        "cedula": "V-29722334",
+        "nombres": "Alma Nicole",
+        "apellidos": "Gutiérrez Medina",
+        "idAnoActual": 4,
+        "idSeccion": 9,
+        "idRepresentante": 13
+      },
+      {
+        "idEstudiante": 85,
+        "cedula": "V-29833445",
+        "nombres": "Dante David",
+        "apellidos": "Montero Paredes",
+        "idAnoActual": 4,
+        "idSeccion": 9,
+        "idRepresentante": 14
+      },
+      {
+        "idEstudiante": 86,
+        "cedula": "V-29944556",
+        "nombres": "Pía Alejandra",
+        "apellidos": "Bermúdez Ochoa",
+        "idAnoActual": 4,
+        "idSeccion": 9,
+        "idRepresentante": 15
+      },
+      {
+        "idEstudiante": 87,
+        "cedula": "V-30055667",
+        "nombres": "Thiago Eduardo",
+        "apellidos": "Sánchez Villegas",
+        "idAnoActual": 4,
+        "idSeccion": 9,
+        "idRepresentante": 16
+      },
+      {
+        "idEstudiante": 88,
+        "cedula": "V-30166778",
+        "nombres": "Mia Antonella",
+        "apellidos": "Fuentes Valero",
+        "idAnoActual": 4,
+        "idSeccion": 9,
+        "idRepresentante": 17
+      },
+      {
+        "idEstudiante": 89,
+        "cedula": "V-28111222",
+        "nombres": "Esteban Rafael",
+        "apellidos": "Pacheco Briceño",
+        "idAnoActual": 5,
+        "idSeccion": 7,
+        "idRepresentante": 18
+      },
+      {
+        "idEstudiante": 90,
+        "cedula": "V-28222333",
+        "nombres": "Gabriela Elena",
+        "apellidos": "Salas Zambrano",
+        "idAnoActual": 5,
+        "idSeccion": 7,
+        "idRepresentante": 19
+      },
+      {
+        "idEstudiante": 91,
+        "cedula": "V-28333444",
+        "nombres": "Guillermo Luis",
+        "apellidos": "Carrillo Domínguez",
+        "idAnoActual": 5,
+        "idSeccion": 7,
+        "idRepresentante": 20
+      },
+      {
+        "idEstudiante": 92,
+        "cedula": "V-28444555",
+        "nombres": "Verónica Isabel",
+        "apellidos": "Mendoza Ramos",
+        "idAnoActual": 5,
+        "idSeccion": 7,
+        "idRepresentante": 1
+      },
+      {
+        "idEstudiante": 93,
+        "cedula": "V-28555666",
+        "nombres": "Javier Alejandro",
+        "apellidos": "Gómez Silva",
+        "idAnoActual": 5,
+        "idSeccion": 7,
+        "idRepresentante": 2
+      },
+      {
+        "idEstudiante": 94,
+        "cedula": "V-28666777",
+        "nombres": "Daniela Alejandra",
+        "apellidos": "Torres Benítez",
+        "idAnoActual": 5,
+        "idSeccion": 7,
+        "idRepresentante": 3
+      },
+      {
+        "idEstudiante": 95,
+        "cedula": "V-28777888",
+        "nombres": "Francisco José",
+        "apellidos": "Rivas Peña",
+        "idAnoActual": 5,
+        "idSeccion": 7,
+        "idRepresentante": 4
+      },
+      {
+        "idEstudiante": 96,
+        "cedula": "V-28888999",
+        "nombres": "Mariángel Carolina",
+        "apellidos": "Castillo Morales",
+        "idAnoActual": 5,
+        "idSeccion": 7,
+        "idRepresentante": 6
+      },
+      {
+        "idEstudiante": 97,
+        "cedula": "V-28999000",
+        "nombres": "Ricardo Antonio",
+        "apellidos": "Navarro Rojas",
+        "idAnoActual": 5,
+        "idSeccion": 7,
+        "idRepresentante": 7
+      },
+      {
+        "idEstudiante": 98,
+        "cedula": "V-29011122",
+        "nombres": "Stephanie Paola",
+        "apellidos": "Padrón Alvarado",
+        "idAnoActual": 5,
+        "idSeccion": 7,
+        "idRepresentante": 8
+      },
+      {
+        "idEstudiante": 99,
+        "cedula": "V-29122233",
+        "nombres": "César Augusto",
+        "apellidos": "Hernández Quintero",
+        "idAnoActual": 5,
+        "idSeccion": 7,
+        "idRepresentante": 9
+      },
+      {
+        "idEstudiante": 100,
+        "cedula": "V-28155667",
+        "nombres": "Andrea Fabiana",
+        "apellidos": "Vargas Delgado",
+        "idAnoActual": 5,
+        "idSeccion": 10,
+        "idRepresentante": 10
+      },
+      {
+        "idEstudiante": 101,
+        "cedula": "V-28266778",
+        "nombres": "Eduardo Manuel",
+        "apellidos": "Contreras Blanco",
+        "idAnoActual": 5,
+        "idSeccion": 10,
+        "idRepresentante": 11
+      },
+      {
+        "idEstudiante": 102,
+        "cedula": "V-28377889",
+        "nombres": "Génesis Valentina",
+        "apellidos": "Chávez Romero",
+        "idAnoActual": 5,
+        "idSeccion": 10,
+        "idRepresentante": 12
+      },
+      {
+        "idEstudiante": 103,
+        "cedula": "V-28488990",
+        "nombres": "Leonardo David",
+        "apellidos": "Gutiérrez Medina",
+        "idAnoActual": 5,
+        "idSeccion": 10,
+        "idRepresentante": 13
+      },
+      {
+        "idEstudiante": 104,
+        "cedula": "V-28599001",
+        "nombres": "Bárbara Nicole",
+        "apellidos": "Montero Paredes",
+        "idAnoActual": 5,
+        "idSeccion": 10,
+        "idRepresentante": 14
+      },
+      {
+        "idEstudiante": 105,
+        "cedula": "V-28611223",
+        "nombres": "Manuel Salvador",
+        "apellidos": "Bermúdez Ochoa",
+        "idAnoActual": 5,
+        "idSeccion": 10,
+        "idRepresentante": 15
+      },
+      {
+        "idEstudiante": 106,
+        "cedula": "V-28722334",
+        "nombres": "Patricia Sofía",
+        "apellidos": "Sánchez Villegas",
+        "idAnoActual": 5,
+        "idSeccion": 10,
+        "idRepresentante": 16
+      },
+      {
+        "idEstudiante": 107,
+        "cedula": "V-28833445",
+        "nombres": "Carlos Ignacio",
+        "apellidos": "Fuentes Valero",
+        "idAnoActual": 5,
+        "idSeccion": 10,
+        "idRepresentante": 17
+      },
+      {
+        "idEstudiante": 108,
+        "cedula": "V-28944556",
+        "nombres": "María Fernanda",
+        "apellidos": "Pacheco Briceño",
+        "idAnoActual": 5,
+        "idSeccion": 10,
+        "idRepresentante": 18
+      },
+      {
+        "idEstudiante": 109,
+        "cedula": "V-29055667",
+        "nombres": "José Armando",
+        "apellidos": "Salas Zambrano",
+        "idAnoActual": 5,
+        "idSeccion": 10,
+        "idRepresentante": 19
+      },
+      {
+        "idEstudiante": 110,
+        "cedula": "V-29166778",
+        "nombres": "Natalia Valentina",
+        "apellidos": "Carrillo Domínguez",
+        "idAnoActual": 5,
+        "idSeccion": 10,
+        "idRepresentante": 20
+      },
+      {
+        "idEstudiante": 111,
+        "cedula": "V32321636",
+        "nombres": "Sofia",
+        "apellidos": "Torres",
+        "idAnoActual": 5,
+        "idSeccion": 10,
+        "idRepresentante": 21
+      }
+    ],
+    "asistencia": [
+      {
+        "idAsistencia": 1,
+        "idEstudiante": 1,
+        "idMateria": 1,
+        "fecha": "2026-10-27",
+        "horaEntrada": "07:05:12",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 2,
+        "idEstudiante": 2,
+        "idMateria": 1,
+        "fecha": "2026-10-27",
+        "horaEntrada": "07:22:45",
+        "estado": "Tarde"
+      },
+      {
+        "idAsistencia": 3,
+        "idEstudiante": 3,
+        "idMateria": 1,
+        "fecha": "2026-10-27",
+        "horaEntrada": "07:00:00",
+        "estado": "Ausente"
+      },
+      {
+        "idAsistencia": 4,
+        "idEstudiante": 4,
+        "idMateria": 1,
+        "fecha": "2026-10-27",
+        "horaEntrada": "07:10:33",
+        "estado": "Justificado"
+      },
+      {
+        "idAsistencia": 5,
+        "idEstudiante": 1,
+        "idMateria": 2,
+        "fecha": "2026-10-28",
+        "horaEntrada": "11:24:09",
+        "estado": "Tarde"
+      },
+      {
+        "idAsistencia": 6,
+        "idEstudiante": 2,
+        "idMateria": 2,
+        "fecha": "2026-10-28",
+        "horaEntrada": "11:24:11",
+        "estado": "Ausente"
+      },
+      {
+        "idAsistencia": 7,
+        "idEstudiante": 3,
+        "idMateria": 2,
+        "fecha": "2026-10-28",
+        "horaEntrada": "11:24:13",
+        "estado": "Justificado"
+      },
+      {
+        "idAsistencia": 8,
+        "idEstudiante": 4,
+        "idMateria": 2,
+        "fecha": "2026-10-28",
+        "horaEntrada": "11:24:15",
+        "estado": "Ausente"
+      },
+      {
+        "idAsistencia": 9,
+        "idEstudiante": 7,
+        "idMateria": 2,
+        "fecha": "2026-10-28",
+        "horaEntrada": "11:24:17",
+        "estado": "Tarde"
+      },
+      {
+        "idAsistencia": 15,
+        "idEstudiante": 8,
+        "idMateria": 1,
+        "fecha": "2026-10-26",
+        "horaEntrada": "07:02:15",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 16,
+        "idEstudiante": 8,
+        "idMateria": 2,
+        "fecha": "2026-10-26",
+        "horaEntrada": "08:48:30",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 17,
+        "idEstudiante": 8,
+        "idMateria": 1,
+        "fecha": "2026-10-27",
+        "horaEntrada": "07:18:40",
+        "estado": "Tarde"
+      },
+      {
+        "idAsistencia": 18,
+        "idEstudiante": 8,
+        "idMateria": 1,
+        "fecha": "2026-10-28",
+        "horaEntrada": "07:01:10",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 19,
+        "idEstudiante": 9,
+        "idMateria": 1,
+        "fecha": "2026-10-26",
+        "horaEntrada": "07:04:10",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 20,
+        "idEstudiante": 9,
+        "idMateria": 1,
+        "fecha": "2026-10-27",
+        "horaEntrada": "07:05:22",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 21,
+        "idEstudiante": 9,
+        "idMateria": 1,
+        "fecha": "2026-10-28",
+        "horaEntrada": "07:22:15",
+        "estado": "Tarde"
+      },
+      {
+        "idAsistencia": 22,
+        "idEstudiante": 10,
+        "idMateria": 1,
+        "fecha": "2026-10-26",
+        "horaEntrada": "07:01:05",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 23,
+        "idEstudiante": 10,
+        "idMateria": 1,
+        "fecha": "2026-10-27",
+        "horaEntrada": "07:03:45",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 24,
+        "idEstudiante": 10,
+        "idMateria": 1,
+        "fecha": "2026-10-28",
+        "horaEntrada": "07:02:18",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 25,
+        "idEstudiante": 16,
+        "idMateria": 1,
+        "fecha": "2026-10-26",
+        "horaEntrada": "07:06:50",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 26,
+        "idEstudiante": 16,
+        "idMateria": 1,
+        "fecha": "2026-10-27",
+        "horaEntrada": "07:25:12",
+        "estado": "Tarde"
+      },
+      {
+        "idAsistencia": 27,
+        "idEstudiante": 16,
+        "idMateria": 1,
+        "fecha": "2026-10-28",
+        "horaEntrada": "07:03:00",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 28,
+        "idEstudiante": 25,
+        "idMateria": 6,
+        "fecha": "2026-10-26",
+        "horaEntrada": "07:03:30",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 29,
+        "idEstudiante": 25,
+        "idMateria": 6,
+        "fecha": "2026-10-27",
+        "horaEntrada": "07:04:15",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 30,
+        "idEstudiante": 25,
+        "idMateria": 6,
+        "fecha": "2026-10-28",
+        "horaEntrada": "07:16:40",
+        "estado": "Tarde"
+      },
+      {
+        "idAsistencia": 31,
+        "idEstudiante": 36,
+        "idMateria": 6,
+        "fecha": "2026-10-26",
+        "horaEntrada": "07:02:00",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 32,
+        "idEstudiante": 36,
+        "idMateria": 6,
+        "fecha": "2026-10-27",
+        "horaEntrada": "07:01:45",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 33,
+        "idEstudiante": 36,
+        "idMateria": 6,
+        "fecha": "2026-10-28",
+        "horaEntrada": "07:03:10",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 34,
+        "idEstudiante": 45,
+        "idMateria": 13,
+        "fecha": "2026-10-26",
+        "horaEntrada": "07:05:00",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 35,
+        "idEstudiante": 45,
+        "idMateria": 13,
+        "fecha": "2026-10-27",
+        "horaEntrada": "07:02:10",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 36,
+        "idEstudiante": 45,
+        "idMateria": 13,
+        "fecha": "2026-10-28",
+        "horaEntrada": "07:01:50",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 37,
+        "idEstudiante": 89,
+        "idMateria": 20,
+        "fecha": "2026-10-28",
+        "horaEntrada": "11:33:42",
+        "estado": "Ausente"
+      },
+      {
+        "idAsistencia": 38,
+        "idEstudiante": 90,
+        "idMateria": 20,
+        "fecha": "2026-10-28",
+        "horaEntrada": "11:33:43",
+        "estado": "Tarde"
+      },
+      {
+        "idAsistencia": 39,
+        "idEstudiante": 91,
+        "idMateria": 20,
+        "fecha": "2026-10-28",
+        "horaEntrada": "11:33:45",
+        "estado": "Justificado"
+      },
+      {
+        "idAsistencia": 40,
+        "idEstudiante": 92,
+        "idMateria": 20,
+        "fecha": "2026-10-28",
+        "horaEntrada": "11:33:46",
+        "estado": "Tarde"
+      },
+      {
+        "idAsistencia": 41,
+        "idEstudiante": 93,
+        "idMateria": 20,
+        "fecha": "2026-10-28",
+        "horaEntrada": "11:33:34",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 42,
+        "idEstudiante": 94,
+        "idMateria": 20,
+        "fecha": "2026-10-28",
+        "horaEntrada": "11:33:34",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 43,
+        "idEstudiante": 95,
+        "idMateria": 20,
+        "fecha": "2026-10-28",
+        "horaEntrada": "11:33:48",
+        "estado": "Ausente"
+      },
+      {
+        "idAsistencia": 44,
+        "idEstudiante": 96,
+        "idMateria": 20,
+        "fecha": "2026-10-28",
+        "horaEntrada": "11:33:49",
+        "estado": "Ausente"
+      },
+      {
+        "idAsistencia": 45,
+        "idEstudiante": 97,
+        "idMateria": 20,
+        "fecha": "2026-10-28",
+        "horaEntrada": "11:33:49",
+        "estado": "Ausente"
+      },
+      {
+        "idAsistencia": 46,
+        "idEstudiante": 98,
+        "idMateria": 20,
+        "fecha": "2026-10-28",
+        "horaEntrada": "11:33:34",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 47,
+        "idEstudiante": 99,
+        "idMateria": 20,
+        "fecha": "2026-10-28",
+        "horaEntrada": "11:33:34",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 48,
+        "idEstudiante": 100,
+        "idMateria": 20,
+        "fecha": "2026-10-30",
+        "horaEntrada": "08:56:37",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 49,
+        "idEstudiante": 101,
+        "idMateria": 20,
+        "fecha": "2026-10-30",
+        "horaEntrada": "08:56:37",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 50,
+        "idEstudiante": 102,
+        "idMateria": 20,
+        "fecha": "2026-10-30",
+        "horaEntrada": "08:56:37",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 51,
+        "idEstudiante": 103,
+        "idMateria": 20,
+        "fecha": "2026-10-30",
+        "horaEntrada": "08:56:37",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 52,
+        "idEstudiante": 104,
+        "idMateria": 20,
+        "fecha": "2026-10-30",
+        "horaEntrada": "08:56:37",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 53,
+        "idEstudiante": 105,
+        "idMateria": 20,
+        "fecha": "2026-10-30",
+        "horaEntrada": "08:56:37",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 54,
+        "idEstudiante": 106,
+        "idMateria": 20,
+        "fecha": "2026-10-30",
+        "horaEntrada": "08:56:37",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 55,
+        "idEstudiante": 107,
+        "idMateria": 20,
+        "fecha": "2026-10-30",
+        "horaEntrada": "08:56:37",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 56,
+        "idEstudiante": 108,
+        "idMateria": 20,
+        "fecha": "2026-10-30",
+        "horaEntrada": "08:56:37",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 57,
+        "idEstudiante": 109,
+        "idMateria": 20,
+        "fecha": "2026-10-30",
+        "horaEntrada": "08:56:37",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 58,
+        "idEstudiante": 110,
+        "idMateria": 20,
+        "fecha": "2026-10-30",
+        "horaEntrada": "08:56:37",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 59,
+        "idEstudiante": 111,
+        "idMateria": 20,
+        "fecha": "2026-10-30",
+        "horaEntrada": "08:56:53",
+        "estado": "Ausente"
+      },
+      {
+        "idAsistencia": 60,
+        "idEstudiante": 1,
+        "idMateria": 1,
+        "fecha": "2026-11-04",
+        "horaEntrada": "11:10:34",
+        "estado": "Tarde"
+      },
+      {
+        "idAsistencia": 61,
+        "idEstudiante": 2,
+        "idMateria": 1,
+        "fecha": "2026-11-04",
+        "horaEntrada": "11:10:36",
+        "estado": "Justificado"
+      },
+      {
+        "idAsistencia": 62,
+        "idEstudiante": 3,
+        "idMateria": 1,
+        "fecha": "2026-11-04",
+        "horaEntrada": "11:10:37",
+        "estado": "Tarde"
+      },
+      {
+        "idAsistencia": 63,
+        "idEstudiante": 14,
+        "idMateria": 1,
+        "fecha": "2026-11-04",
+        "horaEntrada": "11:10:38",
+        "estado": "Tarde"
+      },
+      {
+        "idAsistencia": 64,
+        "idEstudiante": 15,
+        "idMateria": 1,
+        "fecha": "2026-11-04",
+        "horaEntrada": "11:10:17",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 65,
+        "idEstudiante": 16,
+        "idMateria": 1,
+        "fecha": "2026-11-04",
+        "horaEntrada": "11:10:17",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 66,
+        "idEstudiante": 17,
+        "idMateria": 1,
+        "fecha": "2026-11-04",
+        "horaEntrada": "11:10:42",
+        "estado": "Ausente"
+      },
+      {
+        "idAsistencia": 67,
+        "idEstudiante": 4,
+        "idMateria": 1,
+        "fecha": "2026-11-04",
+        "horaEntrada": "11:10:17",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 68,
+        "idEstudiante": 8,
+        "idMateria": 1,
+        "fecha": "2026-11-04",
+        "horaEntrada": "11:10:44",
+        "estado": "Ausente"
+      },
+      {
+        "idAsistencia": 69,
+        "idEstudiante": 18,
+        "idMateria": 1,
+        "fecha": "2026-11-04",
+        "horaEntrada": "11:10:46",
+        "estado": "Ausente"
+      },
+      {
+        "idAsistencia": 70,
+        "idEstudiante": 9,
+        "idMateria": 1,
+        "fecha": "2026-11-04",
+        "horaEntrada": "11:10:47",
+        "estado": "Ausente"
+      },
+      {
+        "idAsistencia": 71,
+        "idEstudiante": 19,
+        "idMateria": 1,
+        "fecha": "2026-11-04",
+        "horaEntrada": "11:10:48",
+        "estado": "Tarde"
+      },
+      {
+        "idAsistencia": 72,
+        "idEstudiante": 10,
+        "idMateria": 1,
+        "fecha": "2026-11-04",
+        "horaEntrada": "11:10:49",
+        "estado": "Tarde"
+      },
+      {
+        "idAsistencia": 73,
+        "idEstudiante": 20,
+        "idMateria": 1,
+        "fecha": "2026-11-04",
+        "horaEntrada": "11:10:17",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 74,
+        "idEstudiante": 11,
+        "idMateria": 1,
+        "fecha": "2026-11-04",
+        "horaEntrada": "11:10:17",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 75,
+        "idEstudiante": 21,
+        "idMateria": 1,
+        "fecha": "2026-11-04",
+        "horaEntrada": "11:10:52",
+        "estado": "Tarde"
+      },
+      {
+        "idAsistencia": 76,
+        "idEstudiante": 12,
+        "idMateria": 1,
+        "fecha": "2026-11-04",
+        "horaEntrada": "11:10:17",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 77,
+        "idEstudiante": 22,
+        "idMateria": 1,
+        "fecha": "2026-11-04",
+        "horaEntrada": "11:10:17",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 78,
+        "idEstudiante": 13,
+        "idMateria": 1,
+        "fecha": "2026-11-04",
+        "horaEntrada": "11:10:17",
+        "estado": "Presente"
+      },
+      {
+        "idAsistencia": 79,
+        "idEstudiante": 23,
+        "idMateria": 1,
+        "fecha": "2026-11-04",
+        "horaEntrada": "11:10:53",
+        "estado": "Tarde"
+      },
+      {
+        "idAsistencia": 80,
+        "idEstudiante": 24,
+        "idMateria": 1,
+        "fecha": "2026-11-04",
+        "horaEntrada": "11:10:54",
+        "estado": "Ausente"
+      },
+      {
+        "idAsistencia": 81,
+        "idEstudiante": 7,
+        "idMateria": 1,
+        "fecha": "2026-11-04",
+        "horaEntrada": "11:10:57",
+        "estado": "Ausente"
+      }
+    ],
+    "horarios": [
+      {
+        "idHorario": 301,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 1,
+        "diaSemana": "Jueves",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 101"
+      },
+      {
+        "idHorario": 302,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 1,
+        "diaSemana": "Lunes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 101"
+      },
+      {
+        "idHorario": 303,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 1,
+        "diaSemana": "Martes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 101"
+      },
+      {
+        "idHorario": 304,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 1,
+        "diaSemana": "Lunes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 101"
+      },
+      {
+        "idHorario": 305,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 1,
+        "diaSemana": "Viernes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 101"
+      },
+      {
+        "idHorario": 306,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 2,
+        "diaSemana": "Lunes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 101"
+      },
+      {
+        "idHorario": 307,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 2,
+        "diaSemana": "Martes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 101"
+      },
+      {
+        "idHorario": 308,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 2,
+        "diaSemana": "Martes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 101"
+      },
+      {
+        "idHorario": 309,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 2,
+        "diaSemana": "Miércoles",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 101"
+      },
+      {
+        "idHorario": 310,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 2,
+        "diaSemana": "Miércoles",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 101"
+      },
+      {
+        "idHorario": 311,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 27,
+        "diaSemana": "Viernes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 101"
+      },
+      {
+        "idHorario": 312,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 27,
+        "diaSemana": "Jueves",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 101"
+      },
+      {
+        "idHorario": 313,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 27,
+        "diaSemana": "Jueves",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 101"
+      },
+      {
+        "idHorario": 314,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 23,
+        "diaSemana": "Lunes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "cancha 1"
+      },
+      {
+        "idHorario": 315,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 23,
+        "diaSemana": "Viernes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "cancha 1"
+      },
+      {
+        "idHorario": 316,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 23,
+        "diaSemana": "Martes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "cancha 1"
+      },
+      {
+        "idHorario": 317,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 3,
+        "diaSemana": "Miércoles",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 101"
+      },
+      {
+        "idHorario": 318,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 3,
+        "diaSemana": "Lunes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 101"
+      },
+      {
+        "idHorario": 319,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 3,
+        "diaSemana": "Jueves",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 101"
+      },
+      {
+        "idHorario": 320,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 3,
+        "diaSemana": "Miércoles",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 101"
+      },
+      {
+        "idHorario": 321,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 4,
+        "diaSemana": "Miércoles",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 101"
+      },
+      {
+        "idHorario": 322,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 4,
+        "diaSemana": "Jueves",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 101"
+      },
+      {
+        "idHorario": 323,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 4,
+        "diaSemana": "Viernes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 101"
+      },
+      {
+        "idHorario": 324,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 4,
+        "diaSemana": "Viernes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 101"
+      },
+      {
+        "idHorario": 325,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 5,
+        "diaSemana": "Viernes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 101"
+      },
+      {
+        "idHorario": 326,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 5,
+        "diaSemana": "Lunes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 101"
+      },
+      {
+        "idHorario": 327,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 5,
+        "diaSemana": "Miércoles",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 101"
+      },
+      {
+        "idHorario": 328,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 28,
+        "diaSemana": "Martes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 101"
+      },
+      {
+        "idHorario": 329,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 25,
+        "diaSemana": "Martes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 101"
+      },
+      {
+        "idHorario": 330,
+        "idAno": 1,
+        "idSeccion": 1,
+        "idMateria": 25,
+        "diaSemana": "Jueves",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 101"
+      },
+      {
+        "idHorario": 331,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 2,
+        "diaSemana": "Viernes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 102"
+      },
+      {
+        "idHorario": 332,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 2,
+        "diaSemana": "Martes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 102"
+      },
+      {
+        "idHorario": 333,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 2,
+        "diaSemana": "Lunes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 102"
+      },
+      {
+        "idHorario": 334,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 2,
+        "diaSemana": "Martes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 102"
+      },
+      {
+        "idHorario": 335,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 2,
+        "diaSemana": "Jueves",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 102"
+      },
+      {
+        "idHorario": 336,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 1,
+        "diaSemana": "Lunes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 102"
+      },
+      {
+        "idHorario": 337,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 1,
+        "diaSemana": "Jueves",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 102"
+      },
+      {
+        "idHorario": 338,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 1,
+        "diaSemana": "Martes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 102"
+      },
+      {
+        "idHorario": 339,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 1,
+        "diaSemana": "Miércoles",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 102"
+      },
+      {
+        "idHorario": 340,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 1,
+        "diaSemana": "Martes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 102"
+      },
+      {
+        "idHorario": 341,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 23,
+        "diaSemana": "Lunes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "cancha 1"
+      },
+      {
+        "idHorario": 342,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 23,
+        "diaSemana": "Martes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "cancha 1"
+      },
+      {
+        "idHorario": 343,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 23,
+        "diaSemana": "Jueves",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "cancha 1"
+      },
+      {
+        "idHorario": 344,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 27,
+        "diaSemana": "Miércoles",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 102"
+      },
+      {
+        "idHorario": 345,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 27,
+        "diaSemana": "Miércoles",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 102"
+      },
+      {
+        "idHorario": 346,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 27,
+        "diaSemana": "Viernes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 102"
+      },
+      {
+        "idHorario": 347,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 4,
+        "diaSemana": "Viernes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 102"
+      },
+      {
+        "idHorario": 348,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 4,
+        "diaSemana": "Lunes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 102"
+      },
+      {
+        "idHorario": 349,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 4,
+        "diaSemana": "Jueves",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 102"
+      },
+      {
+        "idHorario": 350,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 4,
+        "diaSemana": "Martes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 102"
+      },
+      {
+        "idHorario": 351,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 3,
+        "diaSemana": "Viernes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 102"
+      },
+      {
+        "idHorario": 352,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 3,
+        "diaSemana": "Lunes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 102"
+      },
+      {
+        "idHorario": 353,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 3,
+        "diaSemana": "Jueves",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 102"
+      },
+      {
+        "idHorario": 354,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 3,
+        "diaSemana": "Lunes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 102"
+      },
+      {
+        "idHorario": 355,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 25,
+        "diaSemana": "Viernes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 102"
+      },
+      {
+        "idHorario": 356,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 25,
+        "diaSemana": "Miércoles",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 102"
+      },
+      {
+        "idHorario": 357,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 5,
+        "diaSemana": "Jueves",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 102"
+      },
+      {
+        "idHorario": 358,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 5,
+        "diaSemana": "Viernes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 102"
+      },
+      {
+        "idHorario": 359,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 5,
+        "diaSemana": "Miércoles",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 102"
+      },
+      {
+        "idHorario": 360,
+        "idAno": 1,
+        "idSeccion": 2,
+        "idMateria": 28,
+        "diaSemana": "Miércoles",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 102"
+      },
+      {
+        "idHorario": 361,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 32,
+        "diaSemana": "Lunes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "cancha 2"
+      },
+      {
+        "idHorario": 362,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 32,
+        "diaSemana": "Lunes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "cancha 2"
+      },
+      {
+        "idHorario": 363,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 32,
+        "diaSemana": "Lunes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "cancha 2"
+      },
+      {
+        "idHorario": 364,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 31,
+        "diaSemana": "Martes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 103"
+      },
+      {
+        "idHorario": 365,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 31,
+        "diaSemana": "Viernes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 103"
+      },
+      {
+        "idHorario": 366,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 31,
+        "diaSemana": "Martes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 103"
+      },
+      {
+        "idHorario": 367,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 31,
+        "diaSemana": "Jueves",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 103"
+      },
+      {
+        "idHorario": 368,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 33,
+        "diaSemana": "Jueves",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 103"
+      },
+      {
+        "idHorario": 369,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 33,
+        "diaSemana": "Jueves",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 103"
+      },
+      {
+        "idHorario": 370,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 33,
+        "diaSemana": "Lunes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 103"
+      },
+      {
+        "idHorario": 371,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 6,
+        "diaSemana": "Miércoles",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 103"
+      },
+      {
+        "idHorario": 372,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 6,
+        "diaSemana": "Lunes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 103"
+      },
+      {
+        "idHorario": 373,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 6,
+        "diaSemana": "Miércoles",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 103"
+      },
+      {
+        "idHorario": 374,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 6,
+        "diaSemana": "Miércoles",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 103"
+      },
+      {
+        "idHorario": 375,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 6,
+        "diaSemana": "Martes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 103"
+      },
+      {
+        "idHorario": 376,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 33,
+        "diaSemana": "Martes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 103"
+      },
+      {
+        "idHorario": 377,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 29,
+        "diaSemana": "Jueves",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 103"
+      },
+      {
+        "idHorario": 378,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 29,
+        "diaSemana": "Viernes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 103"
+      },
+      {
+        "idHorario": 379,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 29,
+        "diaSemana": "Viernes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 103"
+      },
+      {
+        "idHorario": 380,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 29,
+        "diaSemana": "Jueves",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 103"
+      },
+      {
+        "idHorario": 381,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 29,
+        "diaSemana": "Lunes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 103"
+      },
+      {
+        "idHorario": 382,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 36,
+        "diaSemana": "Jueves",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 103"
+      },
+      {
+        "idHorario": 383,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 36,
+        "diaSemana": "Martes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 103"
+      },
+      {
+        "idHorario": 384,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 36,
+        "diaSemana": "Martes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 103"
+      },
+      {
+        "idHorario": 385,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 35,
+        "diaSemana": "Miércoles",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 103"
+      },
+      {
+        "idHorario": 386,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 35,
+        "diaSemana": "Miércoles",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 103"
+      },
+      {
+        "idHorario": 387,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 34,
+        "diaSemana": "Viernes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 103"
+      },
+      {
+        "idHorario": 388,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 34,
+        "diaSemana": "Viernes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 103"
+      },
+      {
+        "idHorario": 389,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 35,
+        "diaSemana": "Viernes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 103"
+      },
+      {
+        "idHorario": 390,
+        "idAno": 2,
+        "idSeccion": 3,
+        "idMateria": 37,
+        "diaSemana": "Miércoles",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 103"
+      },
+      {
+        "idHorario": 391,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 31,
+        "diaSemana": "Lunes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 104"
+      },
+      {
+        "idHorario": 392,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 31,
+        "diaSemana": "Viernes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 104"
+      },
+      {
+        "idHorario": 393,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 31,
+        "diaSemana": "Martes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 104"
+      },
+      {
+        "idHorario": 394,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 32,
+        "diaSemana": "Miércoles",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "cancha 2"
+      },
+      {
+        "idHorario": 395,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 32,
+        "diaSemana": "Jueves",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "cancha 2"
+      },
+      {
+        "idHorario": 396,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 32,
+        "diaSemana": "Viernes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "cancha 2"
+      },
+      {
+        "idHorario": 397,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 33,
+        "diaSemana": "Martes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 104"
+      },
+      {
+        "idHorario": 398,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 31,
+        "diaSemana": "Lunes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 104"
+      },
+      {
+        "idHorario": 399,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 35,
+        "diaSemana": "Jueves",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 104"
+      },
+      {
+        "idHorario": 400,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 35,
+        "diaSemana": "Martes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 104"
+      },
+      {
+        "idHorario": 401,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 33,
+        "diaSemana": "Lunes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 104"
+      },
+      {
+        "idHorario": 402,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 33,
+        "diaSemana": "Martes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 104"
+      },
+      {
+        "idHorario": 403,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 33,
+        "diaSemana": "Miércoles",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 104"
+      },
+      {
+        "idHorario": 404,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 35,
+        "diaSemana": "Martes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 104"
+      },
+      {
+        "idHorario": 405,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 37,
+        "diaSemana": "Viernes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 104"
+      },
+      {
+        "idHorario": 406,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 6,
+        "diaSemana": "Lunes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 104"
+      },
+      {
+        "idHorario": 407,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 6,
+        "diaSemana": "Martes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 104"
+      },
+      {
+        "idHorario": 408,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 6,
+        "diaSemana": "Lunes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 104"
+      },
+      {
+        "idHorario": 409,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 6,
+        "diaSemana": "Viernes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 104"
+      },
+      {
+        "idHorario": 410,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 6,
+        "diaSemana": "Jueves",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 104"
+      },
+      {
+        "idHorario": 411,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 34,
+        "diaSemana": "Miércoles",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 104"
+      },
+      {
+        "idHorario": 412,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 34,
+        "diaSemana": "Jueves",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 104"
+      },
+      {
+        "idHorario": 413,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 29,
+        "diaSemana": "Viernes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 104"
+      },
+      {
+        "idHorario": 414,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 29,
+        "diaSemana": "Miércoles",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 104"
+      },
+      {
+        "idHorario": 415,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 29,
+        "diaSemana": "Miércoles",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 104"
+      },
+      {
+        "idHorario": 416,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 29,
+        "diaSemana": "Jueves",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 104"
+      },
+      {
+        "idHorario": 417,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 29,
+        "diaSemana": "Lunes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 104"
+      },
+      {
+        "idHorario": 418,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 36,
+        "diaSemana": "Miércoles",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 104"
+      },
+      {
+        "idHorario": 419,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 36,
+        "diaSemana": "Viernes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 104"
+      },
+      {
+        "idHorario": 420,
+        "idAno": 2,
+        "idSeccion": 4,
+        "idMateria": 36,
+        "diaSemana": "Jueves",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 104"
+      },
+      {
+        "idHorario": 421,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 15,
+        "diaSemana": "Martes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "laboratorio 1"
+      },
+      {
+        "idHorario": 422,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 15,
+        "diaSemana": "Lunes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "laboratorio 1"
+      },
+      {
+        "idHorario": 423,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 15,
+        "diaSemana": "Lunes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "laboratorio 1"
+      },
+      {
+        "idHorario": 424,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 39,
+        "diaSemana": "Martes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "laboratorio 1"
+      },
+      {
+        "idHorario": 425,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 39,
+        "diaSemana": "Viernes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "laboratorio 1"
+      },
+      {
+        "idHorario": 426,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 39,
+        "diaSemana": "Jueves",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "laboratorio 1"
+      },
+      {
+        "idHorario": 427,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 41,
+        "diaSemana": "Martes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "cancha 1"
+      },
+      {
+        "idHorario": 428,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 41,
+        "diaSemana": "Miércoles",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "cancha 1"
+      },
+      {
+        "idHorario": 429,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 41,
+        "diaSemana": "Martes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "cancha 1"
+      },
+      {
+        "idHorario": 430,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 46,
+        "diaSemana": "Lunes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "laboratorio 1"
+      },
+      {
+        "idHorario": 431,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 46,
+        "diaSemana": "Viernes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "laboratorio 1"
+      },
+      {
+        "idHorario": 432,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 46,
+        "diaSemana": "Miércoles",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "laboratorio 1"
+      },
+      {
+        "idHorario": 433,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 16,
+        "diaSemana": "Martes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 201"
+      },
+      {
+        "idHorario": 434,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 42,
+        "diaSemana": "Miércoles",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 201"
+      },
+      {
+        "idHorario": 435,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 42,
+        "diaSemana": "Viernes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 201"
+      },
+      {
+        "idHorario": 436,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 16,
+        "diaSemana": "Lunes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 201"
+      },
+      {
+        "idHorario": 437,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 16,
+        "diaSemana": "Viernes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 201"
+      },
+      {
+        "idHorario": 438,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 45,
+        "diaSemana": "Jueves",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 201"
+      },
+      {
+        "idHorario": 439,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 43,
+        "diaSemana": "Lunes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 201"
+      },
+      {
+        "idHorario": 440,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 43,
+        "diaSemana": "Miércoles",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 201"
+      },
+      {
+        "idHorario": 441,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 13,
+        "diaSemana": "Jueves",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 201"
+      },
+      {
+        "idHorario": 442,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 13,
+        "diaSemana": "Viernes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 201"
+      },
+      {
+        "idHorario": 443,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 13,
+        "diaSemana": "Jueves",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 201"
+      },
+      {
+        "idHorario": 444,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 13,
+        "diaSemana": "Miércoles",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 201"
+      },
+      {
+        "idHorario": 445,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 42,
+        "diaSemana": "Martes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 201"
+      },
+      {
+        "idHorario": 446,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 42,
+        "diaSemana": "Miércoles",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 201"
+      },
+      {
+        "idHorario": 447,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 38,
+        "diaSemana": "Lunes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 201"
+      },
+      {
+        "idHorario": 448,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 38,
+        "diaSemana": "Viernes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 201"
+      },
+      {
+        "idHorario": 449,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 38,
+        "diaSemana": "Jueves",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 201"
+      },
+      {
+        "idHorario": 450,
+        "idAno": 3,
+        "idSeccion": 5,
+        "idMateria": 38,
+        "diaSemana": "Jueves",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 201"
+      },
+      {
+        "idHorario": 451,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 42,
+        "diaSemana": "Viernes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 202"
+      },
+      {
+        "idHorario": 452,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 42,
+        "diaSemana": "Lunes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 202"
+      },
+      {
+        "idHorario": 453,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 42,
+        "diaSemana": "Lunes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 202"
+      },
+      {
+        "idHorario": 454,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 42,
+        "diaSemana": "Lunes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 202"
+      },
+      {
+        "idHorario": 455,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 16,
+        "diaSemana": "Jueves",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 202"
+      },
+      {
+        "idHorario": 456,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 16,
+        "diaSemana": "Jueves",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 202"
+      },
+      {
+        "idHorario": 457,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 15,
+        "diaSemana": "Martes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "laboratorio 1"
+      },
+      {
+        "idHorario": 458,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 15,
+        "diaSemana": "Jueves",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "laboratorio 1"
+      },
+      {
+        "idHorario": 459,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 15,
+        "diaSemana": "Miércoles",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "laboratorio 1"
+      },
+      {
+        "idHorario": 460,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 39,
+        "diaSemana": "Martes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 202"
+      },
+      {
+        "idHorario": 461,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 39,
+        "diaSemana": "Lunes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 202"
+      },
+      {
+        "idHorario": 462,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 39,
+        "diaSemana": "Viernes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 202"
+      },
+      {
+        "idHorario": 463,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 46,
+        "diaSemana": "Miércoles",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "laboratorio 1"
+      },
+      {
+        "idHorario": 464,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 46,
+        "diaSemana": "Martes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "laboratorio 1"
+      },
+      {
+        "idHorario": 465,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 46,
+        "diaSemana": "Miércoles",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "laboratorio 1"
+      },
+      {
+        "idHorario": 466,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 43,
+        "diaSemana": "Martes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 202"
+      },
+      {
+        "idHorario": 467,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 41,
+        "diaSemana": "Miércoles",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "cancha 1"
+      },
+      {
+        "idHorario": 468,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 41,
+        "diaSemana": "Jueves",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "cancha 1"
+      },
+      {
+        "idHorario": 469,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 41,
+        "diaSemana": "Miércoles",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "cancha 1"
+      },
+      {
+        "idHorario": 470,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 16,
+        "diaSemana": "Lunes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 202"
+      },
+      {
+        "idHorario": 471,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 45,
+        "diaSemana": "Martes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 202"
+      },
+      {
+        "idHorario": 472,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 13,
+        "diaSemana": "Jueves",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 202"
+      },
+      {
+        "idHorario": 473,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 43,
+        "diaSemana": "Jueves",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 202"
+      },
+      {
+        "idHorario": 474,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 13,
+        "diaSemana": "Viernes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 202"
+      },
+      {
+        "idHorario": 475,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 13,
+        "diaSemana": "Viernes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 202"
+      },
+      {
+        "idHorario": 476,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 13,
+        "diaSemana": "Viernes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 202"
+      },
+      {
+        "idHorario": 477,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 38,
+        "diaSemana": "Miércoles",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 202"
+      },
+      {
+        "idHorario": 478,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 38,
+        "diaSemana": "Viernes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 202"
+      },
+      {
+        "idHorario": 479,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 38,
+        "diaSemana": "Martes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 202"
+      },
+      {
+        "idHorario": 480,
+        "idAno": 3,
+        "idSeccion": 8,
+        "idMateria": 38,
+        "diaSemana": "Lunes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 202"
+      },
+      {
+        "idHorario": 481,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 54,
+        "diaSemana": "Martes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 203"
+      },
+      {
+        "idHorario": 482,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 54,
+        "diaSemana": "Viernes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 203"
+      },
+      {
+        "idHorario": 483,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 54,
+        "diaSemana": "Lunes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 203"
+      },
+      {
+        "idHorario": 484,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 56,
+        "diaSemana": "Martes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 203"
+      },
+      {
+        "idHorario": 485,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 51,
+        "diaSemana": "Lunes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 203"
+      },
+      {
+        "idHorario": 486,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 51,
+        "diaSemana": "Jueves",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 203"
+      },
+      {
+        "idHorario": 487,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 51,
+        "diaSemana": "Jueves",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 203"
+      },
+      {
+        "idHorario": 488,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 53,
+        "diaSemana": "Lunes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 203"
+      },
+      {
+        "idHorario": 489,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 57,
+        "diaSemana": "Miércoles",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "laboratorio 2"
+      },
+      {
+        "idHorario": 490,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 50,
+        "diaSemana": "Jueves",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "cancha 2"
+      },
+      {
+        "idHorario": 491,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 53,
+        "diaSemana": "Lunes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 203"
+      },
+      {
+        "idHorario": 492,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 17,
+        "diaSemana": "Viernes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 203"
+      },
+      {
+        "idHorario": 493,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 55,
+        "diaSemana": "Viernes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "laboratorio 2"
+      },
+      {
+        "idHorario": 494,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 55,
+        "diaSemana": "Miércoles",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "laboratorio 2"
+      },
+      {
+        "idHorario": 495,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 55,
+        "diaSemana": "Miércoles",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "laboratorio 2"
+      },
+      {
+        "idHorario": 496,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 48,
+        "diaSemana": "Viernes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "laboratorio 2"
+      },
+      {
+        "idHorario": 497,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 48,
+        "diaSemana": "Martes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "laboratorio 2"
+      },
+      {
+        "idHorario": 498,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 48,
+        "diaSemana": "Martes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "laboratorio 2"
+      },
+      {
+        "idHorario": 499,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 17,
+        "diaSemana": "Miércoles",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 203"
+      },
+      {
+        "idHorario": 500,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 50,
+        "diaSemana": "Miércoles",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "cancha 2"
+      },
+      {
+        "idHorario": 501,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 17,
+        "diaSemana": "Jueves",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 203"
+      },
+      {
+        "idHorario": 502,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 17,
+        "diaSemana": "Lunes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 203"
+      },
+      {
+        "idHorario": 503,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 57,
+        "diaSemana": "Jueves",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 203"
+      },
+      {
+        "idHorario": 504,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 47,
+        "diaSemana": "Lunes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 203"
+      },
+      {
+        "idHorario": 505,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 57,
+        "diaSemana": "Jueves",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "laboratorio 2"
+      },
+      {
+        "idHorario": 506,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 47,
+        "diaSemana": "Viernes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 203"
+      },
+      {
+        "idHorario": 507,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 47,
+        "diaSemana": "Martes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 203"
+      },
+      {
+        "idHorario": 508,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 47,
+        "diaSemana": "Martes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 203"
+      },
+      {
+        "idHorario": 509,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 52,
+        "diaSemana": "Miércoles",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 203"
+      },
+      {
+        "idHorario": 510,
+        "idAno": 4,
+        "idSeccion": 6,
+        "idMateria": 52,
+        "diaSemana": "Viernes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 203"
+      },
+      {
+        "idHorario": 511,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 51,
+        "diaSemana": "Martes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 204"
+      },
+      {
+        "idHorario": 512,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 51,
+        "diaSemana": "Viernes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 204"
+      },
+      {
+        "idHorario": 513,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 51,
+        "diaSemana": "Miércoles",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 204"
+      },
+      {
+        "idHorario": 514,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 53,
+        "diaSemana": "Viernes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 204"
+      },
+      {
+        "idHorario": 515,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 17,
+        "diaSemana": "Lunes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 204"
+      },
+      {
+        "idHorario": 516,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 17,
+        "diaSemana": "Martes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 204"
+      },
+      {
+        "idHorario": 517,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 54,
+        "diaSemana": "Miércoles",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 204"
+      },
+      {
+        "idHorario": 518,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 54,
+        "diaSemana": "Lunes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 204"
+      },
+      {
+        "idHorario": 519,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 53,
+        "diaSemana": "Martes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 204"
+      },
+      {
+        "idHorario": 520,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 17,
+        "diaSemana": "Jueves",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 204"
+      },
+      {
+        "idHorario": 521,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 54,
+        "diaSemana": "Martes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 204"
+      },
+      {
+        "idHorario": 522,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 56,
+        "diaSemana": "Miércoles",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 204"
+      },
+      {
+        "idHorario": 523,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 17,
+        "diaSemana": "Lunes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 204"
+      },
+      {
+        "idHorario": 524,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 47,
+        "diaSemana": "Viernes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 204"
+      },
+      {
+        "idHorario": 525,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 47,
+        "diaSemana": "Miércoles",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 204"
+      },
+      {
+        "idHorario": 526,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 57,
+        "diaSemana": "Miércoles",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 204"
+      },
+      {
+        "idHorario": 527,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 47,
+        "diaSemana": "Miércoles",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 204"
+      },
+      {
+        "idHorario": 528,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 47,
+        "diaSemana": "Lunes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 204"
+      },
+      {
+        "idHorario": 529,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 55,
+        "diaSemana": "Viernes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "laboratorio 2"
+      },
+      {
+        "idHorario": 530,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 55,
+        "diaSemana": "Jueves",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "laboratorio 2"
+      },
+      {
+        "idHorario": 531,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 55,
+        "diaSemana": "Jueves",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "laboratorio 2"
+      },
+      {
+        "idHorario": 532,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 48,
+        "diaSemana": "Lunes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "laboratorio 2"
+      },
+      {
+        "idHorario": 533,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 48,
+        "diaSemana": "Jueves",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "laboratorio 2"
+      },
+      {
+        "idHorario": 534,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 48,
+        "diaSemana": "Jueves",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "laboratorio 2"
+      },
+      {
+        "idHorario": 535,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 50,
+        "diaSemana": "Lunes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "cancha 2"
+      },
+      {
+        "idHorario": 536,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 50,
+        "diaSemana": "Jueves",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "cancha 2"
+      },
+      {
+        "idHorario": 537,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 57,
+        "diaSemana": "Martes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "laboratorio 2"
+      },
+      {
+        "idHorario": 538,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 57,
+        "diaSemana": "Viernes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "laboratorio 2"
+      },
+      {
+        "idHorario": 539,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 52,
+        "diaSemana": "Viernes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 204"
+      },
+      {
+        "idHorario": 540,
+        "idAno": 4,
+        "idSeccion": 9,
+        "idMateria": 52,
+        "diaSemana": "Martes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 204"
+      },
+      {
+        "idHorario": 541,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 61,
+        "diaSemana": "Lunes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 301"
+      },
+      {
+        "idHorario": 542,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 61,
+        "diaSemana": "Viernes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 301"
+      },
+      {
+        "idHorario": 543,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 61,
+        "diaSemana": "Miércoles",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 301"
+      },
+      {
+        "idHorario": 544,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 61,
+        "diaSemana": "Martes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 301"
+      },
+      {
+        "idHorario": 545,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 20,
+        "diaSemana": "Martes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 301"
+      },
+      {
+        "idHorario": 546,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 20,
+        "diaSemana": "Jueves",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 301"
+      },
+      {
+        "idHorario": 547,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 20,
+        "diaSemana": "Martes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 301"
+      },
+      {
+        "idHorario": 548,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 20,
+        "diaSemana": "Lunes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 301"
+      },
+      {
+        "idHorario": 549,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 64,
+        "diaSemana": "Miércoles",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 301"
+      },
+      {
+        "idHorario": 550,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 63,
+        "diaSemana": "Miércoles",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 301"
+      },
+      {
+        "idHorario": 551,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 67,
+        "diaSemana": "Miércoles",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 301"
+      },
+      {
+        "idHorario": 552,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 63,
+        "diaSemana": "Martes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 301"
+      },
+      {
+        "idHorario": 553,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 65,
+        "diaSemana": "Lunes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 301"
+      },
+      {
+        "idHorario": 554,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 65,
+        "diaSemana": "Viernes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 301"
+      },
+      {
+        "idHorario": 555,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 67,
+        "diaSemana": "Lunes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 301"
+      },
+      {
+        "idHorario": 556,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 67,
+        "diaSemana": "Miércoles",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 301"
+      },
+      {
+        "idHorario": 557,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 60,
+        "diaSemana": "Viernes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 301"
+      },
+      {
+        "idHorario": 558,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 60,
+        "diaSemana": "Lunes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 301"
+      },
+      {
+        "idHorario": 559,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 66,
+        "diaSemana": "Martes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 301"
+      },
+      {
+        "idHorario": 560,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 60,
+        "diaSemana": "Lunes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 301"
+      },
+      {
+        "idHorario": 561,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 62,
+        "diaSemana": "Viernes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "cancha 1"
+      },
+      {
+        "idHorario": 562,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 62,
+        "diaSemana": "Viernes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "cancha 1"
+      },
+      {
+        "idHorario": 563,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 66,
+        "diaSemana": "Jueves",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 301"
+      },
+      {
+        "idHorario": 564,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 66,
+        "diaSemana": "Jueves",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 301"
+      },
+      {
+        "idHorario": 565,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 69,
+        "diaSemana": "Martes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 301"
+      },
+      {
+        "idHorario": 566,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 69,
+        "diaSemana": "Viernes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "laboratorio 1"
+      },
+      {
+        "idHorario": 567,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 69,
+        "diaSemana": "Miércoles",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 301"
+      },
+      {
+        "idHorario": 568,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 59,
+        "diaSemana": "Jueves",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 301"
+      },
+      {
+        "idHorario": 569,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 59,
+        "diaSemana": "Jueves",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 301"
+      },
+      {
+        "idHorario": 570,
+        "idAno": 5,
+        "idSeccion": 7,
+        "idMateria": 68,
+        "diaSemana": "Jueves",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 301"
+      },
+      {
+        "idHorario": 571,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 20,
+        "diaSemana": "Lunes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 302"
+      },
+      {
+        "idHorario": 572,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 20,
+        "diaSemana": "Lunes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 302"
+      },
+      {
+        "idHorario": 573,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 20,
+        "diaSemana": "Lunes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 302"
+      },
+      {
+        "idHorario": 574,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 20,
+        "diaSemana": "Jueves",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 302"
+      },
+      {
+        "idHorario": 575,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 67,
+        "diaSemana": "Miércoles",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 302"
+      },
+      {
+        "idHorario": 576,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 67,
+        "diaSemana": "Viernes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 302"
+      },
+      {
+        "idHorario": 577,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 61,
+        "diaSemana": "Viernes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 302"
+      },
+      {
+        "idHorario": 578,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 61,
+        "diaSemana": "Martes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 302"
+      },
+      {
+        "idHorario": 579,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 61,
+        "diaSemana": "Viernes",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 302"
+      },
+      {
+        "idHorario": 580,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 64,
+        "diaSemana": "Viernes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 302"
+      },
+      {
+        "idHorario": 581,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 61,
+        "diaSemana": "Martes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 302"
+      },
+      {
+        "idHorario": 582,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 67,
+        "diaSemana": "Lunes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 302"
+      },
+      {
+        "idHorario": 583,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 60,
+        "diaSemana": "Miércoles",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 302"
+      },
+      {
+        "idHorario": 584,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 60,
+        "diaSemana": "Martes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 302"
+      },
+      {
+        "idHorario": 585,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 63,
+        "diaSemana": "Jueves",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 302"
+      },
+      {
+        "idHorario": 586,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 63,
+        "diaSemana": "Lunes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 302"
+      },
+      {
+        "idHorario": 587,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 65,
+        "diaSemana": "Miércoles",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 302"
+      },
+      {
+        "idHorario": 588,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 65,
+        "diaSemana": "Martes",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 302"
+      },
+      {
+        "idHorario": 589,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 60,
+        "diaSemana": "Jueves",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 302"
+      },
+      {
+        "idHorario": 590,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 62,
+        "diaSemana": "Martes",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 302"
+      },
+      {
+        "idHorario": 591,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 62,
+        "diaSemana": "Viernes",
+        "horaInicio": "08:30",
+        "horaFin": "09:15",
+        "aula": "aula 302"
+      },
+      {
+        "idHorario": 592,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 66,
+        "diaSemana": "Miércoles",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 302"
+      },
+      {
+        "idHorario": 593,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 69,
+        "diaSemana": "Jueves",
+        "horaInicio": "09:45",
+        "horaFin": "10:30",
+        "aula": "aula 302"
+      },
+      {
+        "idHorario": 594,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 69,
+        "diaSemana": "Jueves",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 302"
+      },
+      {
+        "idHorario": 595,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 69,
+        "diaSemana": "Miércoles",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 302"
+      },
+      {
+        "idHorario": 596,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 59,
+        "diaSemana": "Jueves",
+        "horaInicio": "10:30",
+        "horaFin": "11:15",
+        "aula": "aula 302"
+      },
+      {
+        "idHorario": 597,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 59,
+        "diaSemana": "Martes",
+        "horaInicio": "11:15",
+        "horaFin": "12:00",
+        "aula": "aula 302"
+      },
+      {
+        "idHorario": 598,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 66,
+        "diaSemana": "Lunes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 302"
+      },
+      {
+        "idHorario": 599,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 66,
+        "diaSemana": "Viernes",
+        "horaInicio": "07:00",
+        "horaFin": "07:45",
+        "aula": "aula 302"
+      },
+      {
+        "idHorario": 600,
+        "idAno": 5,
+        "idSeccion": 10,
+        "idMateria": 68,
+        "diaSemana": "Miércoles",
+        "horaInicio": "07:45",
+        "horaFin": "08:30",
+        "aula": "aula 302"
+      }
+    ],
+    "users": [
+      {
+        "id": 1,
+        "uid": "usr_director_1",
+        "email": "director@educontrol.edu",
+        "nombre": "Fernando José",
+        "apellidos": "Valbuena Martínez",
+        "cedula": "V-11234567",
+        "telefono": "+58 414 1112233",
+        "passwordHash": "$2b$10$h5BqxehbcyTA1iZpFJusRe6vGVCocPSvQaBG7yKmKyMKrMBack/TW",
+        "rol": "director",
+        "createdAt": "2026-10-28T14:30:08.719Z"
+      },
+      {
+        "id": 2,
+        "uid": "usr_coord_1",
+        "email": "coordinacion@educontrol.edu",
+        "nombre": "Elena Beatriz",
+        "apellidos": "Morales Mendoza",
+        "cedula": "V-13987654",
+        "telefono": "+58 412 4445566",
+        "passwordHash": "$2b$10$vRSKM39Nshx1fjG9KDsJ8.VYGAjLozxI09./hZyVJrWWgEM9iOnP2",
+        "rol": "coordinador",
+        "createdAt": "2026-10-28T14:30:08.719Z"
+      },
+      {
+        "id": 3,
+        "uid": "usr_docente_1",
+        "email": "ricardo.ramos@educontrol.edu",
+        "nombre": "Ricardo Antonio",
+        "apellidos": "Ramos Silva",
+        "cedula": "V-15890123",
+        "telefono": "+58 424 7778899",
+        "passwordHash": "$2b$10$XoR/Wp0cojJIQ/INVZHbqu4eg9xOBGWPgN6umCfhJrnlTu/0eWnhi",
+        "rol": "docente",
+        "createdAt": "2026-10-28T14:30:08.719Z"
+      },
+      {
+        "id": 4,
+        "uid": "usr_docente_2",
+        "email": "carmen.salazar@educontrol.edu",
+        "nombre": "Carmen Yolanda",
+        "apellidos": "Salazar Peña",
+        "cedula": "V-17456789",
+        "telefono": "+58 416 9990011",
+        "passwordHash": "$2b$10$r3QSukhdHODdd.wdhWArY.OEFo4VYxAmVH0L3tLCfW46anv3Zk5SS",
+        "rol": "docente",
+        "createdAt": "2026-10-28T14:30:08.719Z"
+      },
+      {
+        "id": 6,
+        "uid": "usr_1793200754967_355",
+        "email": "asd@gmail.com",
+        "nombre": "Fernando Jose",
+        "apellidos": "Valbuena",
+        "cedula": "V12345678",
+        "telefono": "04163423933",
+        "passwordHash": "$2b$10$s4Ifv6gnC3t0zDDZ7GYELe3NYrNC8ge.bPQkHDX.R7YGVxbFfKPte",
+        "rol": "docente",
+        "createdAt": "2026-10-28T15:19:15.242Z"
+      },
+      {
+        "id": 7,
+        "uid": "usr_1793203256710_78",
+        "email": "audfuentesc@gmail.com",
+        "nombre": "Audelina",
+        "apellidos": "Fuentes",
+        "cedula": "21146607",
+        "telefono": "04245296343",
+        "passwordHash": "$2b$10$pVKzZAIUytUztzn8jzTJheHjyX6Mcu0ONUGOlorhHfLtdLQiUVHqW",
+        "rol": "director",
+        "createdAt": "2026-10-28T16:00:57.407Z"
+      },
+      {
+        "id": 8,
+        "uid": "usr_doc_yulimar",
+        "email": "yulimar.rojas@educontrol.edu",
+        "nombre": "Yulimar Del Carmen",
+        "apellidos": "Rojas Rodríguez",
+        "cedula": "V-19882310",
+        "telefono": "0414-9988771",
+        "passwordHash": "$2b$10$Kpu/G1AWmtj4FIIqFe96beM04CtM3wWFf/ExBUHvtdB6fJvBIJuD6",
+        "rol": "docente",
+        "createdAt": "2026-10-30T13:04:50.728Z"
+      },
+      {
+        "id": 9,
+        "uid": "usr_doc_roberto",
+        "email": "roberto.gomez@educontrol.edu",
+        "nombre": "Roberto Carlos",
+        "apellidos": "Gómez Quintero",
+        "cedula": "V-15774120",
+        "telefono": "0412-3322114",
+        "passwordHash": "$2b$10$tsQuku3JpCmFSRcDuVlSWuhofrqIQaAIG.ALBmnt9PX8pL8zgf5Vm",
+        "rol": "docente",
+        "createdAt": "2026-10-30T13:04:50.728Z"
+      },
+      {
+        "id": 10,
+        "uid": "usr_doc_andres",
+        "email": "andres.blanco@educontrol.edu",
+        "nombre": "Andrés Eloy",
+        "apellidos": "Blanco Márquez",
+        "cedula": "V-14228990",
+        "telefono": "0416-5544332",
+        "passwordHash": "$2b$10$lGuuQ.2elAUQfJqYSY7/NOdt8DabId5Qp23bs7963/sBeqmlVWHby",
+        "rol": "docente",
+        "createdAt": "2026-10-30T13:04:50.728Z"
+      },
+      {
+        "id": 11,
+        "uid": "usr_doc_mariangel",
+        "email": "mariangel.silva@educontrol.edu",
+        "nombre": "Mariángel Carolina",
+        "apellidos": "Silva Tovar",
+        "cedula": "V-18990145",
+        "telefono": "0424-7766551",
+        "passwordHash": "$2b$10$fS8d9fl6XzdaxUiyfnlAM.PU4udixmt1S/esqJuiqvhQxk/H.Jx6i",
+        "rol": "docente",
+        "createdAt": "2026-10-30T13:04:50.728Z"
+      },
+      {
+        "id": 12,
+        "uid": "usr_doc_gabriel",
+        "email": "gabriel.mendez@educontrol.edu",
+        "nombre": "Gabriel Alejandro",
+        "apellidos": "Méndez Rivas",
+        "cedula": "V-16892341",
+        "telefono": "0414-5551122",
+        "passwordHash": "$2b$10$jVaMyqj8R2FUx1Ixz48BlOucPtaehAuFtCytEgEUc2cfmpQB5Ur76",
+        "rol": "docente",
+        "createdAt": "2026-10-30T13:40:54.202Z"
+      },
+      {
+        "id": 13,
+        "uid": "usr_doc_daniela",
+        "email": "daniela.perez@educontrol.edu",
+        "nombre": "Daniela Coromoto",
+        "apellidos": "Pérez Moreno",
+        "cedula": "V-17456789",
+        "telefono": "0424-6663344",
+        "passwordHash": "$2b$10$2ZlHTmakvhTd42LTLszhiOy8kwq0fcS4MnaSOHPQR6GYMbwOb/f0e",
+        "rol": "docente",
+        "createdAt": "2026-10-30T13:40:54.202Z"
+      },
+      {
+        "id": 14,
+        "uid": "usr_doc_luis",
+        "email": "luis.castillo@educontrol.edu",
+        "nombre": "Luis Eduardo",
+        "apellidos": "Castillo Duarte",
+        "cedula": "V-18901234",
+        "telefono": "0412-7775566",
+        "passwordHash": "$2b$10$na14m.ibmK5J/cI9XemsjOr/8qOCWkBr/oLtJHhFCZO1OZjrvJSGa",
+        "rol": "docente",
+        "createdAt": "2026-10-30T13:40:54.202Z"
+      },
+      {
+        "id": 15,
+        "uid": "usr_1793730930184_240",
+        "email": "adrian0424344@gmail.com",
+        "nombre": "Adrián",
+        "apellidos": "Silva",
+        "cedula": "V30135692",
+        "telefono": "1111111",
+        "passwordHash": "$2b$10$EbUUqXy84aEGqBsr78fckOffS3BbzJLCvmQpKTXlZk1nejmKYKu5e",
+        "rol": "coordinador",
+        "createdAt": "2026-11-03T18:35:30.218Z"
+      },
+      {
+        "id": 16,
+        "uid": "usr_admin_master",
+        "email": "admin@educontrol.edu",
+        "nombre": "Admin",
+        "apellidos": "Principal",
+        "cedula": "admin",
+        "telefono": "0414-0000000",
+        "passwordHash": "$2b$10$58kCF5W/VT2xtiy3n7OIzucU8p0ZXdpbUKu7qbM9pDISAXWS1zkIq",
+        "rol": "director",
+        "createdAt": "2026-11-07T19:47:05.537Z",
+        "usuario": "admin",
+        "activo": true
+      }
+    ]
+  }
+}

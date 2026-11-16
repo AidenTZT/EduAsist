@@ -1,0 +1,1567 @@
+import express, { type Request, type Response } from 'express';
+import cookieParser from 'cookie-parser';
+import rateLimit from 'express-rate-limit';
+import * as db from './localDb.ts';
+import {
+  generateToken,
+  verifyToken,
+  setAuthCookie,
+  clearAuthCookie,
+  extractToken,
+  requireAuth,
+  requireRole,
+  validateDocenteOwnership,
+} from './auth.ts';
+import {
+  validateBody,
+  validateQuery,
+  loginCredentialsSchema,
+  createStaffUserSchema,
+  updateStaffUserSchema,
+  createRepresentanteSchema,
+  updateRepresentanteSchema,
+  updateRepresentanteCredencialesSchema,
+  asistenciaBatchSchema,
+  updateAsistenciaJustificacionSchema,
+  attendanceHistoryQuerySchema,
+  auditLogsQuerySchema,
+  createHorarioSchema,
+  recesoSchema,
+  pushSubscriptionSchema,
+  pushUnsubscribeSchema,
+} from './validation.ts';
+import type { EstadoAsistencia } from '../types.ts';
+import {
+  getVapidPublicKey,
+  dispatchAttendancePushNotificationsDirect,
+} from './pushService.ts';
+
+export const apiRouter = express.Router();
+export const schoolApp = express();
+
+schoolApp.set('trust proxy', 1);
+schoolApp.use(cookieParser());
+schoolApp.use(express.json({ limit: '50mb' }));
+schoolApp.use(express.urlencoded({ extended: true, limit: '50mb' }));
+schoolApp.use(apiRouter);
+
+function getAuditAuthorFromReq(req: Request) {
+  if (req.authType === 'staff' && req.user) {
+    return {
+      idUsuario: req.user.id,
+      emailOCedula: req.user.email,
+      rol: req.user.rol,
+      ipOrigen: req.ip || req.socket.remoteAddress || null,
+      userAgent: req.headers['user-agent'] || null,
+    };
+  }
+  if (req.authType === 'representante' && req.representante) {
+    return {
+      idUsuario: req.representante.idRepresentante,
+      emailOCedula: req.representante.email || req.representante.cedula,
+      rol: 'representante',
+      ipOrigen: req.ip || req.socket.remoteAddress || null,
+      userAgent: req.headers['user-agent'] || null,
+    };
+  }
+  return {
+    idUsuario: null,
+    emailOCedula: null,
+    rol: null,
+    ipOrigen: req.ip || req.socket.remoteAddress || null,
+    userAgent: req.headers['user-agent'] || null,
+  };
+}
+
+// Rate limiter estricto contra fuerza bruta en login
+const loginRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) => {
+    res.status(429).json({
+      error: 'Demasiados intentos de inicio de sesión. Por seguridad, espere unos minutos antes de reintentar.',
+      code: 'RATE_LIMITED',
+    });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// 0. HEALTH & AUTENTICACIÓN LOCAL POR BASE DE DATOS
+// ---------------------------------------------------------------------------
+apiRouter.get('/health', (_req: Request, res: Response) => {
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    service: 'EduAsist - Autenticación Local BD (Bcrypt + JWT) & Web Push',
+    security: {
+      localDatabaseAuth: true,
+      bcryptPasswordHashing: true,
+      httpOnlyJwtCookie: true,
+      rbacEnforced: true,
+      webPushActive: true,
+    },
+  });
+});
+
+apiRouter.post(
+  '/auth/login',
+  loginRateLimiter,
+  validateBody(loginCredentialsSchema),
+  async (req: Request, res: Response) => {
+    try {
+      const body = req.body as Record<string, any>;
+      const identifier = String(
+        body.usuario ||
+          body.identificador ||
+          body.emailOrCedula ||
+          body.cedulaOrEmail ||
+          body.email ||
+          body.cedula ||
+          ''
+      ).trim();
+      const password = String(body.password || '');
+      const preferredPortal = body.preferredPortal as 'staff' | 'representante' | undefined;
+
+      const attempt = await db.authenticateCredentials(identifier, password, preferredPortal);
+
+      if (!attempt.ok) {
+        await db.logAuditEvent({
+          emailOCedula: identifier,
+          accion: attempt.code === 'USER_INACTIVE' ? 'LOGIN_RECHAZADO_INACTIVO' : 'LOGIN_FALLIDO',
+          entidad: 'auth',
+          ipOrigen: req.ip || req.socket.remoteAddress || null,
+          userAgent: req.headers['user-agent'] || null,
+          detalles: { motivo: attempt.code, preferredPortal },
+        });
+        const status = attempt.code === 'USER_INACTIVE' ? 403 : 401;
+        return res.status(status).json({
+          error: attempt.error,
+          code: attempt.code,
+        });
+      }
+
+      if (attempt.type === 'staff') {
+        const token = generateToken({
+          userId: attempt.user.id,
+          emailOrCedula: attempt.user.email,
+          rol: attempt.user.rol,
+          type: 'staff',
+        });
+        setAuthCookie(res, token);
+
+        await db.logAuditEvent({
+          idUsuario: attempt.user.id,
+          emailOCedula: attempt.user.email,
+          rol: attempt.user.rol,
+          accion: 'LOGIN_EXITOSO_PERSONAL',
+          entidad: 'users',
+          idEntidad: attempt.user.id,
+          ipOrigen: req.ip || req.socket.remoteAddress || null,
+          userAgent: req.headers['user-agent'] || null,
+          detalles: {
+            rol: attempt.user.rol,
+            nombreCompleto: `${attempt.user.nombre} ${attempt.user.apellidos}`,
+            metodo: 'Credenciales Locales BD (Bcrypt + JWT)',
+          },
+        });
+
+        return res.json({
+          authenticated: true,
+          type: 'staff',
+          redirectPortal: 'staff',
+          token,
+          user: attempt.user,
+        });
+      }
+
+      // Representante
+      const token = generateToken({
+        userId: attempt.representante.idRepresentante,
+        emailOrCedula: attempt.representante.cedula,
+        rol: 'representante',
+        type: 'representante',
+      });
+      setAuthCookie(res, token);
+
+      await db.logAuditEvent({
+        idUsuario: attempt.representante.idRepresentante,
+        emailOCedula: attempt.representante.email || attempt.representante.cedula,
+        rol: 'representante',
+        accion: 'LOGIN_EXITOSO_REPRESENTANTE',
+        entidad: 'representantes',
+        idEntidad: attempt.representante.idRepresentante,
+        ipOrigen: req.ip || req.socket.remoteAddress || null,
+        userAgent: req.headers['user-agent'] || null,
+        detalles: {
+          nombre: `${attempt.representante.nombres} ${attempt.representante.apellidos}`,
+          metodo: 'Credenciales Locales BD (Bcrypt + JWT)',
+        },
+      });
+
+      return res.json({
+        authenticated: true,
+        type: 'representante',
+        redirectPortal: 'representante',
+        token,
+        representante: attempt.representante,
+      });
+    } catch (error: any) {
+      console.error('Error in POST /api/auth/login:', error);
+      return res.status(500).json({ error: 'Error interno al procesar el inicio de sesión.' });
+    }
+  }
+);
+
+apiRouter.get('/auth/me', async (req: Request, res: Response) => {
+  try {
+    const token = extractToken(req);
+    if (!token) {
+      return res.json({ authenticated: false });
+    }
+
+    const decoded = verifyToken(token);
+    if (!decoded) {
+      clearAuthCookie(res);
+      return res.json({ authenticated: false });
+    }
+
+    if (decoded.type === 'staff') {
+      const user =
+        (await db.getUserById(decoded.userId)) ||
+        (decoded.emailOrCedula ? await db.getUserByEmailOrCedula(decoded.emailOrCedula) : null);
+      if (!user || user.activo === false) {
+        clearAuthCookie(res);
+        return res.json({ authenticated: false });
+      }
+      return res.json({
+        authenticated: true,
+        type: 'staff',
+        redirectPortal: 'staff',
+        user,
+      });
+    }
+
+    if (decoded.type === 'representante') {
+      const rep = await db.getRepresentanteById(decoded.userId);
+      if (!rep || rep.activo === false) {
+        clearAuthCookie(res);
+        return res.json({ authenticated: false });
+      }
+      return res.json({
+        authenticated: true,
+        type: 'representante',
+        redirectPortal: 'representante',
+        representante: rep,
+      });
+    }
+
+    clearAuthCookie(res);
+    return res.json({ authenticated: false });
+  } catch (error) {
+    console.error('Error in GET /api/auth/me:', error);
+    return res.json({ authenticated: false });
+  }
+});
+
+apiRouter.post('/auth/logout', async (req: Request, res: Response) => {
+  try {
+    const token = extractToken(req);
+    if (token) {
+      const decoded = verifyToken(token);
+      if (decoded) {
+        await db.logAuditEvent({
+          idUsuario: decoded.userId,
+          emailOCedula: decoded.emailOrCedula,
+          rol: decoded.rol || decoded.type,
+          accion: 'LOGOUT_SESION',
+          entidad: 'session',
+          ipOrigen: req.ip || req.socket.remoteAddress || null,
+          userAgent: req.headers['user-agent'] || null,
+        });
+      }
+    }
+    clearAuthCookie(res);
+    return res.json({ success: true });
+  } catch {
+    clearAuthCookie(res);
+    return res.json({ success: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 1. CONFIGURACIÓN INSTITUCIONAL & RECESOS
+// ---------------------------------------------------------------------------
+apiRouter.get('/configuracion', requireAuth, async (_req: Request, res: Response) => {
+  try {
+    res.json(await db.getConfiguracion());
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+apiRouter.put(
+  '/configuracion',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      const { clave, valor, descripcion } = req.body || {};
+      if (!clave || valor === undefined) {
+        return res.status(400).json({ error: 'Clave y valor son obligatorios.' });
+      }
+      const updated = await db.setConfiguracion(String(clave), String(valor), descripcion);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'CONFIGURACION_INSTITUCIONAL_MODIFICADA',
+        entidad: 'configuracion_institucional',
+        idEntidad: clave,
+        detalles: { clave, valor, descripcion },
+      });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.get('/recesos', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const soloActivos = req.query.soloActivos === 'true';
+    res.json(await db.getRecesos(soloActivos));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+apiRouter.post(
+  '/recesos',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  validateBody(recesoSchema),
+  async (req: Request, res: Response) => {
+    try {
+      const created = await db.createReceso(req.body);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'RECESO_CREADO',
+        entidad: 'recesos_institucionales',
+        idEntidad: created.idReceso,
+        detalles: req.body,
+      });
+      res.status(201).json(created);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.put(
+  '/recesos/:id',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      const idReceso = Number(req.params.id);
+      const updated = await db.updateReceso(idReceso, req.body || {});
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'RECESO_ACTUALIZADO',
+        entidad: 'recesos_institucionales',
+        idEntidad: idReceso,
+        detalles: req.body,
+      });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.patch(
+  '/recesos/:id/toggle',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      const idReceso = Number(req.params.id);
+      const updated = await db.toggleReceso(idReceso);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'RECESO_ESTADO_ALTERNADO',
+        entidad: 'recesos_institucionales',
+        idEntidad: idReceso,
+        detalles: { idReceso, nuevoEstado: updated.activo },
+      });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.delete(
+  '/recesos/:id',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      const idReceso = Number(req.params.id);
+      await db.deleteReceso(idReceso);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'RECESO_ELIMINADO',
+        entidad: 'recesos_institucionales',
+        idEntidad: idReceso,
+      });
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// 2. PERSONAL INSTITUCIONAL (USERS)
+// ---------------------------------------------------------------------------
+apiRouter.get('/users', requireAuth, async (req: Request, res: Response) => {
+  if (req.authType !== 'staff' || !req.user) {
+    return res.status(403).json({ error: 'Acceso reservado para personal institucional.' });
+  }
+  try {
+    const rol = req.query.rol as any;
+    res.json(await db.getUsers(rol));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+apiRouter.post(
+  '/users',
+  requireAuth,
+  requireRole('director'),
+  validateBody(createStaffUserSchema),
+  async (req: Request, res: Response) => {
+    try {
+      const created = await db.createUser(req.body);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'USUARIO_PERSONAL_CREADO',
+        entidad: 'users',
+        idEntidad: created.id,
+        detalles: { id: created.id, email: created.email, usuario: created.usuario, rol: created.rol },
+      });
+      res.status(201).json(created);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.put(
+  '/users/:id',
+  requireAuth,
+  requireRole('director'),
+  validateBody(updateStaffUserSchema),
+  async (req: Request, res: Response) => {
+    try {
+      const id = Number(req.params.id);
+      const updated = await db.updateUser(id, req.body);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'USUARIO_PERSONAL_ACTUALIZADO',
+        entidad: 'users',
+        idEntidad: id,
+        detalles: {
+          idActualizado: id,
+          camposModificados: Object.keys(req.body || {}).filter((k) => k !== 'password'),
+        },
+      });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.delete(
+  '/users/:id',
+  requireAuth,
+  requireRole('director'),
+  async (req: Request, res: Response) => {
+    try {
+      const id = Number(req.params.id);
+      if (req.user?.id === id) {
+        return res.status(400).json({
+          error: 'Operación denegada: No puede eliminar su propia cuenta activa.',
+        });
+      }
+      await db.deleteUser(id);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'USUARIO_PERSONAL_ELIMINADO',
+        entidad: 'users',
+        idEntidad: id,
+      });
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// 3. AÑOS ESCOLARES, SECCIONES, MATERIAS & ASIGNACIONES
+// ---------------------------------------------------------------------------
+apiRouter.get('/anos', requireAuth, async (_req: Request, res: Response) => {
+  try {
+    res.json(await db.getAnosEscolares());
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+apiRouter.post(
+  '/anos',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      const { nombreNivel, activo = true } = req.body || {};
+      if (!nombreNivel || !String(nombreNivel).trim()) {
+        return res.status(400).json({ error: 'El nombre del nivel es obligatorio.' });
+      }
+      const created = await db.createAnoEscolar(String(nombreNivel), Boolean(activo));
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'ANO_ESCOLAR_CREADO',
+        entidad: 'anos_escolares',
+        idEntidad: created.idAno,
+        detalles: { nombreNivel },
+      });
+      res.status(201).json(created);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.put(
+  '/anos/:id',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      const id = Number(req.params.id);
+      const { nombreNivel, activo } = req.body || {};
+      res.json(await db.updateAnoEscolar(id, String(nombreNivel), activo));
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.delete(
+  '/anos/:id',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      await db.deleteAnoEscolar(Number(req.params.id));
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.get('/secciones', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const idAno = req.query.idAno ? Number(req.query.idAno) : undefined;
+    res.json(await db.getSecciones(idAno));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+apiRouter.post(
+  '/secciones',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      const { idAno, nombreSeccion } = req.body || {};
+      res.status(201).json(await db.createSeccion(Number(idAno), String(nombreSeccion)));
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.put(
+  '/secciones/:id',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      const { nombreSeccion, idAno } = req.body || {};
+      res.json(await db.updateSeccion(Number(req.params.id), String(nombreSeccion), idAno ? Number(idAno) : undefined));
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.delete(
+  '/secciones/:id',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      await db.deleteSeccion(Number(req.params.id));
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.get('/materias', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const idAno = req.query.idAno ? Number(req.query.idAno) : undefined;
+    res.json(await db.getMaterias(idAno));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+apiRouter.post(
+  '/materias',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      const { idAno, nombreMateria } = req.body || {};
+      res.status(201).json(await db.createMateria(Number(idAno), String(nombreMateria)));
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.put(
+  '/materias/:id',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      const { nombreMateria, idAno } = req.body || {};
+      res.json(await db.updateMateria(Number(req.params.id), String(nombreMateria), idAno ? Number(idAno) : undefined));
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.delete(
+  '/materias/:id',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      await db.deleteMateria(Number(req.params.id));
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.get('/docente-materias', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const idUsuario = req.query.idUsuario ? Number(req.query.idUsuario) : undefined;
+    const idMateria = req.query.idMateria ? Number(req.query.idMateria) : undefined;
+    res.json(await db.getDocenteMaterias(idUsuario, idMateria));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+apiRouter.post(
+  '/docente-materias',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      const { idUsuario, idMateria } = req.body || {};
+      const created = await db.assignDocenteMateria(Number(idUsuario), Number(idMateria));
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'ASIGNACION_DOCENTE_MATERIA',
+        entidad: 'docente_materias',
+        idEntidad: created.idAsignacion,
+        detalles: { idUsuario, idMateria },
+      });
+      res.status(201).json(created);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.post(
+  '/docente-materias/batch',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      const { idUsuario, idMaterias } = req.body || {};
+      const result = await db.assignDocenteMateriasBatch(Number(idUsuario), idMaterias || []);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'ASIGNACION_DOCENTE_MATERIAS_BATCH',
+        entidad: 'docente_materias',
+        idEntidad: idUsuario,
+        detalles: { idUsuario, totalMaterias: (idMaterias || []).length },
+      });
+      res.json(result);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.delete(
+  '/docente-materias/:id',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      const id = Number(req.params.id);
+      await db.removeDocenteMateria(id);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'DESASIGNACION_DOCENTE_MATERIA',
+        entidad: 'docente_materias',
+        idEntidad: id,
+      });
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// 4. REPRESENTANTES & ESTUDIANTES
+// ---------------------------------------------------------------------------
+apiRouter.get('/representantes', requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (req.authType === 'representante' && req.representante) {
+      return res.json([req.representante]);
+    }
+    if (req.user?.rol === 'docente') {
+      return res.json([]);
+    }
+    res.json(await db.getRepresentantes());
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+apiRouter.post(
+  '/representantes',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  validateBody(createRepresentanteSchema),
+  async (req: Request, res: Response) => {
+    try {
+      const rep = await db.createRepresentante(req.body);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'REPRESENTANTE_CREADO',
+        entidad: 'representantes',
+        idEntidad: rep.idRepresentante,
+        detalles: { cedula: rep.cedula, email: rep.email, usuario: rep.usuario },
+      });
+      res.status(201).json(rep);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.put(
+  '/representantes/:id',
+  requireAuth,
+  validateBody(updateRepresentanteSchema),
+  async (req: Request, res: Response) => {
+    try {
+      const id = Number(req.params.id);
+      const isSelfRep = req.authType === 'representante';
+
+      if (isSelfRep) {
+        if (!req.representante || req.representante.idRepresentante !== id) {
+          return res.status(403).json({
+            error: 'Acceso denegado: Solo puede modificar los datos de su propia cuenta.',
+          });
+        }
+      } else if (!req.user || !['director', 'coordinador'].includes(req.user.rol)) {
+        return res.status(403).json({
+          error: 'Acceso denegado: Solo Director o Coordinador pueden modificar representantes.',
+        });
+      }
+
+      const updated = await db.updateRepresentante(id, req.body, isSelfRep);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'REPRESENTANTE_ACTUALIZADO',
+        entidad: 'representantes',
+        idEntidad: id,
+        detalles: {
+          camposModificados: Object.keys(req.body || {}).filter(
+            (k) => k !== 'password' && k !== 'currentPassword' && k !== 'newPassword'
+          ),
+        },
+      });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.put(
+  '/representantes/:id/credenciales',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  validateBody(updateRepresentanteCredencialesSchema),
+  async (req: Request, res: Response) => {
+    try {
+      const id = Number(req.params.id);
+      const result = await db.updateRepresentanteCredenciales(id, req.body);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'REPRESENTANTE_CREDENCIALES_ACTUALIZADAS',
+        entidad: 'representantes',
+        idEntidad: id,
+        detalles: {
+          email: req.body.email,
+          usuario: req.body.usuario,
+          activo: req.body.activo,
+          passwordActualizada: Boolean(req.body.password),
+        },
+      });
+      res.json(result);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.delete(
+  '/representantes/:id',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      const id = Number(req.params.id);
+      await db.deleteRepresentante(id);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'REPRESENTANTE_ELIMINADO',
+        entidad: 'representantes',
+        idEntidad: id,
+      });
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.get('/estudiantes', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const idAno = req.query.idAno ? Number(req.query.idAno) : undefined;
+    const idSeccion = req.query.idSeccion ? Number(req.query.idSeccion) : undefined;
+    let idRepresentante = req.query.idRepresentante ? Number(req.query.idRepresentante) : undefined;
+
+    if (req.authType === 'representante' && req.representante) {
+      idRepresentante = req.representante.idRepresentante;
+    }
+
+    const canReadReps =
+      req.authType === 'staff' && req.user?.rol !== 'docente';
+
+    res.json(await db.getEstudiantes({ idAno, idSeccion, idRepresentante }, canReadReps));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+apiRouter.post(
+  '/estudiantes',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      const est = await db.createEstudiante(req.body);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'ESTUDIANTE_INSCRITO',
+        entidad: 'estudiantes',
+        idEntidad: est.idEstudiante,
+        detalles: { cedula: est.cedula, idAnoActual: est.idAnoActual },
+      });
+      res.status(201).json(est);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.put(
+  '/estudiantes/:id',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      const id = Number(req.params.id);
+      const updated = await db.updateEstudiante(id, req.body);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'ESTUDIANTE_ACTUALIZADO',
+        entidad: 'estudiantes',
+        idEntidad: id,
+      });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.delete(
+  '/estudiantes/:id',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      const id = Number(req.params.id);
+      await db.deleteEstudiante(id);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'ESTUDIANTE_ELIMINADO',
+        entidad: 'estudiantes',
+        idEntidad: id,
+      });
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// 5. ASISTENCIA & PORTAL REPRESENTANTE
+// ---------------------------------------------------------------------------
+apiRouter.get('/asistencia', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const filters = {
+      fecha: req.query.fecha ? String(req.query.fecha) : undefined,
+      mes: req.query.mes ? String(req.query.mes) : undefined,
+      estado: req.query.estado ? (String(req.query.estado) as EstadoAsistencia) : undefined,
+      idMateria: req.query.idMateria ? Number(req.query.idMateria) : undefined,
+      idEstudiante: req.query.idEstudiante ? Number(req.query.idEstudiante) : undefined,
+      idRepresentante:
+        req.authType === 'representante' && req.representante
+          ? req.representante.idRepresentante
+          : req.query.idRepresentante
+          ? Number(req.query.idRepresentante)
+          : undefined,
+      idSeccion: req.query.idSeccion ? Number(req.query.idSeccion) : undefined,
+      idAno: req.query.idAno ? Number(req.query.idAno) : undefined,
+    };
+    res.json(await db.getAsistencia(filters));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+const handleGetAttendanceHistoryPaginated = async (_req: Request, res: Response) => {
+  try {
+    const query = res.locals.validatedQuery as {
+      page: number;
+      limit: number;
+      idAno?: number;
+      idSeccion?: number;
+      idMateria?: number;
+      idEstudiante?: number;
+      fecha?: string;
+      mes?: string;
+      startDate?: string;
+      endDate?: string;
+      estado?: EstadoAsistencia;
+      search?: string;
+    };
+    res.json(await db.getAsistenciaPaginated(query));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+apiRouter.get(
+  '/asistencia/general',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  validateQuery(attendanceHistoryQuerySchema),
+  handleGetAttendanceHistoryPaginated
+);
+
+apiRouter.get(
+  '/attendance/history',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  validateQuery(attendanceHistoryQuerySchema),
+  handleGetAttendanceHistoryPaginated
+);
+
+const handleRegistrarAsistenciaBatch = async (req: Request, res: Response) => {
+  try {
+    const { idMateria, fecha, records } = req.body;
+    const ownership = await validateDocenteOwnership(req, Number(idMateria));
+    if (!ownership.allowed) {
+      return res.status(403).json({ error: ownership.reason });
+    }
+
+    // Restricción RBAC: Solo Coordinación o Dirección pueden justificar inasistencias o registrar reposos médicos
+    if (req.user?.rol === 'docente') {
+      const existingDayRecords = await db.getAsistencia({
+        idMateria: Number(idMateria),
+        fecha,
+      });
+      const existingByStudent = new Map(existingDayRecords.map((r) => [r.idEstudiante, r]));
+      const unauthorizedJustifications = (
+        records as Array<{ idEstudiante: number; estado: EstadoAsistencia }>
+      ).filter((r) => {
+        if (r.estado !== 'Justificado' && r.estado !== 'Reposo Médico') return false;
+        const existing = existingByStudent.get(Number(r.idEstudiante));
+        // Permitir únicamente reenviar el mismo estado si ya fue bloqueado/validado previamente por Coordinación
+        return !existing || existing.estado !== r.estado;
+      });
+
+      if (unauthorizedJustifications.length > 0) {
+        await db.logAuditEvent({
+          ...getAuditAuthorFromReq(req),
+          accion: 'INTENTO_JUSTIFICACION_ASISTENCIA_DENEGADO',
+          entidad: 'asistencia',
+          idEntidad: idMateria,
+          detalles: {
+            idMateria,
+            fecha,
+            rolPresente: req.user.rol,
+            motivo:
+              'Un docente intentó registrar estados Justificado o Reposo Médico sin permisos de Coordinación.',
+          },
+        });
+        return res.status(403).json({
+          error:
+            'Acceso denegado: Solo los roles de Coordinador o Director pueden emitir justificaciones o registrar reposos médicos.',
+          code: 'FORBIDDEN_JUSTIFICATION_ROLE',
+        });
+      }
+    }
+
+    const actorNombre = req.user
+      ? `${req.user.nombre} ${req.user.apellidos || ''}`.trim()
+      : 'Sistema';
+
+    const saved = await db.registrarAsistenciaBatch(Number(idMateria), fecha, records, {
+      actorId: req.user?.id,
+      actorNombre,
+      actorRol: req.user?.rol,
+    });
+
+    const resumenEstados = (
+      records as Array<{ idEstudiante: number; estado: EstadoAsistencia }>
+    ).reduce<Record<string, number>>((acc, item) => {
+      acc[item.estado] = (acc[item.estado] || 0) + 1;
+      return acc;
+    }, {});
+
+    await db.logAuditEvent({
+      ...getAuditAuthorFromReq(req),
+      accion: 'ASISTENCIA_REGISTRADA_BATCH',
+      entidad: 'asistencia',
+      idEntidad: idMateria,
+      detalles: {
+        idMateria,
+        fecha,
+        totalEstudiantes: records.length,
+        resumenEstados,
+        responsableId: req.user?.id || null,
+        responsableNombre: actorNombre,
+        responsableRol: req.user?.rol || null,
+      },
+    });
+
+    // Despacho asíncrono de notificaciones Web Push a representantes suscritos
+    db.getPushDispatchPayloadForBatch(Number(idMateria), saved)
+      .then(async (payload) => {
+        if (payload.subscriptions.length > 0 && payload.records.length > 0) {
+          const pushRes = await dispatchAttendancePushNotificationsDirect({
+            idMateria: payload.idMateria,
+            nombreMateria: payload.nombreMateria,
+            fecha,
+            records: payload.records,
+            subscriptions: payload.subscriptions,
+          });
+          if (pushRes.expiredEndpoints.length > 0) {
+            await db.deletePushSubscriptionsByEndpoints(pushRes.expiredEndpoints);
+          }
+        }
+      })
+      .catch((err) => console.warn('[WebPush] Error en despacho automático de asistencia:', err));
+
+    res.json({ success: true, count: saved.length });
+  } catch (e: any) {
+    res.status(400).json({ error: e.message });
+  }
+};
+
+apiRouter.post(
+  '/asistencia/batch',
+  requireAuth,
+  requireRole('director', 'coordinador', 'docente'),
+  validateBody(asistenciaBatchSchema),
+  handleRegistrarAsistenciaBatch
+);
+
+apiRouter.post(
+  '/attendance/batch',
+  requireAuth,
+  requireRole('director', 'coordinador', 'docente'),
+  validateBody(asistenciaBatchSchema),
+  handleRegistrarAsistenciaBatch
+);
+
+const handleUpdateAsistenciaJustificacion = async (req: Request, res: Response) => {
+  try {
+    const idAsistencia = Number(req.params.id);
+    if (!Number.isInteger(idAsistencia) || idAsistencia <= 0) {
+      return res.status(400).json({ error: 'ID de registro de asistencia inválido.' });
+    }
+
+    if (!req.user) {
+      return res.status(401).json({ error: 'No autenticado.' });
+    }
+
+    const { estado, motivoJustificacion, numeroJustificante, fechaRecepcionDocumento } = req.body;
+    const actorNombre = `${req.user.nombre} ${req.user.apellidos || ''}`.trim();
+
+    const updated = await db.updateAsistenciaJustificacion(
+      idAsistencia,
+      {
+        estado,
+        motivoJustificacion,
+        numeroJustificante: numeroJustificante || null,
+        fechaRecepcionDocumento: fechaRecepcionDocumento || null,
+      },
+      {
+        id: req.user.id,
+        nombre: actorNombre,
+        rol: req.user.rol,
+      }
+    );
+
+    if (!updated) {
+      return res.status(404).json({ error: 'Registro de asistencia no encontrado.' });
+    }
+
+    await db.logAuditEvent({
+      ...getAuditAuthorFromReq(req),
+      accion: 'ASISTENCIA_JUSTIFICACION_MODIFICADA',
+      entidad: 'asistencia',
+      idEntidad: idAsistencia,
+      detalles: {
+        idAsistencia,
+        idEstudiante: updated.registro.idEstudiante,
+        estudiante: `${updated.registro.estudianteApellidos || ''}, ${updated.registro.estudianteNombres || ''}`.trim(),
+        fechaClase: updated.registro.fecha,
+        materia: updated.registro.nombreMateria,
+        estadoAnterior: updated.previousEstado,
+        estadoNuevo: updated.registro.estado,
+        motivoJustificacion: updated.registro.motivoJustificacion,
+        numeroJustificante: updated.registro.numeroJustificante,
+        fechaRecepcionDocumento: updated.registro.fechaRecepcionDocumento,
+        coordinadorResponsable: actorNombre,
+        rolResponsable: req.user.rol,
+      },
+    });
+
+    res.json({
+      success: true,
+      mensaje: 'Registro de asistencia actualizado y auditado correctamente.',
+      registro: updated.registro,
+    });
+  } catch (e: any) {
+    res.status(400).json({ error: e.message || 'Error al actualizar el registro de asistencia.' });
+  }
+};
+
+apiRouter.patch(
+  '/asistencia/:id',
+  requireAuth,
+  requireRole('coordinador', 'director'),
+  validateBody(updateAsistenciaJustificacionSchema),
+  handleUpdateAsistenciaJustificacion
+);
+
+apiRouter.patch(
+  '/attendance/:id',
+  requireAuth,
+  requireRole('coordinador', 'director'),
+  validateBody(updateAsistenciaJustificacionSchema),
+  handleUpdateAsistenciaJustificacion
+);
+
+apiRouter.get('/portal/representante/:id', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const idRep = Number(req.params.id);
+    if (req.authType === 'representante') {
+      if (!req.representante || req.representante.idRepresentante !== idRep) {
+        return res.status(403).json({
+          error: 'Acceso denegado: Solo puede consultar su propio portal de representante.',
+        });
+      }
+    } else if (!req.user || !['director', 'coordinador'].includes(req.user.rol)) {
+      return res.status(403).json({ error: 'Acceso denegado al portal de representante.' });
+    }
+
+    const data = await db.getPortalRepresentanteData(idRep);
+    if (!data) {
+      return res.status(404).json({ error: 'Representante no encontrado.' });
+    }
+    res.json(data);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 6. HORARIOS ESCOLARES & ANTICONFLICTOS
+// ---------------------------------------------------------------------------
+apiRouter.get('/horarios', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const filters = {
+      idAno: req.query.idAno ? Number(req.query.idAno) : undefined,
+      idSeccion: req.query.idSeccion ? Number(req.query.idSeccion) : undefined,
+      diaSemana: req.query.diaSemana ? String(req.query.diaSemana) : undefined,
+      idMateria: req.query.idMateria ? Number(req.query.idMateria) : undefined,
+      idDocente: req.query.idDocente ? Number(req.query.idDocente) : undefined,
+    };
+    res.json(await db.getHorarios(filters));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+apiRouter.post(
+  '/horarios/validate-conflict',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      res.json(await db.detectHorarioConflict(req.body));
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.post(
+  '/horarios/suggest-slots',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      res.json(await db.suggestConflictFreeSlots(req.body));
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.post(
+  '/horarios/auto-resolve',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      const result = await db.autoResolveHorarioConflicts();
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'HORARIOS_AUTORESULETOS',
+        entidad: 'horarios',
+        detalles: result,
+      });
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.post(
+  '/horarios',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  validateBody(createHorarioSchema),
+  async (req: Request, res: Response) => {
+    try {
+      const created = await db.createHorario(req.body);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'HORARIO_BLOQUE_CREADO',
+        entidad: 'horarios',
+        idEntidad: created.idHorario,
+        detalles: req.body,
+      });
+      res.status(201).json(created);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.put(
+  '/horarios/:id',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      const id = Number(req.params.id);
+      const updated = await db.updateHorario(id, req.body);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'HORARIO_BLOQUE_ACTUALIZADO',
+        entidad: 'horarios',
+        idEntidad: id,
+        detalles: req.body,
+      });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.delete(
+  '/horarios/:id',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      const id = Number(req.params.id);
+      await db.deleteHorario(id);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'HORARIO_BLOQUE_ELIMINADO',
+        entidad: 'horarios',
+        idEntidad: id,
+      });
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// 7. AUDITORÍA, RESPALDO & RESTAURACIÓN
+// ---------------------------------------------------------------------------
+const handleGetAuditLogsPaginated = async (_req: Request, res: Response) => {
+  try {
+    const query = res.locals.validatedQuery as {
+      page: number;
+      limit: number;
+      accion?: string;
+      entidad?: string;
+      search?: string;
+      startDate?: string;
+      endDate?: string;
+    };
+    res.json(await db.getAuditLogsPaginated(query));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+apiRouter.get(
+  '/auditoria',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  validateQuery(auditLogsQuerySchema),
+  handleGetAuditLogsPaginated
+);
+
+apiRouter.get(
+  '/audit-logs',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  validateQuery(auditLogsQuerySchema),
+  handleGetAuditLogsPaginated
+);
+
+apiRouter.get(
+  '/backup/stats',
+  requireAuth,
+  requireRole('director'),
+  async (_req: Request, res: Response) => {
+    try {
+      res.json(await db.getDatabaseStats());
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.get(
+  '/backup/export',
+  requireAuth,
+  requireRole('director'),
+  async (req: Request, res: Response) => {
+    try {
+      const backup = await db.createFullDatabaseBackup(
+        req.user ? { id: req.user.id, email: req.user.email, rol: req.user.rol } : undefined
+      );
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'BACKUP_BASE_DATOS_EXPORTADO',
+        entidad: 'DATABASE',
+        idEntidad: 'full_backup',
+        detalles: { conteos: backup.metadata.resumenConteos },
+      });
+      res.json(backup);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.post(
+  '/backup/restore',
+  requireAuth,
+  requireRole('director'),
+  async (req: Request, res: Response) => {
+    try {
+      const result = await db.restoreFullDatabaseBackup(req.body);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'RESTAURACION_BASE_DATOS_EJECUTADA',
+        entidad: 'DATABASE',
+        idEntidad: 'full_restore',
+        detalles: { tablasRestauradas: result.tablasRestauradas },
+      });
+      res.json(result);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.post(
+  '/backup/reset',
+  requireAuth,
+  requireRole('director'),
+  async (req: Request, res: Response) => {
+    try {
+      const result = await db.resetDatabaseToMasterSeed();
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'REINICIO_SEMILLA_MAESTRA_EJECUTADO',
+        entidad: 'DATABASE',
+        idEntidad: 'seed_reset',
+        detalles: { resultado: result.mensaje },
+      });
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// 8. NOTIFICACIONES WEB PUSH
+// ---------------------------------------------------------------------------
+apiRouter.get('/push/vapid-public-key', async (_req: Request, res: Response) => {
+  try {
+    const publicKey = await getVapidPublicKey();
+    res.json({ publicKey });
+  } catch (error: any) {
+    console.error('Error getting VAPID public key:', error);
+    res.status(500).json({ error: 'No se pudo obtener la clave pública VAPID.' });
+  }
+});
+
+apiRouter.get('/push/status', requireAuth, async (req: Request, res: Response) => {
+  if (req.authType !== 'representante' || !req.representante) {
+    return res.json({ activeDevices: 0 });
+  }
+  const activeDevices = await db.getPushSubscriptionsCountForRep(
+    req.representante.idRepresentante
+  );
+  res.json({ activeDevices });
+});
+
+apiRouter.post(
+  '/push/subscribe',
+  requireAuth,
+  validateBody(pushSubscriptionSchema),
+  async (req: Request, res: Response) => {
+    if (req.authType !== 'representante' || !req.representante) {
+      return res.status(403).json({
+        error: 'Solo representantes autenticados pueden activar alertas push.',
+      });
+    }
+    try {
+      const sub = await db.upsertPushSubscription({
+        idRepresentante: req.representante.idRepresentante,
+        endpoint: req.body.endpoint,
+        p256dh: req.body.keys.p256dh,
+        auth: req.body.keys.auth,
+        userAgent: req.headers['user-agent'] || null,
+      });
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'PUSH_SUSCRIPCION_REGISTRADA',
+        entidad: 'push_subscriptions',
+        idEntidad: sub.idSubscription,
+      });
+      res.json({ success: true, idSubscription: sub.idSubscription });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.post(
+  '/push/unsubscribe',
+  requireAuth,
+  validateBody(pushUnsubscribeSchema),
+  async (req: Request, res: Response) => {
+    if (req.authType !== 'representante' || !req.representante) {
+      return res.json({ success: false, removed: false });
+    }
+    const removed = await db.deactivatePushSubscriptionForRep(
+      req.body.endpoint,
+      req.representante.idRepresentante
+    );
+    res.json({ success: true, removed });
+  }
+);
+
+apiRouter.use((_req: Request, res: Response) => {
+  res.status(404).json({ error: 'Endpoint de API no encontrado.' });
+});

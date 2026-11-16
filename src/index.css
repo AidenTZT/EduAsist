@@ -1,0 +1,223 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *, [data-theme="dark"], [data-theme="dark"] *));
+
+:root {
+  --bg-color: #f8fafc;
+  --card-bg: #ffffff;
+  --surface-color: #ffffff;
+  --card-subtle: #f1f5f9;
+  --bg-input: #ffffff;
+  --text-main: #0f172a;
+  --text-color: #0f172a;
+  --text-muted: #64748b;
+  --text-subtle: #94a3b8;
+  --border-color: #e2e8f0;
+  --border-subtle: #f1f5f9;
+}
+
+[data-theme="dark"],
+.dark {
+  /* OLED / Negro Puro Palette: Píxeles completamente apagados (#000000), ahorro de batería y máximo contraste */
+  --bg-color: #000000;
+  --card-bg: #121212;
+  --surface-color: #121212;
+  --card-subtle: #181818;
+  --bg-input: #0a0a0a;
+  --text-main: #f4f4f5;
+  --text-color: #f4f4f5;
+  --text-muted: #a1a1aa;
+  --text-subtle: #71717a;
+  --border-color: #27272a;
+  --border-subtle: #1e1e22;
+}
+
+body {
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+/* ==========================================================================
+   OLED PURE BLACK (#000000) UTILITY OVERRIDES
+   ========================================================================== */
+
+/* Fondo general de la aplicación en Negro Puro OLED */
+.dark body,
+.dark #root,
+.dark .min-h-screen,
+.dark .bg-slate-50 {
+  background-color: #000000 !important;
+}
+
+/* Tarjetas, modales, barras superiores y contenedores principales (#121212) */
+.dark .bg-white {
+  background-color: var(--card-bg) !important;
+  color: var(--text-color) !important;
+}
+
+/* Sub-superficies, cabeceras de tablas y secciones agrupadas (#181818) */
+.dark .bg-slate-100,
+.dark .bg-slate-100\/80 {
+  background-color: var(--card-subtle) !important;
+}
+
+.dark .bg-slate-50\/50,
+.dark .bg-slate-50\/70,
+.dark .bg-slate-50\/80 {
+  background-color: #141416 !important;
+}
+
+.dark .bg-slate-200 {
+  background-color: #202024 !important;
+}
+
+/* Tipografía de alto contraste */
+.dark .text-slate-900 {
+  color: #f4f4f5 !important;
+}
+
+.dark .text-slate-800 {
+  color: #ebebef !important;
+}
+
+.dark .text-slate-700 {
+  color: #d4d4d8 !important;
+}
+
+.dark .text-slate-600 {
+  color: #a1a1aa !important;
+}
+
+.dark .text-slate-500 {
+  color: #71717a !important;
+}
+
+.dark .text-slate-400 {
+  color: #52525b !important;
+}
+
+/* Bordes y separadores sutiles (#27272A) */
+.dark .border-slate-100,
+.dark .border-slate-200,
+.dark .border-slate-200\/80,
+.dark .border-slate-200\/90,
+.dark .border-slate-300 {
+  border-color: var(--border-color) !important;
+}
+
+.dark .divide-slate-100 > :not([hidden]) ~ :not([hidden]),
+.dark .divide-slate-200 > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--border-color) !important;
+}
+
+/* Formularios, inputs y selects en OLED */
+.dark input:not([type='checkbox']):not([type='radio']),
+.dark select,
+.dark textarea {
+  background-color: var(--bg-input) !important;
+  color: #f4f4f5 !important;
+  border-color: var(--border-color) !important;
+}
+
+.dark input:focus,
+.dark select:focus,
+.dark textarea:focus {
+  border-color: #6366f1 !important;
+  outline: none !important;
+  box-shadow: 0 0 0 1px #6366f1 !important;
+}
+
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: #52525b !important;
+}
+
+/* Estados hover de alta legibilidad en fondo OLED */
+.dark .hover\:bg-slate-50:hover,
+.dark .hover\:bg-slate-50\/70:hover {
+  background-color: #1c1c1f !important;
+}
+
+.dark .hover\:bg-slate-100:hover {
+  background-color: #222226 !important;
+}
+
+.dark .hover\:bg-slate-200:hover {
+  background-color: #2b2b30 !important;
+}
+
+/* Botones táctiles de pase de asistencia (unselected) en OLED */
+.dark .grid button.bg-slate-50 {
+  background-color: #161618 !important;
+  color: #a1a1aa !important;
+  border: 1px solid #27272a !important;
+}
+
+.dark .grid button.bg-slate-50:hover {
+  background-color: #222226 !important;
+  color: #f4f4f5 !important;
+}
+
+/* Badges y etiquetas con contraste OLED (fondos translúcidos elegantes en vez de pasteles claros) */
+.dark .bg-indigo-50 {
+  background-color: rgba(99, 102, 241, 0.16) !important;
+  color: #a5b4fc !important;
+}
+
+.dark .bg-emerald-50 {
+  background-color: rgba(16, 185, 129, 0.16) !important;
+  color: #6ee7b7 !important;
+}
+
+.dark .bg-rose-50 {
+  background-color: rgba(244, 63, 94, 0.16) !important;
+  color: #fda4af !important;
+}
+
+.dark .bg-amber-50 {
+  background-color: rgba(245, 158, 11, 0.16) !important;
+  color: #fcd34d !important;
+}
+
+.dark .bg-purple-50 {
+  background-color: rgba(168, 85, 247, 0.16) !important;
+  color: #d8b4fe !important;
+}
+
+.dark .bg-sky-50 {
+  background-color: rgba(14, 165, 233, 0.16) !important;
+  color: #7dd3fc !important;
+}
+
+.dark .bg-blue-50 {
+  background-color: rgba(59, 130, 246, 0.16) !important;
+  color: #93c5fd !important;
+}
+
+/* Sombras atenuadas con bordes nítidos para OLED */
+.dark .shadow-sm,
+.dark .shadow-md,
+.dark .shadow-lg,
+.dark .shadow-xl {
+  box-shadow: 0 0 0 1px #27272a !important;
+}
+
+/* Barra de desplazamiento OLED de bajo consumo */
+.dark ::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+.dark ::-webkit-scrollbar-track {
+  background: #000000;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #27272a;
+  border-radius: 4px;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #3f3f46;
+}
