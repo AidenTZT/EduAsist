@@ -32,7 +32,8 @@ import type {
 // Persistencia Atómica en Archivo JSON Local (Server-Side Repository)
 // ---------------------------------------------------------------------------
 const DB_DIR = path.resolve(process.cwd(), 'data');
-const DB_FILE = path.join(DB_DIR, 'educontrol-db.json');
+const DB_FILE = path.join(DB_DIR, 'eduasist-db.json');
+const LEGACY_DB_FILE = path.join(DB_DIR, 'educontrol-db.json');
 const SEED_BACKUP_FILE = path.resolve(
   process.cwd(),
   'public/assets/aistudio/backup_educontrol_2026-11-07_1794081780485_32e75f23.json'
@@ -140,6 +141,7 @@ function isMasterAdminUser(u: Pick<Usuario, 'nombre' | 'email' | 'cedula' | 'usu
   return (
     nombreLower === 'admin' ||
     usuarioLower === 'admin' ||
+    emailLower === 'admin@eduasist.edu' ||
     emailLower === 'admin@educontrol.edu' ||
     emailLower === 'adrian0424344@gmail.com' ||
     cedulaLower === 'admin'
@@ -182,24 +184,34 @@ async function normalizeAndEnsureIntegrity(raw: Partial<DatabaseState>): Promise
           : 'docente123';
       hash = await bcrypt.hash(plain, 10);
     }
+    let normalizedUserEmail = normalizeEmail(u.email);
+    if (normalizedUserEmail.endsWith('@educontrol.edu')) {
+      const migratedEmail = normalizedUserEmail.replace(/@educontrol\.edu$/, '@eduasist.edu');
+      const alreadyExists = state.users.some(
+        (other, idx) => idx !== i && normalizeEmail(other.email) === migratedEmail
+      );
+      if (!alreadyExists) {
+        normalizedUserEmail = migratedEmail;
+      }
+    }
     const defaultUsuario =
       u.usuario && String(u.usuario).trim()
         ? String(u.usuario).trim()
-        : u.email?.toLowerCase() === 'admin@educontrol.edu'
+        : normalizedUserEmail === 'admin@eduasist.edu' || normalizedUserEmail === 'admin@educontrol.edu'
         ? 'admin'
         : null;
     state.users[i] = {
       ...u,
-      email: normalizeEmail(u.email),
+      email: normalizedUserEmail,
       usuario: defaultUsuario,
       activo: typeof u.activo === 'boolean' ? u.activo : true,
       passwordHash: hash,
     };
   }
 
-  // Garantizar usuario maestro admin@educontrol.edu si faltase
+  // Garantizar usuario maestro admin@eduasist.edu si faltase
   const hasAdmin = state.users.some(
-    (u) => u.email === 'admin@educontrol.edu' || u.usuario?.toLowerCase() === 'admin'
+    (u) => u.email === 'admin@eduasist.edu' || u.email === 'admin@educontrol.edu' || u.usuario?.toLowerCase() === 'admin'
   );
   if (!hasAdmin) {
     const adminHash = await bcrypt.hash('admin1234', 10);
@@ -207,7 +219,7 @@ async function normalizeAndEnsureIntegrity(raw: Partial<DatabaseState>): Promise
       id: nextNumericId(state.users, (u) => u.id),
       uid: 'usr_admin_master',
       usuario: 'admin',
-      email: 'admin@educontrol.edu',
+      email: 'admin@eduasist.edu',
       nombre: 'Admin',
       apellidos: 'Principal',
       cedula: 'admin',
@@ -362,7 +374,7 @@ function syncAsistenciaLapsoIds(state: DatabaseState): void {
 
 async function persistDbAtomic(state: DatabaseState): Promise<void> {
   await fs.promises.mkdir(DB_DIR, { recursive: true });
-  const tmpFile = path.join(DB_DIR, `educontrol-db.${process.pid}.${Date.now()}.tmp`);
+  const tmpFile = path.join(DB_DIR, `eduasist-db.${process.pid}.${Date.now()}.tmp`);
   await fs.promises.writeFile(tmpFile, JSON.stringify(state, null, 2), 'utf-8');
   await fs.promises.rename(tmpFile, DB_FILE);
 }
@@ -377,6 +389,13 @@ async function loadOrInitializeDb(): Promise<DatabaseState> {
         const rawText = await fs.promises.readFile(DB_FILE, 'utf-8');
         const parsed = JSON.parse(rawText) as Partial<DatabaseState>;
         cachedDb = await normalizeAndEnsureIntegrity(parsed);
+        return cachedDb;
+      }
+      if (fs.existsSync(LEGACY_DB_FILE)) {
+        const legacyText = await fs.promises.readFile(LEGACY_DB_FILE, 'utf-8');
+        const parsed = JSON.parse(legacyText) as Partial<DatabaseState>;
+        cachedDb = await normalizeAndEnsureIntegrity(parsed);
+        await persistDbAtomic(cachedDb);
         return cachedDb;
       }
     } catch (err) {
@@ -615,7 +634,12 @@ export async function getUserByEmailOrCedula(emailOrCedula: string): Promise<Usu
   const db = await readDb();
   const identLower = String(emailOrCedula || '').trim().toLowerCase();
   const identDigits = String(emailOrCedula || '').replace(/\D/g, '');
-  const found = db.users.find((u) => matchesUserIdentifier(u, identLower, identDigits));
+  const altIdent = identLower.endsWith('@educontrol.edu')
+    ? identLower.replace(/@educontrol\.edu$/, '@eduasist.edu')
+    : identLower;
+  const found = db.users.find(
+    (u) => matchesUserIdentifier(u, identLower, identDigits) || (altIdent !== identLower && matchesUserIdentifier(u, altIdent, identDigits))
+  );
   return found ? sanitizeUser(found) : null;
 }
 
@@ -2739,7 +2763,7 @@ export async function createFullDatabaseBackup(authorInfo?: { id?: number; email
       sistema: 'EduAsist - Sistema de Control de Asistencia Escolar',
       version: '1.0.0',
       fechaGeneracion: new Date().toISOString(),
-      generadoPor: authorInfo || { email: 'director@educontrol.edu', rol: 'director' },
+      generadoPor: authorInfo || { email: 'director@eduasist.edu', rol: 'director' },
       resumenConteos: {
         configuracion: db.configuracionInstitucional.length,
         recesos: db.recesosInstitucionales.length,
@@ -2808,7 +2832,7 @@ export async function resetDatabaseToMasterSeed() {
         id: 1,
         uid: 'usr_admin_master',
         usuario: 'admin',
-        email: 'admin@educontrol.edu',
+        email: 'admin@eduasist.edu',
         nombre: 'Admin',
         apellidos: 'Principal',
         cedula: 'admin',
@@ -2823,7 +2847,7 @@ export async function resetDatabaseToMasterSeed() {
     return {
       success: true,
       mensaje:
-        'Sistema reiniciado a la semilla oficial con el usuario maestro Director (usuario: admin / admin@educontrol.edu).',
+        'Sistema reiniciado a la semilla oficial con el usuario maestro Director (usuario: admin / admin@eduasist.edu).',
     };
   });
 }

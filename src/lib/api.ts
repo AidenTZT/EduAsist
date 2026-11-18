@@ -23,12 +23,16 @@ import type {
   LapsoEscolar,
 } from '../types.ts';
 
-const AUTH_TOKEN_KEY = 'educontrol_auth_token';
+const AUTH_TOKEN_KEY = 'eduasist_auth_token';
+const LEGACY_AUTH_TOKEN_KEY = 'educontrol_auth_token';
 
 function getStoredToken(): string | null {
   try {
     if (typeof window !== 'undefined' && window.sessionStorage) {
-      return window.sessionStorage.getItem(AUTH_TOKEN_KEY);
+      return (
+        window.sessionStorage.getItem(AUTH_TOKEN_KEY) ||
+        window.sessionStorage.getItem(LEGACY_AUTH_TOKEN_KEY)
+      );
     }
   } catch {
     // Ignorar en entornos con storage restringido
@@ -39,6 +43,7 @@ function getStoredToken(): string | null {
 function setStoredToken(token: string | null): void {
   try {
     if (typeof window !== 'undefined' && window.sessionStorage) {
+      window.sessionStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
       if (token) {
         window.sessionStorage.setItem(AUTH_TOKEN_KEY, token);
       } else {

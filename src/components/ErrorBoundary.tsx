@@ -21,7 +21,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error('[EduControl ErrorBoundary] Uncaught render error:', error, errorInfo);
+    console.error('[EduAsist ErrorBoundary] Uncaught render error:', error, errorInfo);
   }
 
   private handleReload = () => {

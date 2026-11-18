@@ -26,7 +26,8 @@ if (!rawJwtSecret || rawJwtSecret.length < 32) {
 export const JWT_SECRET =
   rawJwtSecret && rawJwtSecret.length >= 32 ? rawJwtSecret : FALLBACK_DEFAULT_SECRET;
 
-export const AUTH_COOKIE_NAME = 'educontrol_token';
+export const AUTH_COOKIE_NAME = 'eduasist_token';
+const LEGACY_AUTH_COOKIE_NAME = 'educontrol_token';
 
 declare global {
   namespace Express {
@@ -83,6 +84,12 @@ export function clearAuthCookie(res: Response): void {
     sameSite: isHttps ? 'none' : 'lax',
     path: '/',
   });
+  res.clearCookie(LEGACY_AUTH_COOKIE_NAME, {
+    httpOnly: true,
+    secure: isHttps,
+    sameSite: isHttps ? 'none' : 'lax',
+    path: '/',
+  });
   res.cookie(AUTH_COOKIE_NAME, '', {
     httpOnly: true,
     secure: isHttps,
@@ -96,6 +103,9 @@ export function clearAuthCookie(res: Response): void {
 export function extractToken(req: Request): string | null {
   if (req.cookies && req.cookies[AUTH_COOKIE_NAME]) {
     return req.cookies[AUTH_COOKIE_NAME];
+  }
+  if (req.cookies && req.cookies[LEGACY_AUTH_COOKIE_NAME]) {
+    return req.cookies[LEGACY_AUTH_COOKIE_NAME];
   }
 
   const authHeader = req.headers.authorization;

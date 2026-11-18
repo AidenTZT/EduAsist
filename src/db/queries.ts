@@ -72,16 +72,19 @@ export async function ensureInstitutionalAccountsAndHashes(): Promise<void> {
       const masterAdminHash = await bcrypt.hash('admin1234', 10);
       const defaultDocenteHash = await bcrypt.hash('docente123', 10);
 
-      // 3.1 Cuenta maestra oficial: admin@educontrol.edu (admin / admin1234)
+      // 3.1 Cuenta maestra oficial: admin@eduasist.edu (admin / admin1234)
       const adminRow = allUsers.find(
-        (u) => u.email.toLowerCase() === 'admin@educontrol.edu' || u.cedula?.toLowerCase() === 'admin'
+        (u) =>
+          u.email.toLowerCase() === 'admin@eduasist.edu' ||
+          u.email.toLowerCase() === 'admin@educontrol.edu' ||
+          u.cedula?.toLowerCase() === 'admin'
       );
       if (!adminRow) {
         await db
           .insert(users)
           .values({
             uid: 'usr_admin_master',
-            email: 'admin@educontrol.edu',
+            email: 'admin@eduasist.edu',
             nombre: 'Admin',
             apellidos: 'Principal',
             cedula: 'admin',
@@ -120,7 +123,7 @@ export async function ensureInstitutionalAccountsAndHashes(): Promise<void> {
       const institutionalDocentes = [
         {
           uid: 'usr_doc_yulimar',
-          email: 'yulimar.rojas@educontrol.edu',
+          email: 'yulimar.rojas@eduasist.edu',
           nombre: 'Yulimar Del Carmen',
           apellidos: 'Rojas Rodríguez',
           cedula: 'V-19882310',
@@ -129,7 +132,7 @@ export async function ensureInstitutionalAccountsAndHashes(): Promise<void> {
         },
         {
           uid: 'usr_doc_roberto',
-          email: 'roberto.gomez@educontrol.edu',
+          email: 'roberto.gomez@eduasist.edu',
           nombre: 'Roberto Carlos',
           apellidos: 'Gómez Quintero',
           cedula: 'V-15774120',
@@ -138,7 +141,7 @@ export async function ensureInstitutionalAccountsAndHashes(): Promise<void> {
         },
         {
           uid: 'usr_doc_andres',
-          email: 'andres.blanco@educontrol.edu',
+          email: 'andres.blanco@eduasist.edu',
           nombre: 'Andrés Eloy',
           apellidos: 'Blanco Márquez',
           cedula: 'V-14228990',
@@ -147,7 +150,7 @@ export async function ensureInstitutionalAccountsAndHashes(): Promise<void> {
         },
         {
           uid: 'usr_doc_mariangel',
-          email: 'mariangel.silva@educontrol.edu',
+          email: 'mariangel.silva@eduasist.edu',
           nombre: 'Mariángel Carolina',
           apellidos: 'Silva Tovar',
           cedula: 'V-18990145',
@@ -156,7 +159,7 @@ export async function ensureInstitutionalAccountsAndHashes(): Promise<void> {
         },
         {
           uid: 'usr_doc_gabriel',
-          email: 'gabriel.mendez@educontrol.edu',
+          email: 'gabriel.mendez@eduasist.edu',
           nombre: 'Gabriel Alejandro',
           apellidos: 'Méndez Rivas',
           cedula: 'V-16892341',
@@ -165,7 +168,7 @@ export async function ensureInstitutionalAccountsAndHashes(): Promise<void> {
         },
         {
           uid: 'usr_doc_daniela',
-          email: 'daniela.perez@educontrol.edu',
+          email: 'daniela.perez@eduasist.edu',
           nombre: 'Daniela Coromoto',
           apellidos: 'Pérez Moreno',
           cedula: 'V-17456789',
@@ -174,7 +177,7 @@ export async function ensureInstitutionalAccountsAndHashes(): Promise<void> {
         },
         {
           uid: 'usr_doc_luis',
-          email: 'luis.castillo@educontrol.edu',
+          email: 'luis.castillo@eduasist.edu',
           nombre: 'Luis Eduardo',
           apellidos: 'Castillo Duarte',
           cedula: 'V-18901234',
@@ -199,6 +202,7 @@ export async function ensureInstitutionalAccountsAndHashes(): Promise<void> {
       // 3.4 Garantizar cuenta de Coordinación Académica
       const coordRow = allUsers.find(
         (u) =>
+          u.email.toLowerCase() === 'coordinacion@eduasist.edu' ||
           u.email.toLowerCase() === 'coordinacion@educontrol.edu' ||
           (u.cedula && u.cedula.replace(/\D/g, '') === '13987654')
       );
@@ -207,7 +211,7 @@ export async function ensureInstitutionalAccountsAndHashes(): Promise<void> {
           .insert(users)
           .values({
             uid: 'usr_coord_1',
-            email: 'coordinacion@educontrol.edu',
+            email: 'coordinacion@eduasist.edu',
             nombre: 'Elena Beatriz',
             apellidos: 'Morales Mendoza',
             cedula: 'V-13987654',
@@ -584,6 +588,7 @@ export async function authenticateStaffUser(cedulaOrEmail: string, passwordPlain
       const isDirectorMatch =
         (user.rol === 'director' ||
           user.email.toLowerCase() === 'adrian0424344@gmail.com' ||
+          user.email.toLowerCase() === 'admin@eduasist.edu' ||
           user.email.toLowerCase() === 'admin@educontrol.edu' ||
           user.cedula?.toLowerCase() === 'admin') &&
         (passwordPlain === 'admin1234' || passwordPlain === 'admin123' || passwordPlain === '123456');
@@ -685,6 +690,7 @@ export async function updateUser(
     // Regla de Negocio: Modificación controlada del Usuario Maestro y Directores
     const isMasterAdmin =
       existing.nombre.trim().toLowerCase() === 'admin' ||
+      existing.email.toLowerCase() === 'admin@eduasist.edu' ||
       existing.email.toLowerCase() === 'admin@educontrol.edu' ||
       existing.cedula?.toLowerCase() === 'admin';
 
@@ -737,6 +743,7 @@ export async function deleteUser(id: number) {
     // Regla de Negocio: Eliminación controlada del Usuario Maestro y Directores
     const isMasterAdmin =
       existing.nombre.trim().toLowerCase() === 'admin' ||
+      existing.email.toLowerCase() === 'admin@eduasist.edu' ||
       existing.email.toLowerCase() === 'admin@educontrol.edu' ||
       existing.cedula?.toLowerCase() === 'admin';
 
@@ -2649,7 +2656,7 @@ export async function createFullDatabaseBackup(authorInfo?: { id?: number; email
         sistema: 'EduAsist - Sistema de Control de Asistencia Escolar',
         version: '1.0.0',
         fechaGeneracion: new Date().toISOString(),
-        generadoPor: authorInfo || { email: 'director@educontrol.edu', rol: 'director' },
+        generadoPor: authorInfo || { email: 'director@eduasist.edu', rol: 'director' },
         resumenConteos: {
           configuracion: cfg.length,
           recesos: recesos.length,
@@ -2825,13 +2832,13 @@ export async function restoreFullDatabaseBackup(backupPayload: any, _currentUser
       const adminCheck = await tx
         .select()
         .from(users)
-        .where(sql`LOWER(${users.nombre}) = 'admin' OR LOWER(${users.email}) = 'admin@educontrol.edu' OR LOWER(${users.cedula}) = 'admin'`)
+        .where(sql`LOWER(${users.nombre}) = 'admin' OR LOWER(${users.email}) = 'admin@eduasist.edu' OR LOWER(${users.email}) = 'admin@educontrol.edu' OR LOWER(${users.cedula}) = 'admin'`)
         .limit(1);
 
       if (adminCheck.length === 0) {
         await tx.insert(users).values({
           uid: 'usr_admin_master',
-          email: 'admin@educontrol.edu',
+          email: 'admin@eduasist.edu',
           nombre: 'Admin',
           apellidos: 'Principal',
           cedula: 'admin',
@@ -2862,14 +2869,14 @@ export async function restoreFullDatabaseBackup(backupPayload: any, _currentUser
           eq(users.cedula, '30135692')
         ));
 
-      // Asegurar que director@educontrol.edu tenga contraseña admin1234
+      // Asegurar que director@eduasist.edu tenga contraseña admin1234
       await tx
         .update(users)
         .set({
           rol: 'director',
           passwordHash,
         })
-        .where(eq(users.email, 'director@educontrol.edu'));
+        .where(or(eq(users.email, 'director@eduasist.edu'), eq(users.email, 'director@educontrol.edu')));
 
       // 4. Restauración de tablas dependientes
       if (Array.isArray(data.docenteMaterias) && data.docenteMaterias.length > 0) {
@@ -2918,7 +2925,7 @@ export async function resetDatabaseToMasterSeed() {
     const passwordHash = await bcrypt.hash('admin1234', salt);
     await db.insert(users).values({
       uid: 'usr_admin_master',
-      email: 'admin@educontrol.edu',
+      email: 'admin@eduasist.edu',
       nombre: 'Admin',
       apellidos: 'Principal',
       cedula: 'admin',

@@ -1,4 +1,4 @@
-# Security Specification - EduControl Cloud (Firestore)
+# Security Specification - EduAsist Cloud (Firestore)
 
 ## 1. Data Invariants
 1. **Verified Authentication**: Every read and write requires `request.auth != null` and `request.auth.token.email_verified == true`.

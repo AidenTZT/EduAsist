@@ -89,6 +89,7 @@ export const StaffManager: React.FC<StaffManagerProps> = ({
     if (userToEdit) {
       const isMasterAdmin =
         userToEdit.nombre.trim().toLowerCase() === 'admin' ||
+        userToEdit.email.toLowerCase() === 'admin@eduasist.edu' ||
         userToEdit.email.toLowerCase() === 'admin@educontrol.edu' ||
         userToEdit.email.toLowerCase() === 'adrian0424344@gmail.com' ||
         userToEdit.cedula?.toLowerCase() === 'admin';
@@ -222,6 +223,7 @@ export const StaffManager: React.FC<StaffManagerProps> = ({
 
     const isMasterAdmin =
       user.nombre.trim().toLowerCase() === 'admin' ||
+      user.email.toLowerCase() === 'admin@eduasist.edu' ||
       user.email.toLowerCase() === 'admin@educontrol.edu' ||
       user.email.toLowerCase() === 'adrian0424344@gmail.com' ||
       user.cedula?.toLowerCase() === 'admin';
@@ -396,6 +398,7 @@ export const StaffManager: React.FC<StaffManagerProps> = ({
                 const otherDirectors = activeUsersList.filter((user) => user.rol === 'director' && user.id !== u.id);
                 const isMasterAdmin =
                   u.nombre.trim().toLowerCase() === 'admin' ||
+                  u.email.toLowerCase() === 'admin@eduasist.edu' ||
                   u.email.toLowerCase() === 'admin@educontrol.edu' ||
                   u.email.toLowerCase() === 'adrian0424344@gmail.com' ||
                   u.cedula?.toLowerCase() === 'admin';
@@ -602,7 +605,7 @@ export const StaffManager: React.FC<StaffManagerProps> = ({
                   <input
                     type="email"
                     required
-                    placeholder="correo@educontrol.edu"
+                    placeholder="correo@eduasist.edu"
                     value={form.email}
                     onChange={(e) => setForm({ ...form, email: e.target.value })}
                     className="w-full bg-slate-50 dark:bg-[#181818] border border-slate-200 dark:border-[#27272A] text-slate-900 dark:text-[#F4F4F5] rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"

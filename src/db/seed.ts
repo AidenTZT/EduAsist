@@ -12,7 +12,7 @@ import {
 import { eq, sql } from 'drizzle-orm';
 
 /**
- * Script de inicialización y migración de semilla oficial para EduControl Cloud.
+ * Script de inicialización y migración de semilla oficial para EduAsist Cloud.
  * Garantiza un único usuario maestro por defecto:
  * - Rol: Director
  * - Nombre: Admin
@@ -113,7 +113,7 @@ export async function seedDatabase(options: { resetAllUsers?: boolean } = {}) {
     await db.delete(users);
     await db.insert(users).values({
       uid: 'usr_admin_master',
-      email: 'admin@educontrol.edu',
+      email: 'admin@eduasist.edu',
       nombre: 'Admin',
       apellidos: 'Principal',
       cedula: 'admin',
@@ -126,14 +126,14 @@ export async function seedDatabase(options: { resetAllUsers?: boolean } = {}) {
     const existingAdmin = await db
       .select()
       .from(users)
-      .where(sql`LOWER(${users.nombre}) = 'admin' OR LOWER(${users.cedula}) = 'admin' OR LOWER(${users.email}) = 'admin@educontrol.edu'`)
+      .where(sql`LOWER(${users.nombre}) = 'admin' OR LOWER(${users.cedula}) = 'admin' OR LOWER(${users.email}) = 'admin@eduasist.edu' OR LOWER(${users.email}) = 'admin@educontrol.edu'`)
       .limit(1);
 
     if (existingAdmin.length === 0) {
       console.log('[Seed] Creando usuario maestro inicial Admin con rol Director...');
       await db.insert(users).values({
         uid: 'usr_admin_master',
-        email: 'admin@educontrol.edu',
+        email: 'admin@eduasist.edu',
         nombre: 'Admin',
         apellidos: 'Principal',
         cedula: 'admin',

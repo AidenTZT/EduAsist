@@ -129,7 +129,7 @@ export const BackupRestoreManager: React.FC<BackupRestoreManagerProps> = ({
         JSON.stringify(backupData, null, 2)
       )}`;
       const downloadAnchor = document.createElement('a');
-      const filename = `backup_educontrol_${new Date().toISOString().split('T')[0]}_${Date.now()}.json`;
+      const filename = `backup_eduasist_${new Date().toISOString().split('T')[0]}_${Date.now()}.json`;
       downloadAnchor.setAttribute('href', jsonString);
       downloadAnchor.setAttribute('download', filename);
       document.body.appendChild(downloadAnchor);
@@ -228,7 +228,7 @@ export const BackupRestoreManager: React.FC<BackupRestoreManagerProps> = ({
       const result = await resetDatabaseToMaster();
       setStatusMessage({
         type: 'success',
-        text: result.mensaje + ' Acceso principal garantizado para el Director maestro (usuario: admin / correo: admin@educontrol.edu).',
+        text: result.mensaje + ' Acceso principal garantizado para el Director maestro (usuario: admin / correo: admin@eduasist.edu).',
       });
       setShowResetModal(false);
       setResetConfirmText('');
@@ -461,7 +461,7 @@ export const BackupRestoreManager: React.FC<BackupRestoreManagerProps> = ({
                 Restablecer a Semilla Maestra Inicial
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Inicializa la base de datos con el <strong>Director General maestro</strong> autenticado mediante credenciales locales (<code className="bg-slate-100 dark:bg-[#181818] px-1.5 py-0.5 rounded text-rose-600 font-mono">admin</code> / <code className="bg-slate-100 dark:bg-[#181818] px-1.5 py-0.5 rounded text-rose-600 font-mono">admin@educontrol.edu</code>).
+                Inicializa la base de datos con el <strong>Director General maestro</strong> autenticado mediante credenciales locales (<code className="bg-slate-100 dark:bg-[#181818] px-1.5 py-0.5 rounded text-rose-600 font-mono">admin</code> / <code className="bg-slate-100 dark:bg-[#181818] px-1.5 py-0.5 rounded text-rose-600 font-mono">admin@eduasist.edu</code>).
               </p>
             </div>
           </div>
@@ -541,7 +541,7 @@ export const BackupRestoreManager: React.FC<BackupRestoreManagerProps> = ({
             <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
               Esta operación reiniciará las tablas institucionales y mantendrá como{' '}
               <strong>único usuario maestro Director</strong> la cuenta local{' '}
-              <strong className="text-rose-600">admin@educontrol.edu</strong> (usuario: <code className="font-mono">admin</code>).
+              <strong className="text-rose-600">admin@eduasist.edu</strong> (usuario: <code className="font-mono">admin</code>).
             </p>
 
             <div className="space-y-1.5">

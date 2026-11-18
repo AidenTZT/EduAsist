@@ -74,10 +74,22 @@ app.use(cookieParser());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// 5. Montar la API escolar blindada
+// 5. Cabeceras frescas para manifiesto PWA y Service Worker (evitar cachés viejas de EduControl)
+app.use((req, res, next) => {
+  if (req.path === '/manifest.webmanifest') {
+    res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  } else if (req.path === '/sw.js') {
+    res.setHeader('Content-Type', 'text/javascript; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  }
+  next();
+});
+
+// 6. Montar la API escolar blindada
 app.use('/api', schoolApp);
 
-// 6. Frontend: Vite middlewares en desarrollo, archivos estáticos compilados en producción
+// 7. Frontend: Vite middlewares en desarrollo, archivos estáticos compilados en producción
 if (!isProd) {
   const { createServer: createViteServer } = await import('vite');
   const vite = await createViteServer({
@@ -93,5 +105,5 @@ if (!isProd) {
 }
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`[Seguridad] Sistema Escolar activo en http://0.0.0.0:${PORT} (Modo: ${isProd ? 'Producción' : 'Desarrollo'})`);
+  console.log(`[Seguridad] EduAsist activo en http://0.0.0.0:${PORT} (Modo: ${isProd ? 'Producción' : 'Desarrollo'})`);
 });

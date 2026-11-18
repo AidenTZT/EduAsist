@@ -1,9 +1,10 @@
 // Service Worker oficial de EduAsist: Instalabilidad PWA (App Shell + Fetch) y Notificaciones Web Push en Tiempo Real
 
-const CACHE_NAME = 'eduasist-pwa-v1';
+const CACHE_NAME = 'eduasist-pwa-v2';
 const APP_SHELL_ASSETS = [
   '/',
   '/manifest.webmanifest',
+  '/manifest.webmanifest?v=eduasist',
   '/pwa-192x192.png',
   '/pwa-512x512.png',
   '/pwa-maskable-512x512.png',

@@ -1,9 +1,9 @@
 {
-  "id": "/",
-  "name": "EduAsist - Portal Escolar",
+  "id": "/?app=eduasist",
+  "name": "EduAsist",
   "short_name": "EduAsist",
-  "description": "Sistema de Control y Reporte de Asistencia Escolar y Portal del Representante.",
-  "start_url": "/",
+  "description": "EduAsist - Sistema de Control y Reporte de Asistencia Escolar y Portal del Representante.",
+  "start_url": "/?source=eduasist-pwa",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait-primary",

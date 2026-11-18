@@ -6,7 +6,7 @@ import type { PushSubscription as WebPushSubscription } from 'web-push';
 const webPush = ((webPushModule as any).default || webPushModule) as typeof webPushModule;
 
 const PERSISTENT_VAPID_FILE = path.resolve(process.cwd(), 'data', 'vapid-keys.json');
-const FALLBACK_TMP_VAPID_FILE = '/tmp/educontrol-vapid.json';
+const FALLBACK_TMP_VAPID_FILE = '/tmp/eduasist-vapid.json';
 
 interface VapidConfig {
   publicKey: string;
@@ -22,7 +22,7 @@ function normalizeVapidSubject(rawSubject?: string): string {
   if (cleaned && (cleaned.startsWith('mailto:') || cleaned.startsWith('https://'))) {
     return cleaned;
   }
-  return 'mailto:notificaciones@educontrol.edu';
+  return 'mailto:notificaciones@eduasist.edu';
 }
 
 function isValidVapidKeyPair(publicKey?: string, privateKey?: string): boolean {
@@ -35,7 +35,7 @@ function isValidVapidKeyPair(publicKey?: string, privateKey?: string): boolean {
       return false;
     }
     // Verify with web-push library itself
-    webPush.setVapidDetails('mailto:notificaciones@educontrol.edu', publicKey.trim(), privateKey.trim());
+    webPush.setVapidDetails('mailto:notificaciones@eduasist.edu', publicKey.trim(), privateKey.trim());
     return true;
   } catch {
     return false;

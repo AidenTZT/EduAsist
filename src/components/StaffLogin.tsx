@@ -124,7 +124,7 @@ export const StaffLogin: React.FC<StaffLoginProps> = ({
                 id="staff-login-usuario"
                 type="text"
                 autoComplete="username"
-                placeholder="Ej: admin o correo@educontrol.edu"
+                placeholder="Ej: admin o correo@eduasist.edu"
                 value={usuario}
                 onChange={(e) => {
                   setUsuario(e.target.value);

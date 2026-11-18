@@ -140,7 +140,7 @@ export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     try {
       if (typeof window !== 'undefined' && window.localStorage) {
-        const saved = localStorage.getItem('educontrol_theme');
+        const saved = localStorage.getItem('eduasist_theme') || localStorage.getItem('educontrol_theme');
         if (saved === 'dark' || saved === 'light') return saved;
       }
       return typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
@@ -171,7 +171,8 @@ export default function App() {
     }
     try {
       if (typeof window !== 'undefined' && window.localStorage) {
-        localStorage.setItem('educontrol_theme', theme);
+        localStorage.setItem('eduasist_theme', theme);
+        localStorage.removeItem('educontrol_theme');
       }
     } catch (_) {}
   }, [theme]);
