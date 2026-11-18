@@ -33,6 +33,7 @@ import {
   EyeOff,
   Loader2,
   CalendarRange,
+  RefreshCw,
 } from 'lucide-react';
 import type {
   Representante,
@@ -151,6 +152,7 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
   const [portalData, setPortalData] = useState<PortalRepresentanteData | null>(null);
   const [loadingPortal, setLoadingPortal] = useState<boolean>(false);
   const [portalError, setPortalError] = useState<string | null>(null);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
 
   // Active student tab
   const [selectedStudentId, setSelectedStudentId] = useState<number | null>(null);
@@ -491,21 +493,39 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
     }
   };
 
-  const loadPortal = async (idRep: number) => {
+  const loadPortal = async (idRep: number, preserveSelection = false) => {
     setLoadingPortal(true);
     setPortalError(null);
     try {
       const data = await fetchPortalRepresentante(idRep);
       setPortalData(data);
       if (data.estudiantes && data.estudiantes.length > 0) {
-        setSelectedStudentId(data.estudiantes[0].idEstudiante);
+        setSelectedStudentId((prev) => {
+          if (preserveSelection && prev && data.estudiantes.some((s) => s.idEstudiante === prev)) {
+            return prev;
+          }
+          return data.estudiantes[0].idEstudiante;
+        });
       }
+      setLastRefreshedAt(
+        new Date().toLocaleTimeString('es-VE', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false,
+        })
+      );
     } catch (err: any) {
       console.error('Error fetching portal data:', err);
       setPortalError(err.message || 'No se pudieron cargar los datos escolares de sus representados.');
     } finally {
       setLoadingPortal(false);
     }
+  };
+
+  const handleRefreshPortal = async () => {
+    if (!authedRep || loadingPortal) return;
+    await loadPortal(authedRep.idRepresentante, true);
   };
 
   const handleCredentialLogin = async (e: React.FormEvent) => {
@@ -1040,6 +1060,22 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
             )}
 
             <button
+              type="button"
+              onClick={handleRefreshPortal}
+              disabled={loadingPortal}
+              className="px-3.5 py-2 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-[#181818] hover:bg-slate-200 dark:hover:bg-[#27272A] border border-slate-200 dark:border-[#27272A] transition-colors flex items-center space-x-1.5 cursor-pointer shadow-2xs disabled:opacity-60"
+              title={
+                lastRefreshedAt
+                  ? `Refrescar datos del portal (Última actualización: ${lastRefreshedAt})`
+                  : 'Refrescar asistencias, horarios y lapsos'
+              }
+              aria-label="Refrescar datos del portal de representantes"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loadingPortal ? 'animate-spin text-emerald-600 dark:text-emerald-400' : ''}`} />
+              <span>{loadingPortal ? 'Actualizando...' : 'Refrescar'}</span>
+            </button>
+
+            <button
               onClick={openProfileModal}
               className="px-3.5 py-2 rounded-xl text-xs font-bold text-indigo-700 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 border border-indigo-200 dark:border-indigo-800 transition-colors flex items-center space-x-1.5 cursor-pointer shadow-2xs"
               title="Actualizar teléfono de contacto"
@@ -1057,6 +1093,32 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
             </button>
           </div>
         </div>
+
+        {lastRefreshedAt && !portalError && (
+          <div className="mt-3 flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+            <Clock className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+            <span>Datos sincronizados a las {lastRefreshedAt}</span>
+          </div>
+        )}
+
+        {portalError && (
+          <div
+            role="alert"
+            className="mt-4 p-3 rounded-2xl text-xs font-semibold flex items-center justify-between gap-2 border bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-300"
+          >
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{portalError}</span>
+            </div>
+            <button
+              type="button"
+              onClick={handleRefreshPortal}
+              className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold cursor-pointer shrink-0"
+            >
+              Reintentar
+            </button>
+          </div>
+        )}
 
         {showIOSPushGuide && (
           <div className="mt-4 p-4 rounded-2xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 text-xs text-indigo-950 dark:text-indigo-200 space-y-2.5">
