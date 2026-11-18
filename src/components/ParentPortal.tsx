@@ -32,6 +32,7 @@ import {
   Eye,
   EyeOff,
   Loader2,
+  CalendarRange,
 } from 'lucide-react';
 import type {
   Representante,
@@ -40,14 +41,18 @@ import type {
   Horario,
   RecesoInstitucional,
   LoginResponse,
+  LapsoEscolar,
+  LapsoBreakdownStats,
 } from '../types.ts';
 import {
   loginWithCredentials,
   fetchPortalRepresentante,
   updateRepresentante,
   fetchVapidPublicKey,
+  fetchPushStatus,
   subscribeToPushNotifications,
   unsubscribeFromPushNotifications,
+  sendTestPushNotification,
 } from '../lib/api.ts';
 import { formatCedula, formatDateEs, formatTime } from '../lib/utils.ts';
 import { generateStudentAttendancePDF } from '../lib/pdfGenerator.ts';
@@ -62,6 +67,57 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
     outputArray[i] = rawData.charCodeAt(i);
   }
   return outputArray;
+}
+
+function subscriptionKeyMatches(
+  sub: PushSubscription | null,
+  serverVapidPublicKey: string
+): boolean {
+  try {
+    const existingBuf = sub?.options?.applicationServerKey;
+    if (!existingBuf || !serverVapidPublicKey) return false;
+    const existingBytes = new Uint8Array(existingBuf);
+    const serverBytes = urlBase64ToUint8Array(serverVapidPublicKey);
+    if (existingBytes.length !== serverBytes.length) return false;
+    for (let i = 0; i < existingBytes.length; i++) {
+      if (existingBytes[i] !== serverBytes[i]) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForActiveServiceWorker(
+  registration: ServiceWorkerRegistration,
+  timeoutMs: number = 6000
+): Promise<ServiceWorkerRegistration> {
+  if (registration.active) return registration;
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = window.setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        reject(new Error('El Service Worker tardó demasiado en activarse. Recargue la página e intente nuevamente.'));
+      }
+    }, timeoutMs);
+
+    navigator.serviceWorker.ready
+      .then((readyReg) => {
+        if (!settled) {
+          settled = true;
+          window.clearTimeout(timer);
+          resolve(readyReg);
+        }
+      })
+      .catch((err) => {
+        if (!settled) {
+          settled = true;
+          window.clearTimeout(timer);
+          reject(err);
+        }
+      });
+  });
 }
 
 interface ParentPortalProps {
@@ -98,8 +154,9 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
   // Active student tab
   const [selectedStudentId, setSelectedStudentId] = useState<number | null>(null);
 
-  // Sub-tabs: 'asistencias' | 'horario'
+  // Sub-tabs: 'asistencias' | 'horario' & Lapso filter
   const [activeTab, setActiveTab] = useState<'asistencias' | 'horario'>('asistencias');
+  const [selectedLapsoId, setSelectedLapsoId] = useState<number>(0);
 
   // Edit Profile Modal
   const [profileModalOpen, setProfileModalOpen] = useState<boolean>(false);
@@ -143,9 +200,17 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
   });
   const [pushSubscribed, setPushSubscribed] = useState<boolean>(false);
   const [pushLoading, setPushLoading] = useState<boolean>(false);
+  const [pushTesting, setPushTesting] = useState<boolean>(false);
   const [pushFeedback, setPushFeedback] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [showIOSPushGuide, setShowIOSPushGuide] = useState<boolean>(false);
   const [prefetchedVapidKey, setPrefetchedVapidKey] = useState<string | null>(null);
+  const [isEmbeddedIframe] = useState<boolean>(() => {
+    try {
+      return typeof window !== 'undefined' && window.self !== window.top;
+    } catch {
+      return true;
+    }
+  });
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -198,20 +263,74 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
         if (!registration) {
           registration = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
         }
-        if (pushSupported && !prefetchedVapidKey) {
-          fetchVapidPublicKey()
-            .then(({ publicKey }) => {
-              if (active && publicKey) setPrefetchedVapidKey(publicKey);
-            })
-            .catch(() => {});
+
+        let currentVapidKey = prefetchedVapidKey;
+        if (pushSupported && !currentVapidKey) {
+          try {
+            const { publicKey } = await fetchVapidPublicKey();
+            if (active && publicKey) {
+              currentVapidKey = publicKey;
+              setPrefetchedVapidKey(publicKey);
+            }
+          } catch {
+            // Ignorar si falla temporalmente
+          }
         }
+
         if (!pushSupported || !registration?.pushManager) {
           if (active) setPushSubscribed(false);
           return;
         }
+
         const existingSub = await registration.pushManager.getSubscription();
+        if (!existingSub || Notification.permission !== 'granted') {
+          if (active) setPushSubscribed(false);
+          return;
+        }
+
+        // Verificar si la llave VAPID cambió o si el servidor no tiene registrada esta suscripción
+        if (currentVapidKey && !subscriptionKeyMatches(existingSub, currentVapidKey)) {
+          try {
+            await existingSub.unsubscribe();
+            const renewed = await registration.pushManager.subscribe({
+              userVisibleOnly: true,
+              applicationServerKey: urlBase64ToUint8Array(
+                currentVapidKey
+              ) as unknown as BufferSource,
+            });
+            const subJson = renewed.toJSON();
+            if (subJson.endpoint && subJson.keys?.p256dh && subJson.keys?.auth) {
+              await subscribeToPushNotifications({
+                endpoint: subJson.endpoint,
+                keys: { p256dh: subJson.keys.p256dh, auth: subJson.keys.auth },
+              });
+              if (active) setPushSubscribed(true);
+              return;
+            }
+          } catch {
+            if (active) setPushSubscribed(false);
+            return;
+          }
+        }
+
+        // Si el navegador tiene suscripción válida pero el servidor tiene 0 dispositivos activos, re-sincronizar
+        try {
+          const status = await fetchPushStatus();
+          if (status.activeDevices === 0) {
+            const subJson = existingSub.toJSON();
+            if (subJson.endpoint && subJson.keys?.p256dh && subJson.keys?.auth) {
+              await subscribeToPushNotifications({
+                endpoint: subJson.endpoint,
+                keys: { p256dh: subJson.keys.p256dh, auth: subJson.keys.auth },
+              });
+            }
+          }
+        } catch {
+          // Continuar con estado local si falla status
+        }
+
         if (active) {
-          setPushSubscribed(!!existingSub && Notification.permission === 'granted');
+          setPushSubscribed(true);
         }
       } catch {
         if (active) setPushSubscribed(false);
@@ -238,6 +357,14 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
       return;
     }
 
+    if (typeof window !== 'undefined' && !window.isSecureContext) {
+      setPushFeedback({
+        type: 'error',
+        text: 'Las notificaciones Web Push requieren una conexión segura (HTTPS).',
+      });
+      return;
+    }
+
     setPushLoading(true);
     setPushFeedback(null);
 
@@ -260,14 +387,16 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
         return;
       }
 
-      // En iOS Safari, Notification.requestPermission() debe invocarse inmediatamente tras el toque del usuario
+      // En iOS Safari y Chrome, Notification.requestPermission() debe invocarse inmediatamente tras el toque del usuario
       const permission = await Promise.resolve(Notification.requestPermission());
       if (permission !== 'granted') {
         setPushFeedback({
           type: 'error',
           text:
             permission === 'denied'
-              ? 'Permiso bloqueado. Habilite las notificaciones para EduControl en Ajustes o en la configuración de su navegador.'
+              ? isEmbeddedIframe
+                ? 'El navegador bloqueó los permisos dentro de la vista previa integrada. Abra EduAsist en una pestaña independiente para activar las alertas push.'
+                : 'Permiso de notificaciones bloqueado. Habilite las notificaciones para este sitio en la configuración de su navegador.'
               : 'No se concedió permiso para mostrar notificaciones.',
         });
         return;
@@ -278,15 +407,24 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
       if (!registration) {
         registration = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
       }
-      await navigator.serviceWorker.ready;
+      registration = await waitForActiveServiceWorker(registration);
 
       const publicKey = prefetchedVapidKey || (await fetchVapidPublicKey()).publicKey;
-      if (!prefetchedVapidKey && publicKey) {
+      if (!publicKey) {
+        throw new Error('No se recibió una clave pública VAPID válida desde el servidor.');
+      }
+      if (!prefetchedVapidKey) {
         setPrefetchedVapidKey(publicKey);
       }
       const applicationServerKey = urlBase64ToUint8Array(publicKey);
 
       let subscription = await registration.pushManager.getSubscription();
+      if (subscription && !subscriptionKeyMatches(subscription, publicKey)) {
+        // Evitar InvalidStateError si la clave VAPID cambió
+        await subscription.unsubscribe();
+        subscription = null;
+      }
+
       if (!subscription) {
         subscription = await registration.pushManager.subscribe({
           userVisibleOnly: true,
@@ -310,16 +448,45 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
       setPushSubscribed(true);
       setPushFeedback({
         type: 'success',
-        text: '¡Alertas activadas! Recibirá una notificación en tiempo real cada vez que se pase asistencia.',
+        text: '¡Alertas activadas! Recibirá una notificación en tiempo real cada vez que se registre o actualice la asistencia.',
       });
     } catch (err: any) {
       console.error('Error toggling Web Push subscription:', err);
+      const rawMsg = String(err?.message || '');
+      const friendlyMsg =
+        err?.name === 'NotAllowedError' || rawMsg.toLowerCase().includes('permission')
+          ? isEmbeddedIframe
+            ? 'Las notificaciones están bloqueadas dentro de la vista integrada. Abra EduAsist directamente en una pestaña nueva del navegador para activarlas.'
+            : 'Permiso denegado por el navegador. Revise los permisos de notificaciones del sitio.'
+          : rawMsg || 'No se pudieron configurar las notificaciones push en este dispositivo.';
       setPushFeedback({
         type: 'error',
-        text: err.message || 'No se pudieron configurar las notificaciones push en este dispositivo.',
+        text: friendlyMsg,
       });
     } finally {
       setPushLoading(false);
+    }
+  };
+
+  const handleTestPushNotification = async () => {
+    setPushTesting(true);
+    setPushFeedback(null);
+    try {
+      const res = await sendTestPushNotification();
+      setPushFeedback({
+        type: res.success ? 'success' : 'error',
+        text: res.message,
+      });
+      if (!res.success && res.expiredRemoved > 0) {
+        setPushSubscribed(false);
+      }
+    } catch (err: any) {
+      setPushFeedback({
+        type: 'error',
+        text: err?.message || 'No se pudo enviar la notificación de prueba.',
+      });
+    } finally {
+      setPushTesting(false);
     }
   };
 
@@ -620,10 +787,57 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
     (s) => s.idEstudiante === selectedStudentId
   ) || portalData?.estudiantes[0];
 
-  // Student specific attendances
-  const studentAttendances = (portalData?.asistencias || []).filter(
+  const portalLapsos: LapsoEscolar[] = portalData?.lapsos || [];
+  const activeLapso: LapsoEscolar | null =
+    portalData?.lapsoActivo || portalLapsos.find((l) => l.activo) || null;
+  const selectedLapsoObj: LapsoEscolar | null =
+    portalLapsos.find((l) => l.id === selectedLapsoId) || null;
+
+  // Student specific attendances (all & filtered by selected lapso)
+  const allStudentAttendances = (portalData?.asistencias || []).filter(
     (a) => a.idEstudiante === currentStudent?.idEstudiante
   );
+
+  const studentAttendances = selectedLapsoObj
+    ? allStudentAttendances.filter(
+        (a) =>
+          a.lapsoId === selectedLapsoObj.id ||
+          (a.fecha >= selectedLapsoObj.fechaInicio && a.fecha <= selectedLapsoObj.fechaFin)
+      )
+    : allStudentAttendances;
+
+  const childLapsoBreakdown: LapsoBreakdownStats[] = portalLapsos.map((lapso) => {
+    const items = allStudentAttendances.filter(
+      (a) =>
+        a.lapsoId === lapso.id ||
+        (a.fecha >= lapso.fechaInicio && a.fecha <= lapso.fechaFin)
+    );
+    const total = items.length;
+    const presentes = items.filter((a) => a.estado === 'Presente').length;
+    const tardes = items.filter((a) => a.estado === 'Tarde').length;
+    const ausentes = items.filter((a) => a.estado === 'Ausente').length;
+    const justificadosYReposos = items.filter(
+      (a) => a.estado === 'Justificado' || a.estado === 'Reposo Médico'
+    ).length;
+    const porcentajeAsistencia =
+      total > 0 ? Math.round(((presentes + tardes + justificadosYReposos) / total) * 100) : 0;
+
+    return {
+      lapsoId: lapso.id,
+      numeroLapso: lapso.numeroLapso,
+      nombre: lapso.nombre,
+      fechaInicio: lapso.fechaInicio,
+      fechaFin: lapso.fechaFin,
+      anioEscolar: lapso.anioEscolar,
+      activo: lapso.activo,
+      total,
+      presentes,
+      tardes,
+      ausentes,
+      justificadosYReposos,
+      porcentajeAsistencia,
+    };
+  });
 
   // Attendance metrics for this child
   const totalClasses = studentAttendances.length;
@@ -653,6 +867,10 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
         representante: authedRep,
         nombreAno: currentStudent.nombreNivel || 'Año Escolar',
         nombreSeccion: currentStudent.nombreSeccion || 'A',
+        lapsoLabel: selectedLapsoObj
+          ? `${selectedLapsoObj.nombre} (${formatDateEs(selectedLapsoObj.fechaInicio)} al ${formatDateEs(selectedLapsoObj.fechaFin)})`
+          : 'Todos los Lapsos',
+        lapsoBreakdown: childLapsoBreakdown,
         registros: studentAttendances.map((a) => ({
           ...a,
           idMateria: 0,
@@ -678,13 +896,18 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
             <CalendarCheck className="w-5 h-5 text-amber-300" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="text-[11px] font-bold uppercase tracking-wider bg-white/20 px-2 py-0.5 rounded-full">
                 Período Académico Vigente
               </span>
               <span className="text-xs font-semibold text-emerald-100">
                 Año Lectivo {portalData?.configuracion.anoLectivo || '2025 - 2026'}
               </span>
+              {activeLapso && (
+                <span className="text-[11px] font-bold bg-amber-400/25 text-amber-100 px-2 py-0.5 rounded-full border border-amber-200/30">
+                  {activeLapso.nombre}
+                </span>
+              )}
             </div>
             <h1 className="text-base sm:text-lg font-black tracking-tight mt-0.5">
               Control de Asistencia &amp; Puntualidad Escolar
@@ -737,40 +960,59 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
 
           <div className="flex flex-wrap items-center gap-2 self-start md:self-auto">
             {(pushSupported || (isIOS && !isStandalone)) && (
-              <button
-                type="button"
-                onClick={handleTogglePushNotifications}
-                disabled={pushLoading}
-                className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-colors flex items-center space-x-1.5 cursor-pointer shadow-2xs border disabled:opacity-50 ${
-                  pushSubscribed
-                    ? 'text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 border-emerald-200 dark:border-emerald-800'
-                    : 'text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900/60 border-amber-200 dark:border-amber-800'
-                }`}
-                title={
-                  !pushSupported && isIOS && !isStandalone
-                    ? 'En iPhone/iPad debes agregar la app a la pantalla de inicio para activar alertas push'
-                    : pushSubscribed
-                    ? 'Notificaciones push activas en este dispositivo (clic para desactivar)'
-                    : 'Activar notificaciones push de asistencia en tiempo real'
-                }
-              >
-                {!pushSupported && isIOS && !isStandalone ? (
-                  <Smartphone className="w-3.5 h-3.5" />
-                ) : pushSubscribed ? (
-                  <BellRing className="w-3.5 h-3.5" />
-                ) : (
-                  <Bell className="w-3.5 h-3.5" />
+              <>
+                <button
+                  type="button"
+                  onClick={handleTogglePushNotifications}
+                  disabled={pushLoading}
+                  className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-colors flex items-center space-x-1.5 cursor-pointer shadow-2xs border disabled:opacity-50 ${
+                    pushSubscribed
+                      ? 'text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 border-emerald-200 dark:border-emerald-800'
+                      : 'text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900/60 border-amber-200 dark:border-amber-800'
+                  }`}
+                  title={
+                    !pushSupported && isIOS && !isStandalone
+                      ? 'En iPhone/iPad debes agregar la app a la pantalla de inicio para activar alertas push'
+                      : pushSubscribed
+                      ? 'Notificaciones push activas en este dispositivo (clic para desactivar)'
+                      : 'Activar notificaciones push de asistencia en tiempo real'
+                  }
+                >
+                  {!pushSupported && isIOS && !isStandalone ? (
+                    <Smartphone className="w-3.5 h-3.5" />
+                  ) : pushSubscribed ? (
+                    <BellRing className="w-3.5 h-3.5" />
+                  ) : (
+                    <Bell className="w-3.5 h-3.5" />
+                  )}
+                  <span>
+                    {!pushSupported && isIOS && !isStandalone
+                      ? 'Activar Alertas en iOS'
+                      : pushLoading
+                      ? 'Configurando...'
+                      : pushSubscribed
+                      ? 'Alertas Push Activas'
+                      : 'Activar Alertas Push'}
+                  </span>
+                </button>
+
+                {pushSubscribed && (
+                  <button
+                    type="button"
+                    onClick={handleTestPushNotification}
+                    disabled={pushTesting}
+                    className="px-3 py-2 rounded-xl text-xs font-bold text-teal-700 dark:text-teal-300 bg-teal-50 dark:bg-teal-950/40 hover:bg-teal-100 dark:hover:bg-teal-900/60 border border-teal-200 dark:border-teal-800 transition-colors flex items-center space-x-1.5 cursor-pointer shadow-2xs disabled:opacity-50"
+                    title="Enviar una notificación de prueba a este dispositivo"
+                  >
+                    {pushTesting ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <BellRing className="w-3.5 h-3.5" />
+                    )}
+                    <span>{pushTesting ? 'Enviando...' : 'Probar Alerta'}</span>
+                  </button>
                 )}
-                <span>
-                  {!pushSupported && isIOS && !isStandalone
-                    ? 'Activar Alertas en iOS'
-                    : pushLoading
-                    ? 'Configurando...'
-                    : pushSubscribed
-                    ? 'Alertas Push Activas'
-                    : 'Activar Alertas Push'}
-                </span>
-              </button>
+              </>
             )}
 
             <button
@@ -981,7 +1223,7 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
           {/* Tab 1: Attendance with Exact Server Arrival Time (Table-to-Card on Mobile) */}
           {activeTab === 'asistencias' && (
             <div className="bg-white dark:bg-[#121212] rounded-3xl border border-slate-200 dark:border-[#27272A] shadow-xs overflow-hidden">
-              <div className="p-4 bg-slate-50/80 dark:bg-[#181818] border-b border-slate-200 dark:border-[#27272A] flex items-center justify-between">
+              <div className="p-4 bg-slate-50/80 dark:bg-[#181818] border-b border-slate-200 dark:border-[#27272A] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <h3 className="font-bold text-sm text-slate-900 dark:text-[#F4F4F5]">
                     Registro Cronológico de Asistencias
@@ -990,7 +1232,26 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
                     Detalle de cada clase con la hora exacta registrada en el servidor
                   </p>
                 </div>
-                <div className="flex items-center space-x-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {portalLapsos.length > 0 && (
+                    <div className="flex items-center gap-1.5">
+                      <CalendarRange className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                      <select
+                        value={selectedLapsoId}
+                        onChange={(e) => setSelectedLapsoId(Number(e.target.value))}
+                        className="bg-white dark:bg-[#121212] border border-slate-200 dark:border-[#27272A] rounded-xl px-2.5 py-1.5 text-xs font-bold text-slate-800 dark:text-[#F4F4F5] focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+                        aria-label="Filtrar por Lapso Escolar"
+                      >
+                        <option value={0}>Todos los Lapsos</option>
+                        {portalLapsos.map((lapso) => (
+                          <option key={lapso.id} value={lapso.id}>
+                            {lapso.nombre}
+                            {lapso.activo ? ' (Actual)' : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                   <button
                     type="button"
                     onClick={handleExportAttendancePDF}

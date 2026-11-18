@@ -20,6 +20,7 @@ import type {
   AuthMeResponse,
   LoginResponse,
   PaginatedResponse,
+  LapsoEscolar,
 } from '../types.ts';
 
 const AUTH_TOKEN_KEY = 'educontrol_auth_token';
@@ -229,6 +230,70 @@ export async function toggleReceso(idReceso: number): Promise<RecesoInstituciona
 
 export async function deleteReceso(idReceso: number): Promise<void> {
   await apiFetch(`/recesos/${idReceso}`, { method: 'DELETE' });
+}
+
+// -------------------------------------------------------------
+// 1.1 LAPSOS ESCOLARES (PERÍODOS ACADÉMICOS OFICIALES)
+// -------------------------------------------------------------
+export async function fetchLapsos(filters?: {
+  anioEscolar?: string;
+  soloActivos?: boolean;
+}): Promise<LapsoEscolar[]> {
+  return apiFetch(
+    `/lapsos${buildQuery({
+      anioEscolar: filters?.anioEscolar,
+      soloActivos: filters?.soloActivos ? 'true' : undefined,
+    })}`
+  );
+}
+
+export async function fetchLapsoActivo(): Promise<{
+  lapsoActivo: LapsoEscolar | null;
+  lapsos: LapsoEscolar[];
+}> {
+  return apiFetch('/lapsos/activo');
+}
+
+export async function createLapso(data: {
+  nombre: string;
+  numeroLapso: 1 | 2 | 3;
+  fechaInicio: string;
+  fechaFin: string;
+  anioEscolar: string;
+  activo?: boolean;
+}): Promise<LapsoEscolar> {
+  return apiFetch('/lapsos', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateLapso(
+  id: number,
+  data: Partial<{
+    nombre: string;
+    numeroLapso: 1 | 2 | 3;
+    fechaInicio: string;
+    fechaFin: string;
+    anioEscolar: string;
+    activo: boolean;
+  }>
+): Promise<LapsoEscolar> {
+  return apiFetch(`/lapsos/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function activateLapso(id: number, activo: boolean = true): Promise<LapsoEscolar> {
+  return apiFetch(`/lapsos/${id}/activar`, {
+    method: 'PATCH',
+    body: JSON.stringify({ activo }),
+  });
+}
+
+export async function deleteLapso(id: number): Promise<void> {
+  await apiFetch(`/lapsos/${id}`, { method: 'DELETE' });
 }
 
 // -------------------------------------------------------------
@@ -478,6 +543,7 @@ export async function fetchAsistencia(filters?: {
   idRepresentante?: number;
   idSeccion?: number;
   idAno?: number;
+  lapsoId?: number;
 }): Promise<RegistroAsistencia[]> {
   return apiFetch(
     `/asistencia${buildQuery({
@@ -489,6 +555,7 @@ export async function fetchAsistencia(filters?: {
       idRepresentante: filters?.idRepresentante,
       idSeccion: filters?.idSeccion,
       idAno: filters?.idAno,
+      lapsoId: filters?.lapsoId,
     })}`
   );
 }
@@ -499,6 +566,7 @@ export async function fetchAsistenciaGeneral(filters?: {
   idAno?: number;
   idSeccion?: number;
   idMateria?: number;
+  lapsoId?: number;
   fecha?: string;
   mes?: string;
   startDate?: string;
@@ -514,6 +582,7 @@ export async function fetchAsistenciaGeneral(filters?: {
       idAno: filters?.idAno,
       idSeccion: filters?.idSeccion,
       idMateria: filters?.idMateria,
+      lapsoId: filters?.lapsoId,
       fecha: filters?.fecha,
       mes: filters?.mes,
       startDate: filters?.startDate,
@@ -653,6 +722,7 @@ export async function fetchBackupStats() {
     representantes: number;
     asistencias: number;
     horarios: number;
+    lapsosEscolares?: number;
     usuariosPersonal: number;
     logsAuditoria: number;
   }>('/backup/stats');
@@ -708,5 +778,18 @@ export async function unsubscribeFromPushNotifications(endpoint: string): Promis
   return apiFetch('/push/unsubscribe', {
     method: 'POST',
     body: JSON.stringify({ endpoint }),
+  });
+}
+
+export async function sendTestPushNotification(): Promise<{
+  success: boolean;
+  sent: number;
+  failed: number;
+  totalDevices: number;
+  expiredRemoved: number;
+  message: string;
+}> {
+  return apiFetch('/push/test', {
+    method: 'POST',
   });
 }

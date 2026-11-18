@@ -125,7 +125,7 @@ export const PWAInstallButton: React.FC = () => {
                   Selecciona <strong>&ldquo;Agregar a pantalla de inicio&rdquo;</strong>.
                 </li>
                 <li>
-                  Abre <strong>EduControl</strong> desde el ícono creado en tu pantalla de inicio.
+                  Abre <strong>EduAsist</strong> desde el ícono creado en tu pantalla de inicio.
                 </li>
               </ol>
 

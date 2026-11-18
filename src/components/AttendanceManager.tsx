@@ -15,6 +15,7 @@ import {
   Layers,
   Lock,
   ShieldCheck,
+  CalendarRange,
 } from 'lucide-react';
 import type {
   AnoEscolar,
@@ -25,8 +26,9 @@ import type {
   EstadoAsistencia,
   Usuario,
   DocenteMateria,
+  LapsoEscolar,
 } from '../types.ts';
-import { fetchAsistencia, submitAsistenciaBatch } from '../lib/api.ts';
+import { fetchAsistencia, fetchLapsoActivo, submitAsistenciaBatch } from '../lib/api.ts';
 import { formatCedula, sortStudentsByCedula, getLocalTodayDateString } from '../lib/utils.ts';
 
 interface AttendanceManagerProps {
@@ -82,6 +84,21 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(
     null
   );
+  const [lapsos, setLapsos] = useState<LapsoEscolar[]>([]);
+  const [activeLapso, setActiveLapso] = useState<LapsoEscolar | null>(null);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    fetchLapsoActivo()
+      .then((res) => {
+        setActiveLapso(res.lapsoActivo);
+        setLapsos(res.lapsos || []);
+      })
+      .catch(() => {});
+  }, [currentUser?.id]);
+
+  const detectedFechaLapso =
+    lapsos.find((l) => fecha >= l.fechaInicio && fecha <= l.fechaFin) || activeLapso;
 
   // RBAC: Acceso permitido a Docente (sus materias asignadas), Coordinador y Director (acceso completo)
   const canTakeAttendance =
@@ -370,6 +387,13 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
                     {currentUser?.rol === 'director'
                       ? 'Dirección — Acceso Total'
                       : 'Coordinación — Acceso Total'}
+                  </span>
+                )}
+                {detectedFechaLapso && (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/40 text-indigo-800 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 flex items-center gap-1">
+                    <CalendarRange className="w-3 h-3" />
+                    {detectedFechaLapso.nombre}
+                    {detectedFechaLapso.activo ? ' • Actual' : ''}
                   </span>
                 )}
               </div>

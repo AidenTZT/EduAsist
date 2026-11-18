@@ -15,7 +15,9 @@ import {
   Save,
   Search,
   GraduationCap,
+  CalendarRange,
 } from 'lucide-react';
+import { LapsosManager } from './LapsosManager.tsx';
 import type {
   AnoEscolar,
   Seccion,
@@ -92,8 +94,8 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
   onRefreshData,
 }) => {
   const [activeTab, setActiveTab] = useState<
-    'secciones' | 'materias' | 'asignaciones' | 'anos' | 'configuracion'
-  >('secciones');
+    'lapsos' | 'secciones' | 'materias' | 'asignaciones' | 'anos' | 'configuracion'
+  >('lapsos');
 
   // Modals state
   const [modalType, setModalType] = useState<'ano' | 'seccion' | 'materia' | 'asignacion' | null>(null);
@@ -652,6 +654,18 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
         <div className="relative border-t border-slate-100 dark:border-[#27272A] mt-5 pt-3">
           <div className="flex space-x-1 overflow-x-auto scrollbar-none pb-1">
           <button
+            onClick={() => setActiveTab('lapsos')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors flex items-center space-x-1.5 cursor-pointer ${
+              activeTab === 'lapsos'
+                ? 'bg-purple-100 text-purple-900 shadow-2xs font-extrabold'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <CalendarRange className="w-3.5 h-3.5 text-purple-600" />
+            <span>Lapsos Escolares</span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('configuracion')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors flex items-center space-x-1.5 cursor-pointer ${
               activeTab === 'configuracion'
@@ -724,6 +738,11 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
             <X className="w-4 h-4" />
           </button>
         </div>
+      )}
+
+      {/* -1. LAPSOS ESCOLARES */}
+      {activeTab === 'lapsos' && (
+        <LapsosManager currentUser={currentUser} onRefreshData={onRefreshData} />
       )}
 
       {/* 0. CONFIGURACIÓN INSTITUCIONAL (ROL EXCLUSIVO: DIRECTOR) */}

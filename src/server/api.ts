@@ -27,6 +27,9 @@ import {
   auditLogsQuerySchema,
   createHorarioSchema,
   recesoSchema,
+  createLapsoSchema,
+  updateLapsoSchema,
+  activateLapsoSchema,
   pushSubscriptionSchema,
   pushUnsubscribeSchema,
 } from './validation.ts';
@@ -34,6 +37,7 @@ import type { EstadoAsistencia } from '../types.ts';
 import {
   getVapidPublicKey,
   dispatchAttendancePushNotificationsDirect,
+  sendTestPushToSubscriptions,
 } from './pushService.ts';
 
 export const apiRouter = express.Router();
@@ -414,6 +418,148 @@ apiRouter.delete(
         accion: 'RECESO_ELIMINADO',
         entidad: 'recesos_institucionales',
         idEntidad: idReceso,
+      });
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// 2.1 LAPSOS ESCOLARES (PERÍODOS ACADÉMICOS OFICIALES)
+// ---------------------------------------------------------------------------
+apiRouter.get('/lapsos/activo', requireAuth, async (_req: Request, res: Response) => {
+  try {
+    const [lapsoActivo, lapsos] = await Promise.all([db.getActiveLapso(), db.getLapsos()]);
+    res.json({ lapsoActivo, lapsos });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+apiRouter.get(
+  '/lapsos',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      const anioEscolar = req.query.anioEscolar
+        ? String(req.query.anioEscolar)
+        : req.query.anio_escolar
+        ? String(req.query.anio_escolar)
+        : undefined;
+      const soloActivos = req.query.soloActivos === 'true';
+      res.json(await db.getLapsos({ anioEscolar, soloActivos }));
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.post(
+  '/lapsos',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  validateBody(createLapsoSchema),
+  async (req: Request, res: Response) => {
+    try {
+      const created = await db.createLapso(req.body);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'LAPSO_ESCOLAR_CREADO',
+        entidad: 'lapsos_escolares',
+        idEntidad: created.id,
+        detalles: {
+          id: created.id,
+          nombre: created.nombre,
+          numeroLapso: created.numeroLapso,
+          fechaInicio: created.fechaInicio,
+          fechaFin: created.fechaFin,
+          anioEscolar: created.anioEscolar,
+          activo: created.activo,
+        },
+      });
+      res.status(201).json(created);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.put(
+  '/lapsos/:id',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  validateBody(updateLapsoSchema),
+  async (req: Request, res: Response) => {
+    try {
+      const id = Number(req.params.id);
+      const updated = await db.updateLapso(id, req.body);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'LAPSO_ESCOLAR_ACTUALIZADO',
+        entidad: 'lapsos_escolares',
+        idEntidad: id,
+        detalles: {
+          id,
+          nombre: updated.nombre,
+          numeroLapso: updated.numeroLapso,
+          fechaInicio: updated.fechaInicio,
+          fechaFin: updated.fechaFin,
+          anioEscolar: updated.anioEscolar,
+          activo: updated.activo,
+        },
+      });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.patch(
+  '/lapsos/:id/activar',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  validateBody(activateLapsoSchema),
+  async (req: Request, res: Response) => {
+    try {
+      const id = Number(req.params.id);
+      const activo = req.body?.activo !== undefined ? Boolean(req.body.activo) : true;
+      const updated = await db.activateLapso(id, activo);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'LAPSO_ESCOLAR_ACTIVADO',
+        entidad: 'lapsos_escolares',
+        idEntidad: id,
+        detalles: {
+          id,
+          nombre: updated.nombre,
+          numeroLapso: updated.numeroLapso,
+          activo: updated.activo,
+        },
+      });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.delete(
+  '/lapsos/:id',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      const id = Number(req.params.id);
+      await db.deleteLapso(id);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'LAPSO_ESCOLAR_ELIMINADO',
+        entidad: 'lapsos_escolares',
+        idEntidad: id,
       });
       res.json({ success: true });
     } catch (e: any) {
@@ -982,6 +1128,10 @@ apiRouter.get('/asistencia', requireAuth, async (req: Request, res: Response) =>
           : undefined,
       idSeccion: req.query.idSeccion ? Number(req.query.idSeccion) : undefined,
       idAno: req.query.idAno ? Number(req.query.idAno) : undefined,
+      lapsoId:
+        req.query.lapsoId || req.query.lapso_id
+          ? Number(req.query.lapsoId || req.query.lapso_id)
+          : undefined,
     };
     res.json(await db.getAsistencia(filters));
   } catch (e: any) {
@@ -998,6 +1148,7 @@ const handleGetAttendanceHistoryPaginated = async (_req: Request, res: Response)
       idSeccion?: number;
       idMateria?: number;
       idEstudiante?: number;
+      lapsoId?: number;
       fecha?: string;
       mes?: string;
       startDate?: string;
@@ -1199,6 +1350,26 @@ const handleUpdateAsistenciaJustificacion = async (req: Request, res: Response) 
         rolResponsable: req.user.rol,
       },
     });
+
+    // Notificar al representante sobre la validación / actualización del registro de asistencia
+    db.getPushDispatchPayloadForBatch(updated.registro.idMateria, [updated.registro])
+      .then(async (payload) => {
+        if (payload.subscriptions.length > 0 && payload.records.length > 0) {
+          const pushRes = await dispatchAttendancePushNotificationsDirect({
+            idMateria: payload.idMateria,
+            nombreMateria: payload.nombreMateria,
+            fecha: updated.registro.fecha,
+            records: payload.records,
+            subscriptions: payload.subscriptions,
+          });
+          if (pushRes.expiredEndpoints.length > 0) {
+            await db.deletePushSubscriptionsByEndpoints(pushRes.expiredEndpoints);
+          }
+        }
+      })
+      .catch((err) =>
+        console.warn('[WebPush] Error al notificar actualización de justificación:', err)
+      );
 
     res.json({
       success: true,
@@ -1561,6 +1732,42 @@ apiRouter.post(
     res.json({ success: true, removed });
   }
 );
+
+apiRouter.post('/push/test', requireAuth, async (req: Request, res: Response) => {
+  if (req.authType !== 'representante' || !req.representante) {
+    return res.status(403).json({
+      error: 'Solo representantes autenticados pueden probar alertas push.',
+    });
+  }
+  try {
+    const subs = await db.getPushSubscriptionsForRep(req.representante.idRepresentante);
+    if (subs.length === 0) {
+      return res.status(400).json({
+        error: 'No hay dispositivos suscritos para este representante. Active las alertas push primero.',
+      });
+    }
+
+    const repNombre = `${req.representante.nombres} ${req.representante.apellidos}`.trim();
+    const result = await sendTestPushToSubscriptions(subs, repNombre);
+    if (result.expiredEndpoints.length > 0) {
+      await db.deletePushSubscriptionsByEndpoints(result.expiredEndpoints);
+    }
+
+    res.json({
+      success: result.sent > 0,
+      sent: result.sent,
+      failed: result.failed,
+      totalDevices: subs.length,
+      expiredRemoved: result.expiredEndpoints.length,
+      message:
+        result.sent > 0
+          ? `Notificación de prueba enviada a ${result.sent} dispositivo(s).`
+          : `No se pudo entregar la notificación de prueba${result.lastError ? `: ${result.lastError}` : '.'}`,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message || 'Error al enviar notificación de prueba.' });
+  }
+});
 
 apiRouter.use((_req: Request, res: Response) => {
   res.status(404).json({ error: 'Endpoint de API no encontrado.' });

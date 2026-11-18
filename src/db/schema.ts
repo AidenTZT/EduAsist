@@ -64,6 +64,26 @@ export const anosEscolares = pgTable('anos_escolares', {
   activo: boolean('activo').default(true).notNull(),
 });
 
+// 1.0 Lapsos Escolares (3 lapsos oficiales del año escolar)
+export const lapsosEscolares = pgTable(
+  'lapsos_escolares',
+  {
+    id: serial('id').primaryKey(),
+    nombre: text('nombre').notNull(), // 'Primer Lapso' | 'Segundo Lapso' | 'Tercer Lapso'
+    numeroLapso: integer('numero_lapso').notNull(), // 1 | 2 | 3
+    fechaInicio: text('fecha_inicio').notNull(), // Formato YYYY-MM-DD
+    fechaFin: text('fecha_fin').notNull(), // Formato YYYY-MM-DD
+    anioEscolar: text('anio_escolar').notNull(), // ej. '2025 - 2026'
+    activo: boolean('activo').default(false).notNull(),
+    createdAt: timestamp('created_at').defaultNow(),
+    updatedAt: timestamp('updated_at').defaultNow(),
+  },
+  (table) => [
+    index('lapsos_anio_numero_idx').on(table.anioEscolar, table.numeroLapso),
+    index('lapsos_activo_idx').on(table.activo),
+  ]
+);
+
 // 1.1 Secciones: id_seccion (PK), id_ano (FK), nombre_seccion (ej: 'A', 'B')
 export const secciones = pgTable('secciones', {
   idSeccion: serial('id_seccion').primaryKey(),
@@ -126,7 +146,7 @@ export const estudiantes = pgTable('estudiantes', {
     .notNull(),
 });
 
-// 5. Asistencia: id_asistencia (PK), id_estudiante (FK), id_materia (FK), fecha, hora_entrada, estado ('Presente', 'Tarde', 'Ausente', 'Justificado', 'Reposo Médico') + campos de justificación/auditoría
+// 5. Asistencia: id_asistencia (PK), id_estudiante (FK), id_materia (FK), lapso_id (FK), fecha, hora_entrada, estado ('Presente', 'Tarde', 'Ausente', 'Justificado', 'Reposo Médico') + campos de justificación/auditoría
 export const asistencia = pgTable(
   'asistencia',
   {
@@ -137,6 +157,7 @@ export const asistencia = pgTable(
     idMateria: integer('id_materia')
       .references(() => materias.idMateria, { onDelete: 'cascade' })
       .notNull(),
+    lapsoId: integer('lapso_id').references(() => lapsosEscolares.id, { onDelete: 'set null' }),
     fecha: text('fecha').notNull(), // Formato YYYY-MM-DD
     horaEntrada: text('hora_entrada').notNull(), // Formato HH:MM:SS
     estado: text('estado').notNull(), // 'Presente', 'Tarde', 'Ausente', 'Justificado', 'Reposo Médico'
@@ -155,6 +176,7 @@ export const asistencia = pgTable(
       table.fecha
     ),
     index('asistencia_fecha_idx').on(table.fecha),
+    index('asistencia_lapso_idx').on(table.lapsoId),
     index('asistencia_fecha_modificacion_idx').on(table.fechaModificacion),
     index('asistencia_estado_fecha_idx').on(table.estado, table.fecha),
   ]
@@ -274,6 +296,10 @@ export const estudiantesRelations = relations(estudiantes, ({ one, many }) => ({
   asistencias: many(asistencia),
 }));
 
+export const lapsosEscolaresRelations = relations(lapsosEscolares, ({ many }) => ({
+  asistencias: many(asistencia),
+}));
+
 export const asistenciaRelations = relations(asistencia, ({ one }) => ({
   estudiante: one(estudiantes, {
     fields: [asistencia.idEstudiante],
@@ -282,6 +308,10 @@ export const asistenciaRelations = relations(asistencia, ({ one }) => ({
   materia: one(materias, {
     fields: [asistencia.idMateria],
     references: [materias.idMateria],
+  }),
+  lapso: one(lapsosEscolares, {
+    fields: [asistencia.lapsoId],
+    references: [lapsosEscolares.id],
   }),
 }));
 

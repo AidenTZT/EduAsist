@@ -1,6 +1,11 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import type { RegistroAsistencia, Estudiante, Representante } from '../types.ts';
+import type {
+  RegistroAsistencia,
+  Estudiante,
+  Representante,
+  LapsoBreakdownStats,
+} from '../types.ts';
 import { formatCedula, formatDateEs, formatTime } from './utils.ts';
 
 interface InstitutionHeaderConfig {
@@ -78,6 +83,8 @@ export interface GeneralAttendanceReportParams {
   nombreSeccion: string;
   fecha: string;
   materiaNombre?: string;
+  lapsoLabel?: string;
+  lapsoBreakdown?: LapsoBreakdownStats[];
   registros: RegistroAsistencia[];
   generadoPor: {
     nombre: string;
@@ -99,14 +106,16 @@ export function generateGeneralAttendancePDF(params: GeneralAttendanceReportPara
   const startY = drawInstitutionalLetterhead(
     doc,
     'Reporte General de Asistencia y Matrícula',
-    `${params.nombreAno} — Sección ${params.nombreSeccion}`,
+    `${params.nombreAno} — Sección ${params.nombreSeccion}${
+      params.lapsoLabel ? ` • ${params.lapsoLabel}` : ''
+    }`,
     params.config
   );
 
   // Metadatos y Filtros Granulares
   doc.setFillColor(248, 250, 252);
   doc.setDrawColor(226, 232, 240);
-  doc.roundedRect(14, startY + 2, pageWidth - 28, 18, 2, 2, 'FD');
+  doc.roundedRect(14, startY + 2, pageWidth - 28, 22, 2, 2, 'FD');
 
   doc.setFontSize(8);
   doc.setFont('helvetica', 'bold');
@@ -114,32 +123,37 @@ export function generateGeneralAttendancePDF(params: GeneralAttendanceReportPara
 
   doc.text(`AÑO ESCOLAR:`, 18, startY + 7);
   doc.setFont('helvetica', 'normal');
-  doc.text(params.nombreAno, 42, startY + 7);
+  doc.text(params.nombreAno, 44, startY + 7);
 
   doc.setFont('helvetica', 'bold');
   doc.text(`SECCIÓN:`, 18, startY + 12);
   doc.setFont('helvetica', 'normal');
-  doc.text(`Sección "${params.nombreSeccion}"`, 42, startY + 12);
+  doc.text(`Sección "${params.nombreSeccion}"`, 44, startY + 12);
 
   doc.setFont('helvetica', 'bold');
-  doc.text(`FECHA ASISTENCIA:`, 18, startY + 17);
+  doc.text(`PERÍODO / FECHA:`, 18, startY + 17);
   doc.setFont('helvetica', 'normal');
-  doc.text(formatDateEs(params.fecha), 52, startY + 17);
+  doc.text(formatDateEs(params.fecha), 48, startY + 17);
 
   doc.setFont('helvetica', 'bold');
-  doc.text(`ASIGNATURA:`, 110, startY + 7);
+  doc.text(`LAPSO ESCOLAR:`, 18, startY + 22);
   doc.setFont('helvetica', 'normal');
-  doc.text(params.materiaNombre || 'Todas las Asignaturas', 134, startY + 7);
+  doc.text(params.lapsoLabel || 'Todos los Lapsos', 48, startY + 22);
 
   doc.setFont('helvetica', 'bold');
-  doc.text(`EMITIDO POR:`, 110, startY + 12);
+  doc.text(`ASIGNATURA:`, 115, startY + 7);
   doc.setFont('helvetica', 'normal');
-  doc.text(`${params.generadoPor.nombre} (${params.generadoPor.rol.toUpperCase()})`, 134, startY + 12);
+  doc.text(params.materiaNombre || 'Todas las Asignaturas', 139, startY + 7);
 
   doc.setFont('helvetica', 'bold');
-  doc.text(`FECHA EMISIÓN:`, 110, startY + 17);
+  doc.text(`EMITIDO POR:`, 115, startY + 12);
   doc.setFont('helvetica', 'normal');
-  doc.text(new Date().toLocaleDateString('es-VE') + ' ' + new Date().toLocaleTimeString('es-VE'), 136, startY + 17);
+  doc.text(`${params.generadoPor.nombre} (${params.generadoPor.rol.toUpperCase()})`, 139, startY + 12);
+
+  doc.setFont('helvetica', 'bold');
+  doc.text(`FECHA EMISIÓN:`, 115, startY + 17);
+  doc.setFont('helvetica', 'normal');
+  doc.text(new Date().toLocaleDateString('es-VE') + ' ' + new Date().toLocaleTimeString('es-VE'), 141, startY + 17);
 
   // Resumen Estadístico / Totales
   const total = params.registros.length;
@@ -151,7 +165,7 @@ export function generateGeneralAttendancePDF(params: GeneralAttendanceReportPara
   ).length;
   const porcentaje = total > 0 ? Math.round(((presentes + tardes + justificados) / total) * 100) : 0;
 
-  const kpiY = startY + 23;
+  const kpiY = startY + 27;
   const boxWidth = (pageWidth - 28 - 12) / 5;
 
   const kpis = [
@@ -177,6 +191,64 @@ export function generateGeneralAttendancePDF(params: GeneralAttendanceReportPara
     doc.text(kpi.val, x + boxWidth / 2, kpiY + 10.5, { align: 'center' });
   });
 
+  let nextTableY = kpiY + 16;
+
+  // Desglose Estructurado por Lapso Escolar (cuando esté disponible)
+  if (params.lapsoBreakdown && params.lapsoBreakdown.length > 0) {
+    autoTable(doc, {
+      startY: nextTableY,
+      head: [
+        [
+          'LAPSO ESCOLAR',
+          'PERÍODO',
+          'REGISTROS',
+          'PRESENTES',
+          'TARDANZAS',
+          'AUSENTES',
+          'JUSTIF./REPOSOS',
+          '% ASIST.',
+        ],
+      ],
+      body: params.lapsoBreakdown.map((lb) => [
+        `${lb.nombre}${lb.activo ? ' (ACTUAL)' : ''}`,
+        lb.fechaInicio && lb.fechaFin
+          ? `${formatDateEs(lb.fechaInicio)} al ${formatDateEs(lb.fechaFin)}`
+          : 'Sin período definido',
+        String(lb.total),
+        String(lb.presentes),
+        String(lb.tardes),
+        String(lb.ausentes),
+        String(lb.justificadosYReposos),
+        `${lb.porcentajeAsistencia}%`,
+      ]),
+      theme: 'grid',
+      headStyles: {
+        fillColor: [79, 70, 229],
+        textColor: [255, 255, 255],
+        fontSize: 7,
+        fontStyle: 'bold',
+        halign: 'center',
+      },
+      styles: {
+        fontSize: 7,
+        cellPadding: 1.5,
+        textColor: [30, 41, 59],
+      },
+      columnStyles: {
+        0: { halign: 'left', fontStyle: 'bold' },
+        1: { halign: 'center' },
+        2: { halign: 'center' },
+        3: { halign: 'center', textColor: [16, 185, 129] },
+        4: { halign: 'center', textColor: [217, 119, 6] },
+        5: { halign: 'center', textColor: [239, 68, 68] },
+        6: { halign: 'center', textColor: [124, 58, 237] },
+        7: { halign: 'center', fontStyle: 'bold' },
+      },
+      margin: { left: 14, right: 14 },
+    });
+    nextTableY = ((doc as any).lastAutoTable?.finalY || nextTableY + 20) + 4;
+  }
+
   // Tabla Detallada con autoTable
   const tableRows = params.registros.map((r, idx) => [
     String(idx + 1),
@@ -188,7 +260,7 @@ export function generateGeneralAttendancePDF(params: GeneralAttendanceReportPara
   ]);
 
   autoTable(doc, {
-    startY: kpiY + 16,
+    startY: nextTableY,
     head: [['N°', 'CÉDULA', 'APELLIDOS Y NOMBRES', 'MATERIA', 'HORA ENTRADA', 'ESTADO']],
     body: tableRows,
     theme: 'grid',
@@ -280,6 +352,8 @@ export interface StudentAttendanceReportParams {
   representante?: Representante | null;
   nombreAno: string;
   nombreSeccion?: string;
+  lapsoLabel?: string;
+  lapsoBreakdown?: LapsoBreakdownStats[];
   registros: RegistroAsistencia[];
   config?: InstitutionHeaderConfig;
 }
@@ -297,14 +371,16 @@ export function generateStudentAttendancePDF(params: StudentAttendanceReportPara
   const startY = drawInstitutionalLetterhead(
     doc,
     'Historial Cronológico de Asistencia Escolar',
-    'Reporte Oficial para el Representante Legal',
+    `Reporte Oficial para el Representante Legal${
+      params.lapsoLabel ? ` • ${params.lapsoLabel}` : ''
+    }`,
     params.config
   );
 
   // Ficha del Alumno y Representante
   doc.setFillColor(248, 250, 252);
   doc.setDrawColor(226, 232, 240);
-  doc.roundedRect(14, startY + 2, pageWidth - 28, 22, 2, 2, 'FD');
+  doc.roundedRect(14, startY + 2, pageWidth - 28, 26, 2, 2, 'FD');
 
   doc.setFontSize(8);
   doc.setFont('helvetica', 'bold');
@@ -313,17 +389,22 @@ export function generateStudentAttendancePDF(params: StudentAttendanceReportPara
   // Columna Izquierda: Estudiante
   doc.text('ESTUDIANTE:', 18, startY + 7);
   doc.setFont('helvetica', 'normal');
-  doc.text(`${params.estudiante.apellidos}, ${params.estudiante.nombres}`, 42, startY + 7);
+  doc.text(`${params.estudiante.apellidos}, ${params.estudiante.nombres}`, 44, startY + 7);
 
   doc.setFont('helvetica', 'bold');
   doc.text('CÉDULA:', 18, startY + 12);
   doc.setFont('helvetica', 'normal');
-  doc.text(formatCedula(params.estudiante.cedula), 42, startY + 12);
+  doc.text(formatCedula(params.estudiante.cedula), 44, startY + 12);
 
   doc.setFont('helvetica', 'bold');
   doc.text('AÑO Y SECCIÓN:', 18, startY + 17);
   doc.setFont('helvetica', 'normal');
   doc.text(`${params.nombreAno} — Sección ${params.nombreSeccion || params.estudiante.nombreSeccion || 'A'}`, 44, startY + 17);
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('LAPSO ESCOLAR:', 18, startY + 22);
+  doc.setFont('helvetica', 'normal');
+  doc.text(params.lapsoLabel || 'Todos los Lapsos', 44, startY + 22);
 
   // Columna Derecha: Representante
   const repName = params.representante
@@ -333,19 +414,19 @@ export function generateStudentAttendancePDF(params: StudentAttendanceReportPara
   const repTel = params.representante?.telefono || params.estudiante.representanteTelefono || 'N/A';
 
   doc.setFont('helvetica', 'bold');
-  doc.text('REPRESENTANTE:', 110, startY + 7);
+  doc.text('REPRESENTANTE:', 112, startY + 7);
   doc.setFont('helvetica', 'normal');
-  doc.text(repName || 'No especificado', 137, startY + 7);
+  doc.text(repName || 'No especificado', 139, startY + 7);
 
   doc.setFont('helvetica', 'bold');
-  doc.text('C.I. REPRESENTANTE:', 110, startY + 12);
+  doc.text('C.I. REPRESENTANTE:', 112, startY + 12);
   doc.setFont('helvetica', 'normal');
-  doc.text(formatCedula(repCedula), 143, startY + 12);
+  doc.text(formatCedula(repCedula), 145, startY + 12);
 
   doc.setFont('helvetica', 'bold');
-  doc.text('TELÉFONO CONTACTO:', 110, startY + 17);
+  doc.text('TELÉFONO CONTACTO:', 112, startY + 17);
   doc.setFont('helvetica', 'normal');
-  doc.text(repTel, 143, startY + 17);
+  doc.text(repTel, 145, startY + 17);
 
   // Estadísticas del Alumno
   const totalClases = params.registros.length;
@@ -357,7 +438,7 @@ export function generateStudentAttendancePDF(params: StudentAttendanceReportPara
   ).length;
   const pct = totalClases > 0 ? Math.round(((presentes + tardes + justificados) / totalClases) * 100) : 0;
 
-  const kpiY = startY + 27;
+  const kpiY = startY + 31;
   const boxWidth = (pageWidth - 28 - 12) / 5;
 
   const kpis = [
@@ -382,6 +463,63 @@ export function generateStudentAttendancePDF(params: StudentAttendanceReportPara
     doc.setFontSize(10);
     doc.text(kpi.val, x + boxWidth / 2, kpiY + 10.5, { align: 'center' });
   });
+
+  let nextTableY = kpiY + 16;
+
+  if (params.lapsoBreakdown && params.lapsoBreakdown.length > 0) {
+    autoTable(doc, {
+      startY: nextTableY,
+      head: [
+        [
+          'LAPSO ESCOLAR',
+          'PERÍODO',
+          'CLASES',
+          'PRESENTES',
+          'TARDANZAS',
+          'AUSENTES',
+          'JUSTIF./REPOSOS',
+          '% ASIST.',
+        ],
+      ],
+      body: params.lapsoBreakdown.map((lb) => [
+        `${lb.nombre}${lb.activo ? ' (ACTUAL)' : ''}`,
+        lb.fechaInicio && lb.fechaFin
+          ? `${formatDateEs(lb.fechaInicio)} al ${formatDateEs(lb.fechaFin)}`
+          : 'Sin período definido',
+        String(lb.total),
+        String(lb.presentes),
+        String(lb.tardes),
+        String(lb.ausentes),
+        String(lb.justificadosYReposos),
+        `${lb.porcentajeAsistencia}%`,
+      ]),
+      theme: 'grid',
+      headStyles: {
+        fillColor: [5, 150, 105],
+        textColor: [255, 255, 255],
+        fontSize: 7,
+        fontStyle: 'bold',
+        halign: 'center',
+      },
+      styles: {
+        fontSize: 7,
+        cellPadding: 1.5,
+        textColor: [30, 41, 59],
+      },
+      columnStyles: {
+        0: { halign: 'left', fontStyle: 'bold' },
+        1: { halign: 'center' },
+        2: { halign: 'center' },
+        3: { halign: 'center', textColor: [16, 185, 129] },
+        4: { halign: 'center', textColor: [217, 119, 6] },
+        5: { halign: 'center', textColor: [239, 68, 68] },
+        6: { halign: 'center', textColor: [124, 58, 237] },
+        7: { halign: 'center', fontStyle: 'bold' },
+      },
+      margin: { left: 14, right: 14 },
+    });
+    nextTableY = ((doc as any).lastAutoTable?.finalY || nextTableY + 20) + 4;
+  }
 
   // Tabla Cronológica
   const rows = params.registros.map((r, idx) => {
@@ -409,7 +547,7 @@ export function generateStudentAttendancePDF(params: StudentAttendanceReportPara
   });
 
   autoTable(doc, {
-    startY: kpiY + 16,
+    startY: nextTableY,
     head: [['N°', 'FECHA', 'MATERIA / ASIGNATURA', 'HORA ENTRADA', 'ESTADO', 'OBSERVACIÓN PEDAGÓGICA']],
     body: rows,
     theme: 'grid',

@@ -1,4 +1,4 @@
-// Service Worker oficial de EduControl Cloud para Notificaciones Web Push en Tiempo Real
+// Service Worker oficial de EduAsist para Notificaciones Web Push en Tiempo Real
 
 self.addEventListener('install', (event) => {
   event.waitUntil(self.skipWaiting());
@@ -10,11 +10,11 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('push', (event) => {
   let payload = {
-    title: 'EduControl Cloud • Asistencia Escolar',
+    title: 'EduAsist • Asistencia Escolar',
     body: 'Se ha registrado una nueva actualización de asistencia.',
     icon: '/pwa-192x192.png',
     badge: '/pwa-192x192.png',
-    tag: 'educontrol-asistencia',
+    tag: 'eduasist-asistencia',
     renotify: true,
     requireInteraction: false,
     data: {
@@ -46,9 +46,9 @@ self.addEventListener('push', (event) => {
       body: payload.body,
       icon: payload.icon || '/pwa-192x192.png',
       badge: payload.badge || '/pwa-192x192.png',
-      tag: payload.tag,
-      renotify: payload.renotify,
-      requireInteraction: payload.requireInteraction,
+      tag: payload.tag || 'eduasist-asistencia',
+      renotify: Boolean(payload.renotify),
+      requireInteraction: Boolean(payload.requireInteraction),
       data: payload.data,
     })
   );
@@ -80,5 +80,48 @@ self.addEventListener('notificationclick', (event) => {
         }
         return undefined;
       })
+  );
+});
+
+self.addEventListener('pushsubscriptionchange', (event) => {
+  event.waitUntil(
+    (async () => {
+      try {
+        const res = await fetch('/api/push/vapid-public-key');
+        if (!res.ok) return;
+        const { publicKey } = await res.json();
+        if (!publicKey) return;
+
+        const padding = '='.repeat((4 - (publicKey.length % 4)) % 4);
+        const base64 = (publicKey + padding).replace(/-/g, '+').replace(/_/g, '/');
+        const rawData = self.atob(base64);
+        const keyBytes = new Uint8Array(rawData.length);
+        for (let i = 0; i < rawData.length; ++i) {
+          keyBytes[i] = rawData.charCodeAt(i);
+        }
+
+        const newSub = await self.registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: keyBytes,
+        });
+        const subJson = newSub.toJSON();
+        if (subJson.endpoint && subJson.keys?.p256dh && subJson.keys?.auth) {
+          await fetch('/api/push/subscribe', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              endpoint: subJson.endpoint,
+              keys: {
+                p256dh: subJson.keys.p256dh,
+                auth: subJson.keys.auth,
+              },
+            }),
+          });
+        }
+      } catch {
+        // Ignorar si la sesión expiró; el cliente re-sincronizará al abrir el portal
+      }
+    })()
   );
 });

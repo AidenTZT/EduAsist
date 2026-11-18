@@ -41,6 +41,18 @@ export interface AnoEscolar {
   secciones?: Seccion[];
 }
 
+export interface LapsoEscolar {
+  id: number;
+  nombre: string; // ej. "Primer Lapso", "Segundo Lapso", "Tercer Lapso"
+  numeroLapso: 1 | 2 | 3;
+  fechaInicio: string; // YYYY-MM-DD
+  fechaFin: string; // YYYY-MM-DD
+  anioEscolar: string; // ej. "2025 - 2026"
+  activo: boolean;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
 export interface Seccion {
   idSeccion: number;
   idAno: number;
@@ -141,6 +153,9 @@ export interface RegistroAsistencia {
   idAsistencia: number;
   idEstudiante: number;
   idMateria: number;
+  lapsoId?: number | null;
+  lapsoNombre?: string | null;
+  numeroLapso?: number | null;
   fecha: string;
   horaEntrada: string;
   estado: EstadoAsistencia;
@@ -166,6 +181,8 @@ export interface PortalRepresentanteData {
     anoLectivo: string;
     nombreInstitucion: string;
   };
+  lapsos?: LapsoEscolar[];
+  lapsoActivo?: LapsoEscolar | null;
   recesos: RecesoInstitucional[];
   estudiantes: Array<{
     idEstudiante: number;
@@ -181,6 +198,9 @@ export interface PortalRepresentanteData {
   asistencias: Array<{
     idAsistencia: number;
     idEstudiante: number;
+    lapsoId?: number | null;
+    lapsoNombre?: string | null;
+    numeroLapso?: number | null;
     fecha: string;
     horaEntrada: string;
     estado: EstadoAsistencia;
@@ -268,8 +288,20 @@ export interface AttendanceSummaryStats {
   porcentajeAsistencia: number;
 }
 
+export interface LapsoBreakdownStats extends AttendanceSummaryStats {
+  lapsoId: number | null;
+  nombre: string;
+  numeroLapso: number | null;
+  fechaInicio?: string;
+  fechaFin?: string;
+  anioEscolar?: string;
+  activo?: boolean;
+}
+
 export interface PaginatedResponse<T> {
   data: T[];
   pagination: PaginationMeta;
   summary?: AttendanceSummaryStats;
+  lapsoBreakdown?: LapsoBreakdownStats[];
+  lapsoFiltro?: LapsoEscolar | null;
 }

@@ -5,6 +5,7 @@ import { assertNoNumbersInName } from '../lib/validation.ts';
 import { getLocalTodayDateString } from '../lib/utils.ts';
 import type {
   AnoEscolar,
+  LapsoEscolar,
   Seccion,
   Materia,
   DocenteMateria,
@@ -24,6 +25,7 @@ import type {
   SlotSuggestion,
   AuditLog,
   PaginatedResponse,
+  LapsoBreakdownStats,
 } from '../types.ts';
 
 // ---------------------------------------------------------------------------
@@ -59,6 +61,7 @@ export interface PushSubscriptionRecord {
 export interface DatabaseState {
   configuracionInstitucional: ConfiguracionInstitucional[];
   recesosInstitucionales: RecesoInstitucional[];
+  lapsosEscolares: LapsoEscolar[];
   anosEscolares: AnoEscolar[];
   secciones: Seccion[];
   materias: Materia[];
@@ -149,6 +152,7 @@ async function normalizeAndEnsureIntegrity(raw: Partial<DatabaseState>): Promise
       ? raw.configuracionInstitucional.filter((c) => c.clave !== 'lapso_activo')
       : [],
     recesosInstitucionales: Array.isArray(raw.recesosInstitucionales) ? raw.recesosInstitucionales : [],
+    lapsosEscolares: Array.isArray(raw.lapsosEscolares) ? raw.lapsosEscolares : [],
     anosEscolares: Array.isArray(raw.anosEscolares) ? raw.anosEscolares : [],
     secciones: Array.isArray(raw.secciones) ? raw.secciones : [],
     materias: Array.isArray(raw.materias) ? raw.materias : [],
@@ -250,7 +254,110 @@ async function normalizeAndEnsureIntegrity(raw: Partial<DatabaseState>): Promise
     ];
   }
 
+  // Garantizar configuración inicial de los 3 lapsos escolares oficiales si está vacía
+  const anoLectivoConfig =
+    state.configuracionInstitucional.find((c) => c.clave === 'ano_lectivo')?.valor || '2025 - 2026';
+
+  if (state.lapsosEscolares.length === 0) {
+    const nowIso = new Date().toISOString();
+    const today = getLocalTodayDateString();
+    // Determinar año base a partir de las asistencias existentes o fecha actual (ciclo Septiembre - Julio)
+    const latestAsistDate = state.asistencia.reduce(
+      (max, a) => (a.fecha > max ? a.fecha : max),
+      ''
+    );
+    const refDate = latestAsistDate || today;
+    const refYear = Number(refDate.slice(0, 4)) || 2026;
+    const refMonth = Number(refDate.slice(5, 7)) || 9;
+    const startYear = refMonth >= 8 ? refYear : refYear - 1;
+    const endYear = startYear + 1;
+
+    const defaults: LapsoEscolar[] = [
+      {
+        id: 1,
+        nombre: 'Primer Lapso',
+        numeroLapso: 1,
+        fechaInicio: `${startYear}-09-14`,
+        fechaFin: `${startYear}-12-18`,
+        anioEscolar: anoLectivoConfig,
+        activo: false,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      },
+      {
+        id: 2,
+        nombre: 'Segundo Lapso',
+        numeroLapso: 2,
+        fechaInicio: `${endYear}-01-07`,
+        fechaFin: `${endYear}-03-27`,
+        anioEscolar: anoLectivoConfig,
+        activo: false,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      },
+      {
+        id: 3,
+        nombre: 'Tercer Lapso',
+        numeroLapso: 3,
+        fechaInicio: `${endYear}-04-06`,
+        fechaFin: `${endYear}-07-17`,
+        anioEscolar: anoLectivoConfig,
+        activo: false,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      },
+    ];
+
+    const matchingToday = defaults.find((l) => l.fechaInicio <= today && today <= l.fechaFin);
+    if (matchingToday) {
+      matchingToday.activo = true;
+    } else {
+      defaults[0].activo = true;
+    }
+    state.lapsosEscolares = defaults;
+  } else {
+    state.lapsosEscolares = state.lapsosEscolares.map((l, index) => ({
+      id: Number(l.id) || index + 1,
+      nombre: String(l.nombre || `Lapso ${l.numeroLapso || index + 1}`).trim(),
+      numeroLapso: ([1, 2, 3].includes(Number(l.numeroLapso)) ? Number(l.numeroLapso) : 1) as 1 | 2 | 3,
+      fechaInicio: String(l.fechaInicio).trim(),
+      fechaFin: String(l.fechaFin).trim(),
+      anioEscolar: String(l.anioEscolar || anoLectivoConfig).trim(),
+      activo: Boolean(l.activo),
+      createdAt: l.createdAt || new Date().toISOString(),
+      updatedAt: l.updatedAt || new Date().toISOString(),
+    }));
+  }
+
+  // Vincular cada registro de asistencia con su lapso_id correspondiente según su fecha
+  syncAsistenciaLapsoIds(state);
+
   return state;
+}
+
+function findLapsoByDate(lapsos: LapsoEscolar[], fecha: string): LapsoEscolar | null {
+  if (!fecha || lapsos.length === 0) return null;
+  const activeMatches = lapsos.filter((l) => l.activo && l.fechaInicio <= fecha && fecha <= l.fechaFin);
+  if (activeMatches.length > 0) return activeMatches[0];
+  const anyMatches = lapsos
+    .filter((l) => l.fechaInicio <= fecha && fecha <= l.fechaFin)
+    .sort((a, b) => a.numeroLapso - b.numeroLapso);
+  return anyMatches[0] || null;
+}
+
+function syncAsistenciaLapsoIds(state: DatabaseState): void {
+  const validLapsoIds = new Set(state.lapsosEscolares.map((l) => l.id));
+  for (let i = 0; i < state.asistencia.length; i++) {
+    const rec = state.asistencia[i];
+    const matched = findLapsoByDate(state.lapsosEscolares, rec.fecha);
+    if (matched) {
+      rec.lapsoId = matched.id;
+    } else if (rec.lapsoId != null && !validLapsoIds.has(rec.lapsoId)) {
+      rec.lapsoId = null;
+    } else if (rec.lapsoId === undefined) {
+      rec.lapsoId = null;
+    }
+  }
 }
 
 async function persistDbAtomic(state: DatabaseState): Promise<void> {
@@ -756,6 +863,198 @@ export async function toggleReceso(idReceso: number): Promise<RecesoInstituciona
 export async function deleteReceso(idReceso: number): Promise<void> {
   return withWriteLock((db) => {
     db.recesosInstitucionales = db.recesosInstitucionales.filter((r) => r.idReceso !== Number(idReceso));
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 2.1 LAPSOS ESCOLARES (PERÍODOS ACADÉMICOS OFICIALES)
+// ---------------------------------------------------------------------------
+function validateLapsoConsistency(
+  existingLapsos: LapsoEscolar[],
+  candidate: {
+    id?: number;
+    nombre: string;
+    numeroLapso: 1 | 2 | 3;
+    fechaInicio: string;
+    fechaFin: string;
+    anioEscolar: string;
+  }
+): void {
+  if (candidate.fechaInicio > candidate.fechaFin) {
+    throw new Error('La fecha de inicio no puede ser posterior a la fecha de cierre del lapso.');
+  }
+
+  const sameAnio = candidate.anioEscolar.trim().toLowerCase();
+  const others = existingLapsos.filter((l) => l.id !== candidate.id);
+
+  for (const other of others) {
+    const otherSameAnio = other.anioEscolar.trim().toLowerCase() === sameAnio;
+
+    // 1. Verificar duplicado de número de lapso dentro del mismo año escolar
+    if (otherSameAnio && other.numeroLapso === candidate.numeroLapso) {
+      throw new Error(
+        `Ya existe el Lapso ${candidate.numeroLapso} ("${other.nombre}") configurado para el año escolar ${candidate.anioEscolar}.`
+      );
+    }
+
+    // 2. Verificar solapamiento de rangos de fechas (aInicio <= bFin && bInicio <= aFin)
+    const overlaps =
+      candidate.fechaInicio <= other.fechaFin && other.fechaInicio <= candidate.fechaFin;
+    if (overlaps) {
+      throw new Error(
+        `El rango de fechas (${candidate.fechaInicio} al ${candidate.fechaFin}) se solapa con "${other.nombre}" (${other.fechaInicio} al ${other.fechaFin}).`
+      );
+    }
+
+    // 3. Verificar coherencia cronológica dentro del mismo año escolar
+    if (otherSameAnio) {
+      if (candidate.numeroLapso < other.numeroLapso && candidate.fechaInicio > other.fechaInicio) {
+        throw new Error(
+          `El ${candidate.nombre} (Lapso ${candidate.numeroLapso}) debe iniciar antes que el "${other.nombre}" (${other.fechaInicio}).`
+        );
+      }
+      if (candidate.numeroLapso > other.numeroLapso && candidate.fechaInicio < other.fechaInicio) {
+        throw new Error(
+          `El ${candidate.nombre} (Lapso ${candidate.numeroLapso}) no puede iniciar antes que el "${other.nombre}" (${other.fechaInicio}).`
+        );
+      }
+    }
+  }
+}
+
+export async function getLapsos(filters?: {
+  anioEscolar?: string;
+  soloActivos?: boolean;
+}): Promise<LapsoEscolar[]> {
+  const db = await readDb();
+  let list = [...db.lapsosEscolares];
+  if (filters?.anioEscolar) {
+    const target = filters.anioEscolar.trim().toLowerCase();
+    list = list.filter((l) => l.anioEscolar.trim().toLowerCase() === target);
+  }
+  if (filters?.soloActivos) {
+    list = list.filter((l) => l.activo);
+  }
+  return list.sort((a, b) => {
+    const anioCmp = a.anioEscolar.localeCompare(b.anioEscolar);
+    if (anioCmp !== 0) return anioCmp;
+    if (a.numeroLapso !== b.numeroLapso) return a.numeroLapso - b.numeroLapso;
+    return a.fechaInicio.localeCompare(b.fechaInicio);
+  });
+}
+
+export async function getLapsoById(id: number): Promise<LapsoEscolar | null> {
+  const db = await readDb();
+  return db.lapsosEscolares.find((l) => l.id === Number(id)) || null;
+}
+
+export async function getActiveLapso(): Promise<LapsoEscolar | null> {
+  const db = await readDb();
+  return db.lapsosEscolares.find((l) => l.activo) || null;
+}
+
+export async function createLapso(data: {
+  nombre: string;
+  numeroLapso: 1 | 2 | 3;
+  fechaInicio: string;
+  fechaFin: string;
+  anioEscolar: string;
+  activo?: boolean;
+}): Promise<LapsoEscolar> {
+  return withWriteLock((db) => {
+    const cleanData = {
+      nombre: data.nombre.trim(),
+      numeroLapso: data.numeroLapso,
+      fechaInicio: data.fechaInicio.trim(),
+      fechaFin: data.fechaFin.trim(),
+      anioEscolar: data.anioEscolar.trim(),
+    };
+
+    validateLapsoConsistency(db.lapsosEscolares, cleanData);
+
+    const nowIso = new Date().toISOString();
+    const shouldActivate = Boolean(data.activo);
+
+    if (shouldActivate) {
+      db.lapsosEscolares = db.lapsosEscolares.map((l) => ({
+        ...l,
+        activo: false,
+      }));
+    }
+
+    const created: LapsoEscolar = {
+      id: nextNumericId(db.lapsosEscolares, (l) => l.id),
+      ...cleanData,
+      activo: shouldActivate,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+
+    db.lapsosEscolares.push(created);
+    syncAsistenciaLapsoIds(db);
+    return created;
+  });
+}
+
+export async function updateLapso(
+  id: number,
+  data: {
+    nombre?: string;
+    numeroLapso?: 1 | 2 | 3;
+    fechaInicio?: string;
+    fechaFin?: string;
+    anioEscolar?: string;
+    activo?: boolean;
+  }
+): Promise<LapsoEscolar> {
+  return withWriteLock((db) => {
+    const idx = db.lapsosEscolares.findIndex((l) => l.id === Number(id));
+    if (idx === -1) throw new Error('Lapso escolar no encontrado.');
+
+    const current = db.lapsosEscolares[idx];
+    const nextCandidate = {
+      id: current.id,
+      nombre: data.nombre !== undefined ? data.nombre.trim() : current.nombre,
+      numeroLapso: (data.numeroLapso !== undefined ? data.numeroLapso : current.numeroLapso) as 1 | 2 | 3,
+      fechaInicio: data.fechaInicio !== undefined ? data.fechaInicio.trim() : current.fechaInicio,
+      fechaFin: data.fechaFin !== undefined ? data.fechaFin.trim() : current.fechaFin,
+      anioEscolar: data.anioEscolar !== undefined ? data.anioEscolar.trim() : current.anioEscolar,
+    };
+
+    validateLapsoConsistency(db.lapsosEscolares, nextCandidate);
+
+    const nextActivo = data.activo !== undefined ? Boolean(data.activo) : current.activo;
+    const nowIso = new Date().toISOString();
+
+    if (nextActivo) {
+      db.lapsosEscolares = db.lapsosEscolares.map((l) =>
+        l.id === current.id ? l : { ...l, activo: false }
+      );
+    }
+
+    const updated: LapsoEscolar = {
+      ...current,
+      ...nextCandidate,
+      activo: nextActivo,
+      updatedAt: nowIso,
+    };
+
+    db.lapsosEscolares[idx] = updated;
+    syncAsistenciaLapsoIds(db);
+    return updated;
+  });
+}
+
+export async function activateLapso(id: number, activo: boolean = true): Promise<LapsoEscolar> {
+  return updateLapso(id, { activo });
+}
+
+export async function deleteLapso(id: number): Promise<void> {
+  return withWriteLock((db) => {
+    const idx = db.lapsosEscolares.findIndex((l) => l.id === Number(id));
+    if (idx === -1) throw new Error('Lapso escolar no encontrado.');
+    db.lapsosEscolares.splice(idx, 1);
+    syncAsistenciaLapsoIds(db);
   });
 }
 
@@ -1278,6 +1577,17 @@ export async function deleteEstudiante(idEstudiante: number): Promise<void> {
 // ---------------------------------------------------------------------------
 // 5. ASISTENCIA
 // ---------------------------------------------------------------------------
+function resolveAttendanceLapso(
+  record: RegistroAsistencia,
+  lapsoById: Map<number, LapsoEscolar>,
+  lapsos: LapsoEscolar[]
+): LapsoEscolar | null {
+  if (record.lapsoId != null && lapsoById.has(record.lapsoId)) {
+    return lapsoById.get(record.lapsoId)!;
+  }
+  return findLapsoByDate(lapsos, record.fecha);
+}
+
 export async function getAsistencia(filter: {
   fecha?: string;
   mes?: string;
@@ -1289,20 +1599,27 @@ export async function getAsistencia(filter: {
   idRepresentante?: number;
   idSeccion?: number;
   idAno?: number;
+  lapsoId?: number;
 }): Promise<RegistroAsistencia[]> {
   const db = await readDb();
   const estMap = new Map(db.estudiantes.map((e) => [e.idEstudiante, e]));
   const matMap = new Map(db.materias.map((m) => [m.idMateria, m]));
   const anoMap = new Map(db.anosEscolares.map((a) => [a.idAno, a.nombreNivel]));
   const secMap = new Map(db.secciones.map((s) => [s.idSeccion, s.nombreSeccion]));
+  const lapsoMap = new Map(db.lapsosEscolares.map((l) => [l.id, l]));
+  const targetLapso = filter.lapsoId ? lapsoMap.get(Number(filter.lapsoId)) || null : null;
 
   let list = db.asistencia
     .map((a) => {
       const est = estMap.get(a.idEstudiante);
       const mat = matMap.get(a.idMateria);
       if (!est || !mat) return null;
+      const resolvedLapso = resolveAttendanceLapso(a, lapsoMap, db.lapsosEscolares);
       return {
         ...a,
+        lapsoId: resolvedLapso?.id ?? a.lapsoId ?? null,
+        lapsoNombre: resolvedLapso?.nombre ?? null,
+        numeroLapso: resolvedLapso?.numeroLapso ?? null,
         estudianteCedula: est.cedula,
         estudianteNombres: est.nombres,
         estudianteApellidos: est.apellidos,
@@ -1315,6 +1632,17 @@ export async function getAsistencia(filter: {
       };
     })
     .filter((item): item is NonNullable<typeof item> => item !== null);
+
+  if (filter.lapsoId) {
+    if (!targetLapso) {
+      return [];
+    }
+    list = list.filter(
+      (a) =>
+        a.lapsoId === targetLapso.id ||
+        (a.fecha >= targetLapso.fechaInicio && a.fecha <= targetLapso.fechaFin)
+    );
+  }
 
   if (filter.fecha) {
     list = list.filter((a) => a.fecha === filter.fecha);
@@ -1343,7 +1671,7 @@ export async function getAsistencia(filter: {
 
 /**
  * Consulta paginada en servidor con soporte de índices en memoria por fecha/fechaModificacion,
- * filtros granulares (fecha, mes, startDate/endDate, estado, búsqueda) y conteos agregados.
+ * filtros granulares (fecha, mes, startDate/endDate, lapsoId, estado, búsqueda) y desglose por lapsos.
  */
 export async function getAsistenciaPaginated(filter: {
   page?: number;
@@ -1357,6 +1685,7 @@ export async function getAsistenciaPaginated(filter: {
   idEstudiante?: number;
   idSeccion?: number;
   idAno?: number;
+  lapsoId?: number;
   search?: string;
 }): Promise<PaginatedResponse<RegistroAsistencia>> {
   const db = await readDb();
@@ -1368,10 +1697,35 @@ export async function getAsistenciaPaginated(filter: {
   const matMap = new Map(db.materias.map((m) => [m.idMateria, m]));
   const anoMap = new Map(db.anosEscolares.map((a) => [a.idAno, a.nombreNivel]));
   const secMap = new Map(db.secciones.map((s) => [s.idSeccion, s.nombreSeccion]));
+  const lapsoMap = new Map(db.lapsosEscolares.map((l) => [l.id, l]));
+  const targetLapso = filter.lapsoId ? lapsoMap.get(Number(filter.lapsoId)) || null : null;
 
   const searchLower = filter.search ? filter.search.trim().toLowerCase() : '';
 
-  // Filtrado en un solo recorrido sin clonar ni enriquecer registros descartados
+  const sortedLapsos = [...db.lapsosEscolares].sort((a, b) => a.numeroLapso - b.numeroLapso);
+  const breakdownAcc = new Map<
+    number,
+    {
+      lapso: LapsoEscolar;
+      total: number;
+      presentes: number;
+      tardes: number;
+      ausentes: number;
+      justificadosYReposos: number;
+    }
+  >();
+  for (const lapso of sortedLapsos) {
+    breakdownAcc.set(lapso.id, {
+      lapso,
+      total: 0,
+      presentes: 0,
+      tardes: 0,
+      ausentes: 0,
+      justificadosYReposos: 0,
+    });
+  }
+
+  // Filtrado en un solo recorrido calculando desglose por lapsos y totales filtrados
   const matchedRaw: RegistroAsistencia[] = [];
   let presentes = 0;
   let tardes = 0;
@@ -1379,15 +1733,6 @@ export async function getAsistenciaPaginated(filter: {
   let justificadosYReposos = 0;
 
   for (const a of db.asistencia) {
-    if (filter.fecha) {
-      if (a.fecha !== filter.fecha) continue;
-    } else if (filter.mes) {
-      if (!a.fecha.startsWith(filter.mes)) continue;
-    } else {
-      if (filter.startDate && a.fecha < filter.startDate) continue;
-      if (filter.endDate && a.fecha > filter.endDate) continue;
-    }
-
     if (filter.estado && a.estado !== filter.estado) continue;
     if (filter.idMateria && a.idMateria !== Number(filter.idMateria)) continue;
     if (filter.idEstudiante && a.idEstudiante !== Number(filter.idEstudiante)) continue;
@@ -1416,6 +1761,34 @@ export async function getAsistenciaPaginated(filter: {
       }
     }
 
+    const resolvedLapso = resolveAttendanceLapso(a, lapsoMap, db.lapsosEscolares);
+    if (resolvedLapso && breakdownAcc.has(resolvedLapso.id)) {
+      const b = breakdownAcc.get(resolvedLapso.id)!;
+      b.total++;
+      if (a.estado === 'Presente') b.presentes++;
+      else if (a.estado === 'Tarde') b.tardes++;
+      else if (a.estado === 'Ausente') b.ausentes++;
+      else if (a.estado === 'Justificado' || a.estado === 'Reposo Médico') b.justificadosYReposos++;
+    }
+
+    // Aplicar filtro de lapso y/o fecha sobre matchedRaw
+    if (filter.lapsoId) {
+      if (!targetLapso) continue;
+      const inLapso =
+        resolvedLapso?.id === targetLapso.id ||
+        (a.fecha >= targetLapso.fechaInicio && a.fecha <= targetLapso.fechaFin);
+      if (!inLapso) continue;
+    }
+
+    if (filter.fecha) {
+      if (a.fecha !== filter.fecha) continue;
+    } else if (filter.mes) {
+      if (!a.fecha.startsWith(filter.mes)) continue;
+    } else {
+      if (filter.startDate && a.fecha < filter.startDate) continue;
+      if (filter.endDate && a.fecha > filter.endDate) continue;
+    }
+
     if (a.estado === 'Presente') presentes++;
     else if (a.estado === 'Tarde') tardes++;
     else if (a.estado === 'Ausente') ausentes++;
@@ -1440,8 +1813,12 @@ export async function getAsistenciaPaginated(filter: {
   const pageSlice = matchedRaw.slice(offset, offset + limit).map((a) => {
     const est = estMap.get(a.idEstudiante)!;
     const mat = matMap.get(a.idMateria)!;
+    const resolvedLapso = resolveAttendanceLapso(a, lapsoMap, db.lapsosEscolares);
     return {
       ...a,
+      lapsoId: resolvedLapso?.id ?? a.lapsoId ?? null,
+      lapsoNombre: resolvedLapso?.nombre ?? null,
+      numeroLapso: resolvedLapso?.numeroLapso ?? null,
       estudianteCedula: est.cedula,
       estudianteNombres: est.nombres,
       estudianteApellidos: est.apellidos,
@@ -1451,6 +1828,24 @@ export async function getAsistenciaPaginated(filter: {
       idRepresentante: est.idRepresentante,
     };
   });
+
+  const lapsoBreakdown: LapsoBreakdownStats[] = Array.from(breakdownAcc.values()).map(
+    ({ lapso, total, presentes: p, tardes: t, ausentes: au, justificadosYReposos: jr }) => ({
+      lapsoId: lapso.id,
+      nombre: lapso.nombre,
+      numeroLapso: lapso.numeroLapso,
+      fechaInicio: lapso.fechaInicio,
+      fechaFin: lapso.fechaFin,
+      anioEscolar: lapso.anioEscolar,
+      activo: lapso.activo,
+      total,
+      presentes: p,
+      tardes: t,
+      ausentes: au,
+      justificadosYReposos: jr,
+      porcentajeAsistencia: total > 0 ? Math.round(((p + t + jr) / total) * 100) : 0,
+    })
+  );
 
   return {
     data: pageSlice,
@@ -1473,6 +1868,8 @@ export async function getAsistenciaPaginated(filter: {
           ? Math.round(((presentes + tardes + justificadosYReposos) / totalCount) * 100)
           : 0,
     },
+    lapsoBreakdown,
+    lapsoFiltro: targetLapso,
   };
 }
 
@@ -1488,6 +1885,8 @@ export async function registrarAsistenciaBatch(
     const nowIso = now.toISOString();
     const results: RegistroAsistencia[] = [];
     const canJustify = options?.actorRol === 'director' || options?.actorRol === 'coordinador';
+    const matchedLapso = findLapsoByDate(db.lapsosEscolares, fecha);
+    const lapsoId = matchedLapso ? matchedLapso.id : null;
 
     for (const r of records) {
       const hora = r.horaEntrada || serverTime;
@@ -1516,6 +1915,7 @@ export async function registrarAsistenciaBatch(
 
         db.asistencia[existingIdx] = {
           ...existing,
+          lapsoId,
           estado: r.estado,
           horaEntrada: hora,
           ...(shouldStampModifier
@@ -1534,6 +1934,7 @@ export async function registrarAsistenciaBatch(
           idAsistencia: nextNumericId(db.asistencia, (a) => a.idAsistencia),
           idEstudiante: Number(r.idEstudiante),
           idMateria: Number(idMateria),
+          lapsoId,
           fecha,
           horaEntrada: hora,
           estado: r.estado,
@@ -1575,9 +1976,11 @@ export async function updateAsistenciaJustificacion(
 
     const current = db.asistencia[idx];
     const previousEstado = current.estado;
+    const matchedLapso = findLapsoByDate(db.lapsosEscolares, current.fecha);
 
     const updatedRecord: RegistroAsistencia = {
       ...current,
+      lapsoId: matchedLapso ? matchedLapso.id : current.lapsoId ?? null,
       estado: data.estado,
       motivoJustificacion: data.motivoJustificacion.trim(),
       numeroJustificante: data.numeroJustificante?.trim() ? data.numeroJustificante.trim() : null,
@@ -1601,6 +2004,8 @@ export async function updateAsistenciaJustificacion(
       previousEstado,
       registro: {
         ...updatedRecord,
+        lapsoNombre: matchedLapso?.nombre ?? null,
+        numeroLapso: matchedLapso?.numeroLapso ?? null,
         estudianteCedula: est?.cedula,
         estudianteNombres: est?.nombres,
         estudianteApellidos: est?.apellidos,
@@ -2087,14 +2492,16 @@ export async function getPortalRepresentanteData(
   const rep = await getRepresentanteById(idRepresentante);
   if (!rep) return null;
 
-  const [config, recesos, misEstudiantes, allHorarios] = await Promise.all([
+  const [config, recesos, lapsos, misEstudiantes, allHorarios] = await Promise.all([
     getConfiguracion(),
     getRecesos(true),
+    getLapsos(),
     getEstudiantes({ idRepresentante }, false),
     getHorarios(),
   ]);
 
   const asistenciasAll = await getAsistencia({ idRepresentante });
+  const lapsoActivo = lapsos.find((l) => l.activo) || null;
 
   const estudiantesConDetalles = misEstudiantes.map((est) => {
     const studentHorarios = est.idAnoActual && est.idSeccion
@@ -2119,6 +2526,8 @@ export async function getPortalRepresentanteData(
       anoLectivo: config.anoLectivo,
       nombreInstitucion: config.nombreInstitucion,
     },
+    lapsos,
+    lapsoActivo,
     recesos,
     estudiantes: estudiantesConDetalles,
     asistencias: asistenciasAll
@@ -2126,6 +2535,9 @@ export async function getPortalRepresentanteData(
       .map((a) => ({
         idAsistencia: a.idAsistencia,
         idEstudiante: a.idEstudiante,
+        lapsoId: a.lapsoId ?? null,
+        lapsoNombre: a.lapsoNombre ?? null,
+        numeroLapso: a.numeroLapso ?? null,
         fecha: a.fecha,
         horaEntrada: a.horaEntrada,
         estado: a.estado,
@@ -2262,6 +2674,7 @@ export async function getDatabaseStats() {
   const db = await readDb();
   return {
     anosEscolares: db.anosEscolares.length,
+    lapsosEscolares: db.lapsosEscolares.length,
     secciones: db.secciones.length,
     materias: db.materias.length,
     estudiantes: db.estudiantes.length,
@@ -2284,6 +2697,7 @@ export async function createFullDatabaseBackup(authorInfo?: { id?: number; email
       resumenConteos: {
         configuracion: db.configuracionInstitucional.length,
         recesos: db.recesosInstitucionales.length,
+        lapsosEscolares: db.lapsosEscolares.length,
         anosEscolares: db.anosEscolares.length,
         secciones: db.secciones.length,
         materias: db.materias.length,
@@ -2298,6 +2712,7 @@ export async function createFullDatabaseBackup(authorInfo?: { id?: number; email
     data: {
       configuracionInstitucional: db.configuracionInstitucional,
       recesosInstitucionales: db.recesosInstitucionales,
+      lapsosEscolares: db.lapsosEscolares,
       anosEscolares: db.anosEscolares,
       secciones: db.secciones,
       materias: db.materias,
@@ -2433,9 +2848,23 @@ export async function getPushSubscriptionsCountForRep(idRepresentante: number): 
   ).length;
 }
 
+export async function getPushSubscriptionsForRep(
+  idRepresentante: number
+): Promise<PushSubscriptionRecord[]> {
+  const db = await readDb();
+  return db.pushSubscriptions.filter(
+    (s) => s.idRepresentante === Number(idRepresentante) && s.activa
+  );
+}
+
 export async function getPushDispatchPayloadForBatch(
   idMateria: number,
-  records: Array<{ idEstudiante: number; estado: string; horaEntrada?: string }>
+  records: Array<{
+    idEstudiante: number;
+    estado: string;
+    horaEntrada?: string;
+    motivoJustificacion?: string | null;
+  }>
 ) {
   const db = await readDb();
   const mat = db.materias.find((m) => m.idMateria === Number(idMateria));
@@ -2449,6 +2878,7 @@ export async function getPushDispatchPayloadForBatch(
         idEstudiante: est.idEstudiante,
         estado: r.estado,
         horaEntrada: r.horaEntrada,
+        motivoJustificacion: r.motivoJustificacion ?? null,
         idRepresentante: est.idRepresentante,
         estudianteNombre: `${est.nombres} ${est.apellidos}`,
       };

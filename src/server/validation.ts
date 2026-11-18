@@ -209,6 +209,100 @@ export const recesoSchema = z.object({
   descripcion: z.string().trim().optional().nullable(),
 });
 
+const normalizeLapsoInput = (raw: unknown): Record<string, unknown> => {
+  if (!raw || typeof raw !== 'object') return {};
+  const obj = raw as Record<string, unknown>;
+  return {
+    ...obj,
+    numeroLapso: obj.numeroLapso ?? obj.numero_lapso,
+    fechaInicio: obj.fechaInicio ?? obj.fecha_inicio,
+    fechaFin: obj.fechaFin ?? obj.fecha_fin,
+    anioEscolar: obj.anioEscolar ?? obj.anio_escolar,
+  };
+};
+
+export const createLapsoSchema = z.preprocess(
+  normalizeLapsoInput,
+  z
+    .object({
+      nombre: z
+        .string()
+        .trim()
+        .min(3, 'El nombre del lapso debe tener al menos 3 caracteres.')
+        .max(80, 'El nombre del lapso no puede exceder los 80 caracteres.'),
+      numeroLapso: z.coerce
+        .number()
+        .int('El número de lapso debe ser un número entero.')
+        .min(1, 'El número de lapso debe ser 1, 2 o 3.')
+        .max(3, 'El número de lapso debe ser 1, 2 o 3.'),
+      fechaInicio: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, 'La fecha de inicio debe tener el formato YYYY-MM-DD.'),
+      fechaFin: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, 'La fecha de cierre debe tener el formato YYYY-MM-DD.'),
+      anioEscolar: z
+        .string()
+        .trim()
+        .min(4, 'El año escolar asociado es obligatorio (ej. 2025 - 2026).')
+        .max(40, 'El año escolar no puede exceder los 40 caracteres.'),
+      activo: z.boolean().optional().default(false),
+    })
+    .refine((data) => data.fechaInicio <= data.fechaFin, {
+      message: 'La fecha de inicio no puede ser posterior a la fecha de cierre del lapso.',
+      path: ['fechaFin'],
+    })
+);
+
+export const updateLapsoSchema = z.preprocess(
+  normalizeLapsoInput,
+  z
+    .object({
+      nombre: z
+        .string()
+        .trim()
+        .min(3, 'El nombre del lapso debe tener al menos 3 caracteres.')
+        .max(80, 'El nombre del lapso no puede exceder los 80 caracteres.')
+        .optional(),
+      numeroLapso: z.coerce
+        .number()
+        .int('El número de lapso debe ser un número entero.')
+        .min(1, 'El número de lapso debe ser 1, 2 o 3.')
+        .max(3, 'El número de lapso debe ser 1, 2 o 3.')
+        .optional(),
+      fechaInicio: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, 'La fecha de inicio debe tener el formato YYYY-MM-DD.')
+        .optional(),
+      fechaFin: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, 'La fecha de cierre debe tener el formato YYYY-MM-DD.')
+        .optional(),
+      anioEscolar: z
+        .string()
+        .trim()
+        .min(4, 'El año escolar asociado debe tener al menos 4 caracteres.')
+        .max(40, 'El año escolar no puede exceder los 40 caracteres.')
+        .optional(),
+      activo: z.boolean().optional(),
+    })
+    .refine(
+      (data) => !data.fechaInicio || !data.fechaFin || data.fechaInicio <= data.fechaFin,
+      {
+        message: 'La fecha de inicio no puede ser posterior a la fecha de cierre del lapso.',
+        path: ['fechaFin'],
+      }
+    )
+);
+
+export const activateLapsoSchema = z.object({
+  activo: z.boolean().optional().default(true),
+});
+
 export const pushSubscriptionSchema = z.object({
   endpoint: z.string().url('Endpoint de suscripción push inválido').min(10),
   keys: z.object({
@@ -247,47 +341,58 @@ const optionalMonthYmQuery = z.preprocess(
     .optional()
 );
 
-export const attendanceHistoryQuerySchema = z
-  .object({
-    page: z.preprocess(
-      emptyToUndefined,
-      z.coerce
-        .number()
-        .int('El número de página debe ser un entero')
-        .min(1, 'La página mínima es 1')
-        .max(10000, 'Número de página fuera de rango')
-        .default(1)
-    ),
-    limit: z.preprocess(
-      emptyToUndefined,
-      z.coerce
-        .number()
-        .int('El límite por página debe ser un entero')
-        .min(1, 'El límite mínimo por página es 1')
-        .max(500, 'El límite máximo por página es 500')
-        .default(25)
-    ),
-    idAno: optionalPositiveIntQuery,
-    idSeccion: optionalPositiveIntQuery,
-    idMateria: optionalPositiveIntQuery,
-    idEstudiante: optionalPositiveIntQuery,
-    fecha: optionalDateYmdQuery,
-    mes: optionalMonthYmQuery,
-    startDate: optionalDateYmdQuery,
-    endDate: optionalDateYmdQuery,
-    estado: z.preprocess(
-      emptyToUndefined,
-      z.enum(['Presente', 'Tarde', 'Ausente', 'Justificado', 'Reposo Médico']).optional()
-    ),
-    search: z.preprocess(
-      emptyToUndefined,
-      z.string().trim().max(100, 'El criterio de búsqueda es demasiado largo').optional()
-    ),
-  })
-  .refine(
-    (q) => !q.startDate || !q.endDate || q.startDate <= q.endDate,
-    { message: 'La fecha inicial (startDate) no puede ser mayor que la fecha final (endDate).' }
-  );
+export const attendanceHistoryQuerySchema = z.preprocess(
+  (raw) => {
+    if (!raw || typeof raw !== 'object') return raw;
+    const obj = raw as Record<string, unknown>;
+    return {
+      ...obj,
+      lapsoId: obj.lapsoId ?? obj.lapso_id,
+    };
+  },
+  z
+    .object({
+      page: z.preprocess(
+        emptyToUndefined,
+        z.coerce
+          .number()
+          .int('El número de página debe ser un entero')
+          .min(1, 'La página mínima es 1')
+          .max(10000, 'Número de página fuera de rango')
+          .default(1)
+      ),
+      limit: z.preprocess(
+        emptyToUndefined,
+        z.coerce
+          .number()
+          .int('El límite por página debe ser un entero')
+          .min(1, 'El límite mínimo por página es 1')
+          .max(500, 'El límite máximo por página es 500')
+          .default(25)
+      ),
+      idAno: optionalPositiveIntQuery,
+      idSeccion: optionalPositiveIntQuery,
+      idMateria: optionalPositiveIntQuery,
+      idEstudiante: optionalPositiveIntQuery,
+      lapsoId: optionalPositiveIntQuery,
+      fecha: optionalDateYmdQuery,
+      mes: optionalMonthYmQuery,
+      startDate: optionalDateYmdQuery,
+      endDate: optionalDateYmdQuery,
+      estado: z.preprocess(
+        emptyToUndefined,
+        z.enum(['Presente', 'Tarde', 'Ausente', 'Justificado', 'Reposo Médico']).optional()
+      ),
+      search: z.preprocess(
+        emptyToUndefined,
+        z.string().trim().max(100, 'El criterio de búsqueda es demasiado largo').optional()
+      ),
+    })
+    .refine(
+      (q) => !q.startDate || !q.endDate || q.startDate <= q.endDate,
+      { message: 'La fecha inicial (startDate) no puede ser mayor que la fecha final (endDate).' }
+    )
+);
 
 export const auditLogsQuerySchema = z
   .object({
