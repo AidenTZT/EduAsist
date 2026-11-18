@@ -318,6 +318,11 @@ export async function getConfiguracion() {
       nombreInstitucion:
         configMap['nombre_institucion'] ||
         'Liceo Nacional Bolivariano Gran Mariscal de Ayacucho',
+      horaRecesoInicio: configMap['hora_receso_inicio'] || '09:15',
+      horaRecesoFin: configMap['hora_receso_fin'] || '09:45',
+      horaSalida: configMap['hora_salida'] || '13:00',
+      alertaRecesoActiva: (configMap['alerta_receso_activa'] || 'true').toLowerCase() !== 'false',
+      alertaSalidaActiva: (configMap['alerta_salida_activa'] || 'true').toLowerCase() !== 'false',
       raw: rows.filter((r) => r.clave !== 'lapso_activo'),
     };
   } catch (error) {
@@ -325,6 +330,11 @@ export async function getConfiguracion() {
     return {
       anoLectivo: '2025 - 2026',
       nombreInstitucion: 'Liceo Nacional Bolivariano Gran Mariscal de Ayacucho',
+      horaRecesoInicio: '09:15',
+      horaRecesoFin: '09:45',
+      horaSalida: '13:00',
+      alertaRecesoActiva: true,
+      alertaSalidaActiva: true,
       raw: [],
     };
   }
@@ -2451,6 +2461,9 @@ export async function getPortalRepresentanteData(idRepresentante: number) {
       configuracion: {
         anoLectivo: config.anoLectivo,
         nombreInstitucion: config.nombreInstitucion,
+        horaRecesoInicio: config.horaRecesoInicio,
+        horaRecesoFin: config.horaRecesoFin,
+        horaSalida: config.horaSalida,
       },
       recesos,
       estudiantes: estudiantesConDetalles,

@@ -16,8 +16,15 @@ import {
   Search,
   GraduationCap,
   CalendarRange,
+  Clock,
+  Coffee,
+  BellRing,
+  Send,
+  LogOut,
+  Loader2,
 } from 'lucide-react';
 import { LapsosManager } from './LapsosManager.tsx';
+import { SchoolScheduleStatusBanner } from './SchoolScheduleStatusBanner.tsx';
 import type {
   AnoEscolar,
   Seccion,
@@ -40,7 +47,11 @@ import {
   removeDocenteMateria,
   fetchConfiguracion,
   updateConfiguracion,
+  updateHorariosConfiguracion,
+  fetchMilestonePushStatus,
+  triggerMilestonePush,
   fetchHorarios,
+  type MilestonePushStatusResponse,
 } from '../lib/api.ts';
 
 interface MateriaAsignadaResumen {
@@ -113,7 +124,24 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
   );
   const [savingConfig, setSavingConfig] = useState<boolean>(false);
 
+  // Horario de Receso, Salida & Alertas Push Automáticas
+  const [horaRecesoInicio, setHoraRecesoInicio] = useState<string>('09:15');
+  const [horaRecesoFin, setHoraRecesoFin] = useState<string>('09:45');
+  const [horaSalida, setHoraSalida] = useState<string>('13:00');
+  const [alertaRecesoActiva, setAlertaRecesoActiva] = useState<boolean>(true);
+  const [alertaSalidaActiva, setAlertaSalidaActiva] = useState<boolean>(true);
+  const [savingHorariosConfig, setSavingHorariosConfig] = useState<boolean>(false);
+  const [milestoneStatus, setMilestoneStatus] = useState<MilestonePushStatusResponse | null>(null);
+  const [customPushMsg, setCustomPushMsg] = useState<string>('');
+  const [sendingMilestone, setSendingMilestone] = useState<'receso' | 'salida' | null>(null);
+  const [milestoneFeedback, setMilestoneFeedback] = useState<{
+    type: 'success' | 'error';
+    text: string;
+  } | null>(null);
+
   const isDirector = currentUser?.rol === 'director';
+  const canManageHorariosConfig =
+    currentUser?.rol === 'director' || currentUser?.rol === 'coordinador';
 
   // Strictly filter only users with rol === 'docente'
   const eligibleDocentes = staffUsers.filter((u) => u.rol === 'docente');
@@ -134,15 +162,34 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
   const [saving, setSaving] = useState<boolean>(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // Load institutional configuration on mount
-  useEffect(() => {
+  const loadHorariosAndPushStatus = () => {
     fetchConfiguracion()
       .then((cfg) => {
         if (cfg.anoLectivo) setConfigAnoLectivo(cfg.anoLectivo);
         if (cfg.nombreInstitucion) setConfigNombrePlantel(cfg.nombreInstitucion);
+        if (cfg.horaRecesoInicio) setHoraRecesoInicio(cfg.horaRecesoInicio);
+        if (cfg.horaRecesoFin) setHoraRecesoFin(cfg.horaRecesoFin);
+        if (cfg.horaSalida) setHoraSalida(cfg.horaSalida);
+        if (typeof cfg.alertaRecesoActiva === 'boolean') {
+          setAlertaRecesoActiva(cfg.alertaRecesoActiva);
+        }
+        if (typeof cfg.alertaSalidaActiva === 'boolean') {
+          setAlertaSalidaActiva(cfg.alertaSalidaActiva);
+        }
       })
       .catch((e) => console.error('Error loading config in AcademicManager:', e));
-  }, []);
+
+    if (canManageHorariosConfig) {
+      fetchMilestonePushStatus()
+        .then((status) => setMilestoneStatus(status))
+        .catch((e) => console.error('Error loading milestone push status:', e));
+    }
+  };
+
+  // Load institutional configuration on mount
+  useEffect(() => {
+    loadHorariosAndPushStatus();
+  }, [canManageHorariosConfig]);
 
   useEffect(() => {
     fetchHorarios()
@@ -591,6 +638,82 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
     }
   };
 
+  const handleSaveHorariosConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canManageHorariosConfig) return;
+    if (horaRecesoInicio >= horaRecesoFin) {
+      setMessage({
+        type: 'error',
+        text: 'La hora de fin del receso debe ser posterior a la hora de inicio.',
+      });
+      return;
+    }
+    if (horaRecesoFin > horaSalida) {
+      setMessage({
+        type: 'error',
+        text: 'La hora oficial de salida debe ser igual o posterior al fin del receso.',
+      });
+      return;
+    }
+
+    setSavingHorariosConfig(true);
+    setMessage(null);
+    try {
+      const updated = await updateHorariosConfiguracion({
+        horaRecesoInicio,
+        horaRecesoFin,
+        horaSalida,
+        alertaRecesoActiva,
+        alertaSalidaActiva,
+      });
+      setHoraRecesoInicio(updated.horaRecesoInicio);
+      setHoraRecesoFin(updated.horaRecesoFin);
+      setHoraSalida(updated.horaSalida);
+      setAlertaRecesoActiva(updated.alertaRecesoActiva);
+      setAlertaSalidaActiva(updated.alertaSalidaActiva);
+      setMessage({
+        type: 'success',
+        text: `Horario institucional actualizado: Receso ${updated.horaRecesoInicio} - ${updated.horaRecesoFin} • Salida ${updated.horaSalida}.`,
+      });
+      loadHorariosAndPushStatus();
+      onRefreshData();
+    } catch (err: any) {
+      setMessage({
+        type: 'error',
+        text: err.message || 'No se pudo guardar la configuración horaria.',
+      });
+    } finally {
+      setSavingHorariosConfig(false);
+    }
+  };
+
+  const handleTriggerManualMilestone = async (tipo: 'receso' | 'salida') => {
+    if (!canManageHorariosConfig) return;
+    setSendingMilestone(tipo);
+    setMilestoneFeedback(null);
+    try {
+      const res = await triggerMilestonePush({
+        tipo,
+        mensajePersonalizado: customPushMsg.trim() ? customPushMsg.trim() : undefined,
+      });
+      setMilestoneFeedback({
+        type: res.success ? 'success' : 'error',
+        text: res.message,
+      });
+      if (res.success) {
+        setCustomPushMsg('');
+      }
+      loadHorariosAndPushStatus();
+    } catch (err: any) {
+      setMilestoneFeedback({
+        type: 'error',
+        text: err.message || 'Error al enviar la notificación push institucional.',
+      });
+    } finally {
+      setSendingMilestone(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -745,7 +868,7 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
         <LapsosManager currentUser={currentUser} onRefreshData={onRefreshData} />
       )}
 
-      {/* 0. CONFIGURACIÓN INSTITUCIONAL (ROL EXCLUSIVO: DIRECTOR) */}
+      {/* 0. CONFIGURACIÓN INSTITUCIONAL */}
       {activeTab === 'configuracion' && (
         <div className="space-y-6">
           {/* Role Access Notice */}
@@ -754,14 +877,264 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
               <ShieldAlert className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
               <div>
                 <p className="font-bold text-amber-900 dark:text-amber-200">
-                  Modo de Solo Consulta (Rol actual: {currentUser?.rol || 'Personal'})
+                  Acceso de {currentUser?.rol === 'coordinador' ? 'Coordinación' : `Consulta (${currentUser?.rol || 'Personal'})`}
                 </p>
                 <p className="text-amber-800 dark:text-amber-300 mt-0.5">
-                  La modificación de la configuración institucional general (año lectivo y nombre del plantel) está reservada estrictamente para el <strong>Director</strong> de la institución.
+                  {canManageHorariosConfig
+                    ? 'Como Coordinador puede administrar el Horario de Receso, la Hora de Salida y las Alertas Push a representantes. El año lectivo y nombre oficial del plantel están reservados para Dirección.'
+                    : 'La modificación de la configuración institucional está reservada para Dirección y Coordinación.'}
                 </p>
               </div>
             </div>
           )}
+
+          {/* Horario de Receso, Hora de Salida & Automatización de Alertas Push */}
+          <div className="bg-white dark:bg-[#121212] rounded-2xl border border-slate-200 dark:border-[#27272A] overflow-hidden shadow-xs p-6 space-y-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-100 dark:border-[#27272A] pb-4">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="font-bold text-base text-slate-900 dark:text-[#F4F4F5] flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-purple-600" />
+                    <span>Horario de Receso, Salida &amp; Alertas Push</span>
+                  </h3>
+                  <SchoolScheduleStatusBanner
+                    variant="pill"
+                    horaRecesoInicio={horaRecesoInicio}
+                    horaRecesoFin={horaRecesoFin}
+                    horaSalida={horaSalida}
+                  />
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  Configure el receso escolar y la hora oficial de salida para activar los avisos automáticos vía Web Push hacia los representantes de secciones activas.
+                </p>
+              </div>
+
+              {milestoneStatus && (
+                <div className="flex items-center gap-2 text-xs bg-slate-50 dark:bg-[#181818] border border-slate-200 dark:border-[#27272A] px-3 py-2 rounded-xl shrink-0">
+                  <BellRing className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                  <div>
+                    <p className="font-bold text-slate-800 dark:text-slate-200">
+                      {milestoneStatus.targetDevices} dispositivo(s) activo(s)
+                    </p>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      {milestoneStatus.targetRepresentantes} representante(s) • Hora escolar: {milestoneStatus.serverSchoolTime}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Formulario de Configuración Horaria */}
+              <form onSubmit={handleSaveHorariosConfig} className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                      <Coffee className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Inicio Receso</span>
+                    </label>
+                    <input
+                      type="time"
+                      required
+                      disabled={!canManageHorariosConfig}
+                      value={horaRecesoInicio}
+                      onChange={(e) => setHoraRecesoInicio(e.target.value)}
+                      className="w-full bg-slate-50 dark:bg-[#181818] border border-slate-200 dark:border-[#27272A] rounded-xl px-3 py-2.5 text-xs font-mono font-bold text-slate-900 dark:text-[#F4F4F5] focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-60"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                      <Coffee className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Fin Receso</span>
+                    </label>
+                    <input
+                      type="time"
+                      required
+                      disabled={!canManageHorariosConfig}
+                      value={horaRecesoFin}
+                      onChange={(e) => setHoraRecesoFin(e.target.value)}
+                      className="w-full bg-slate-50 dark:bg-[#181818] border border-slate-200 dark:border-[#27272A] rounded-xl px-3 py-2.5 text-xs font-mono font-bold text-slate-900 dark:text-[#F4F4F5] focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-60"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                      <LogOut className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Hora Salida</span>
+                    </label>
+                    <input
+                      type="time"
+                      required
+                      disabled={!canManageHorariosConfig}
+                      value={horaSalida}
+                      onChange={(e) => setHoraSalida(e.target.value)}
+                      className="w-full bg-slate-50 dark:bg-[#181818] border border-slate-200 dark:border-[#27272A] rounded-xl px-3 py-2.5 text-xs font-mono font-bold text-slate-900 dark:text-[#F4F4F5] focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-60"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2.5 pt-1">
+                  <label className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200/80 dark:border-amber-900/50 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      disabled={!canManageHorariosConfig}
+                      checked={alertaRecesoActiva}
+                      onChange={(e) => setAlertaRecesoActiva(e.target.checked)}
+                      className="mt-0.5 rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+                    />
+                    <div className="text-xs">
+                      <p className="font-bold text-slate-900 dark:text-slate-100">
+                        Notificación Push Automática de Receso ({horaRecesoInicio})
+                      </p>
+                      <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                        Envía un aviso automático de lunes a viernes cuando inicia el receso escolar.
+                      </p>
+                    </div>
+                  </label>
+
+                  <label className="flex items-start gap-2.5 p-3 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/20 border border-indigo-200/80 dark:border-indigo-900/50 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      disabled={!canManageHorariosConfig}
+                      checked={alertaSalidaActiva}
+                      onChange={(e) => setAlertaSalidaActiva(e.target.checked)}
+                      className="mt-0.5 rounded border-indigo-400 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <div className="text-xs">
+                      <p className="font-bold text-slate-900 dark:text-slate-100">
+                        Notificación Push Automática de Salida ({horaSalida})
+                      </p>
+                      <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                        Alerta en tiempo real a los representantes cuando culmina la jornada escolar.
+                      </p>
+                    </div>
+                  </label>
+                </div>
+
+                {canManageHorariosConfig && (
+                  <div className="pt-1">
+                    <button
+                      type="submit"
+                      disabled={savingHorariosConfig}
+                      className="px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold shadow-md shadow-purple-100 dark:shadow-none transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                    >
+                      {savingHorariosConfig ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Save className="w-4 h-4" />
+                      )}
+                      <span>
+                        {savingHorariosConfig
+                          ? 'Guardando horarios...'
+                          : 'Guardar Horario de Receso y Salida'}
+                      </span>
+                    </button>
+                  </div>
+                )}
+              </form>
+
+              {/* Panel de Envío Manual y Bitácora Push */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-slate-50 dark:bg-[#181818] border border-slate-200 dark:border-[#27272A] space-y-4">
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                    <Send className="w-3.5 h-3.5 text-purple-600" />
+                    <span>Disparo Manual Inmediato a Representantes</span>
+                  </h4>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                    Emite una notificación push inmediata a todos los representantes suscritos en secciones activas (útil para cambios de horario o pruebas institucionales).
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                    Mensaje personalizado (opcional, máx. 240 caracteres):
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={240}
+                    disabled={!canManageHorariosConfig || sendingMilestone !== null}
+                    value={customPushMsg}
+                    onChange={(e) => setCustomPushMsg(e.target.value)}
+                    placeholder="Dejar vacío para usar el mensaje institucional estándar..."
+                    className="w-full bg-white dark:bg-[#121212] border border-slate-200 dark:border-[#27272A] rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-60"
+                  />
+                </div>
+
+                {canManageHorariosConfig && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <button
+                      type="button"
+                      disabled={sendingMilestone !== null}
+                      onClick={() => handleTriggerManualMilestone('receso')}
+                      className="px-3.5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                    >
+                      {sendingMilestone === 'receso' ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Coffee className="w-3.5 h-3.5" />
+                      )}
+                      <span>Enviar Aviso de Receso</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={sendingMilestone !== null}
+                      onClick={() => handleTriggerManualMilestone('salida')}
+                      className="px-3.5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                    >
+                      {sendingMilestone === 'salida' ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <LogOut className="w-3.5 h-3.5" />
+                      )}
+                      <span>Enviar Aviso de Salida</span>
+                    </button>
+                  </div>
+                )}
+
+                {milestoneFeedback && (
+                  <div
+                    className={`p-3 rounded-xl text-xs font-semibold flex items-center gap-2 border ${
+                      milestoneFeedback.type === 'success'
+                        ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-200 border-emerald-200 dark:border-emerald-800'
+                        : 'bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-200 border-rose-200 dark:border-rose-800'
+                    }`}
+                  >
+                    {milestoneFeedback.type === 'success' ? (
+                      <CheckCircle2 className="w-4 h-4 shrink-0" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                    )}
+                    <span>{milestoneFeedback.text}</span>
+                  </div>
+                )}
+
+                {milestoneStatus?.recentHistory && milestoneStatus.recentHistory.length > 0 && (
+                  <div className="pt-2 border-t border-slate-200 dark:border-[#27272A]">
+                    <p className="text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1.5">
+                      Últimos avisos emitidos:
+                    </p>
+                    <div className="space-y-1 max-h-28 overflow-y-auto">
+                      {milestoneStatus.recentHistory.slice(0, 4).map((h, i) => (
+                        <div
+                          key={`${h.sentAt}-${i}`}
+                          className="flex items-center justify-between text-[11px] px-2.5 py-1.5 rounded-lg bg-white dark:bg-[#121212] border border-slate-200/80 dark:border-[#27272A]"
+                        >
+                          <span className="font-bold text-slate-700 dark:text-slate-200">
+                            {h.tipo === 'receso' ? 'Receso' : 'Salida'} ({h.trigger === 'auto' ? 'Auto' : 'Manual'})
+                          </span>
+                          <span className="text-slate-500 dark:text-slate-400 font-mono">
+                            {h.date} • {h.sent}/{h.sent + h.failed} env.
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
 
           {/* Configuración Global del Plantel y Año Lectivo */}
           <div className="bg-white dark:bg-[#121212] rounded-2xl border border-slate-200 dark:border-[#27272A] overflow-hidden shadow-xs p-6 space-y-6">

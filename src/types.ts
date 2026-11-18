@@ -34,6 +34,19 @@ export interface RecesoInstitucional {
   descripcion?: string | null;
 }
 
+export interface SalidaInstitucional {
+  idSalida: number;
+  nombre: string;
+  horaSalida: string;
+  idAno?: number | null;
+  nombreNivel?: string | null;
+  activo: boolean;
+  notificarPush: boolean;
+  descripcion?: string | null;
+  ultimaNotificacionFecha?: string | null;
+  ultimaNotificacionHora?: string | null;
+}
+
 export interface AnoEscolar {
   idAno: number;
   nombreNivel: string;
@@ -105,7 +118,7 @@ export interface Horario {
 }
 
 export interface ConflictoHorarioItem {
-  type: 'docente' | 'aula' | 'seccion' | 'receso';
+  type: 'docente' | 'aula' | 'seccion' | 'receso' | 'salida';
   message: string;
   details?: {
     profesor?: string;
@@ -184,6 +197,7 @@ export interface PortalRepresentanteData {
   lapsos?: LapsoEscolar[];
   lapsoActivo?: LapsoEscolar | null;
   recesos: RecesoInstitucional[];
+  salidas?: SalidaInstitucional[];
   estudiantes: Array<{
     idEstudiante: number;
     cedula: string;

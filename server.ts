@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 import helmet from 'helmet';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
-import { schoolApp } from './src/server/api.ts';
+import { schoolApp, startSalidaNotificationScheduler } from './src/server/api.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -106,4 +106,5 @@ if (!isProd) {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[Seguridad] EduAsist activo en http://0.0.0.0:${PORT} (Modo: ${isProd ? 'Producción' : 'Desarrollo'})`);
+  startSalidaNotificationScheduler();
 });

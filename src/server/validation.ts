@@ -209,6 +209,24 @@ export const recesoSchema = z.object({
   descripcion: z.string().trim().optional().nullable(),
 });
 
+export const salidaSchema = z.object({
+  nombre: z
+    .string()
+    .trim()
+    .min(2, 'El nombre de la hora de salida es obligatorio')
+    .max(80, 'El nombre no puede exceder los 80 caracteres'),
+  horaSalida: z.string().regex(/^\d{2}:\d{2}$/, 'Formato HH:MM requerido para la hora de salida'),
+  idAno: z.preprocess(
+    (v) => (v === '' || v === null || v === undefined || Number(v) === 0 ? null : Number(v)),
+    z.number().int().positive().nullable().optional()
+  ),
+  activo: z.boolean().optional(),
+  notificarPush: z.boolean().optional(),
+  descripcion: z.string().trim().max(250).optional().nullable(),
+});
+
+export const updateSalidaSchema = salidaSchema.partial();
+
 const normalizeLapsoInput = (raw: unknown): Record<string, unknown> => {
   if (!raw || typeof raw !== 'object') return {};
   const obj = raw as Record<string, unknown>;

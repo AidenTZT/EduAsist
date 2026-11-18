@@ -19,6 +19,7 @@ import type {
   Horario,
   ConfiguracionInstitucional,
   RecesoInstitucional,
+  SalidaInstitucional,
   ConflictoHorarioResult,
   ConflictoHorarioItem,
   AutoResolveResult,
@@ -62,6 +63,7 @@ export interface PushSubscriptionRecord {
 export interface DatabaseState {
   configuracionInstitucional: ConfiguracionInstitucional[];
   recesosInstitucionales: RecesoInstitucional[];
+  salidasInstitucionales: SalidaInstitucional[];
   lapsosEscolares: LapsoEscolar[];
   anosEscolares: AnoEscolar[];
   secciones: Seccion[];
@@ -154,6 +156,19 @@ async function normalizeAndEnsureIntegrity(raw: Partial<DatabaseState>): Promise
       ? raw.configuracionInstitucional.filter((c) => c.clave !== 'lapso_activo')
       : [],
     recesosInstitucionales: Array.isArray(raw.recesosInstitucionales) ? raw.recesosInstitucionales : [],
+    salidasInstitucionales: Array.isArray(raw.salidasInstitucionales)
+      ? raw.salidasInstitucionales.map((s, idx) => ({
+          idSalida: Number(s.idSalida) || idx + 1,
+          nombre: String(s.nombre || 'Hora de Salida Oficial').trim(),
+          horaSalida: String(s.horaSalida || '12:00').trim().slice(0, 5),
+          idAno: s.idAno != null && Number(s.idAno) > 0 ? Number(s.idAno) : null,
+          activo: typeof s.activo === 'boolean' ? s.activo : true,
+          notificarPush: typeof s.notificarPush === 'boolean' ? s.notificarPush : true,
+          descripcion: s.descripcion ? String(s.descripcion).trim() : null,
+          ultimaNotificacionFecha: s.ultimaNotificacionFecha ? String(s.ultimaNotificacionFecha).trim() : null,
+          ultimaNotificacionHora: s.ultimaNotificacionHora ? String(s.ultimaNotificacionHora).trim() : null,
+        }))
+      : [],
     lapsosEscolares: Array.isArray(raw.lapsosEscolares) ? raw.lapsosEscolares : [],
     anosEscolares: Array.isArray(raw.anosEscolares) ? raw.anosEscolares : [],
     secciones: Array.isArray(raw.secciones) ? raw.secciones : [],
@@ -933,6 +948,128 @@ export async function toggleReceso(idReceso: number): Promise<RecesoInstituciona
 export async function deleteReceso(idReceso: number): Promise<void> {
   return withWriteLock((db) => {
     db.recesosInstitucionales = db.recesosInstitucionales.filter((r) => r.idReceso !== Number(idReceso));
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 2.0.1 HORA DE SALIDA INSTITUCIONAL
+// ---------------------------------------------------------------------------
+export async function getSalidas(soloActivos: boolean = false): Promise<SalidaInstitucional[]> {
+  const db = await readDb();
+  const anoMap = new Map(db.anosEscolares.map((a) => [a.idAno, a.nombreNivel]));
+  let list = db.salidasInstitucionales.map((s) => ({
+    ...s,
+    idAno: s.idAno != null && Number(s.idAno) > 0 ? Number(s.idAno) : null,
+    nombreNivel: s.idAno ? anoMap.get(Number(s.idAno)) || 'Año Escolar' : 'Toda la institución',
+  }));
+  if (soloActivos) {
+    list = list.filter((s) => s.activo);
+  }
+  return list.sort((a, b) => a.horaSalida.localeCompare(b.horaSalida));
+}
+
+export async function createSalida(data: {
+  nombre: string;
+  horaSalida: string;
+  idAno?: number | null;
+  activo?: boolean;
+  notificarPush?: boolean;
+  descripcion?: string | null;
+}): Promise<SalidaInstitucional> {
+  return withWriteLock((db) => {
+    const cleanIdAno = data.idAno && Number(data.idAno) > 0 ? Number(data.idAno) : null;
+    if (cleanIdAno && !db.anosEscolares.some((a) => a.idAno === cleanIdAno)) {
+      throw new Error('El Año Escolar seleccionado no existe.');
+    }
+    const nueva: SalidaInstitucional = {
+      idSalida: nextNumericId(db.salidasInstitucionales, (s) => s.idSalida),
+      nombre: data.nombre.trim(),
+      horaSalida: data.horaSalida.trim().slice(0, 5),
+      idAno: cleanIdAno,
+      activo: data.activo !== undefined ? Boolean(data.activo) : true,
+      notificarPush: data.notificarPush !== undefined ? Boolean(data.notificarPush) : true,
+      descripcion: data.descripcion?.trim() || null,
+      ultimaNotificacionFecha: null,
+      ultimaNotificacionHora: null,
+    };
+    db.salidasInstitucionales.push(nueva);
+    const anoName = cleanIdAno
+      ? db.anosEscolares.find((a) => a.idAno === cleanIdAno)?.nombreNivel || 'Año Escolar'
+      : 'Toda la institución';
+    return { ...nueva, nombreNivel: anoName };
+  });
+}
+
+export async function updateSalida(
+  idSalida: number,
+  data: Partial<SalidaInstitucional>
+): Promise<SalidaInstitucional> {
+  return withWriteLock((db) => {
+    const idx = db.salidasInstitucionales.findIndex((s) => s.idSalida === Number(idSalida));
+    if (idx === -1) throw new Error('Configuración de hora de salida no encontrada.');
+    const curr = db.salidasInstitucionales[idx];
+    let nextIdAno = curr.idAno ?? null;
+    if (data.idAno !== undefined) {
+      nextIdAno = data.idAno && Number(data.idAno) > 0 ? Number(data.idAno) : null;
+      if (nextIdAno && !db.anosEscolares.some((a) => a.idAno === nextIdAno)) {
+        throw new Error('El Año Escolar seleccionado no existe.');
+      }
+    }
+    const updated: SalidaInstitucional = {
+      ...curr,
+      ...(data.nombre !== undefined ? { nombre: data.nombre.trim() } : {}),
+      ...(data.horaSalida !== undefined ? { horaSalida: data.horaSalida.trim().slice(0, 5) } : {}),
+      idAno: nextIdAno,
+      ...(data.activo !== undefined ? { activo: Boolean(data.activo) } : {}),
+      ...(data.notificarPush !== undefined ? { notificarPush: Boolean(data.notificarPush) } : {}),
+      ...(data.descripcion !== undefined ? { descripcion: data.descripcion?.trim() || null } : {}),
+    };
+    db.salidasInstitucionales[idx] = updated;
+    const anoName = nextIdAno
+      ? db.anosEscolares.find((a) => a.idAno === nextIdAno)?.nombreNivel || 'Año Escolar'
+      : 'Toda la institución';
+    return { ...updated, nombreNivel: anoName };
+  });
+}
+
+export async function toggleSalida(idSalida: number): Promise<SalidaInstitucional> {
+  return withWriteLock((db) => {
+    const idx = db.salidasInstitucionales.findIndex((s) => s.idSalida === Number(idSalida));
+    if (idx === -1) throw new Error('Configuración de hora de salida no encontrada.');
+    db.salidasInstitucionales[idx] = {
+      ...db.salidasInstitucionales[idx],
+      activo: !db.salidasInstitucionales[idx].activo,
+    };
+    const item = db.salidasInstitucionales[idx];
+    const anoName = item.idAno
+      ? db.anosEscolares.find((a) => a.idAno === item.idAno)?.nombreNivel || 'Año Escolar'
+      : 'Toda la institución';
+    return { ...item, nombreNivel: anoName };
+  });
+}
+
+export async function deleteSalida(idSalida: number): Promise<void> {
+  return withWriteLock((db) => {
+    db.salidasInstitucionales = db.salidasInstitucionales.filter(
+      (s) => s.idSalida !== Number(idSalida)
+    );
+  });
+}
+
+export async function markSalidaNotified(
+  idSalida: number,
+  fechaYmd: string,
+  horaHhmm: string
+): Promise<void> {
+  await withWriteLock((db) => {
+    const idx = db.salidasInstitucionales.findIndex((s) => s.idSalida === Number(idSalida));
+    if (idx !== -1) {
+      db.salidasInstitucionales[idx] = {
+        ...db.salidasInstitucionales[idx],
+        ultimaNotificacionFecha: fechaYmd,
+        ultimaNotificacionHora: horaHhmm,
+      };
+    }
   });
 }
 
@@ -2153,6 +2290,18 @@ export async function detectHorarioConflict(data: {
     }
   }
 
+  const activeSalidas = await getSalidas(true);
+  for (const salida of activeSalidas) {
+    if (salida.idAno && salida.idAno !== Number(idAno)) continue;
+    if (timeToMinutes(horaFin) > timeToMinutes(salida.horaSalida)) {
+      conflicts.push({
+        type: 'salida',
+        message: `El bloque (${horaInicio} - ${horaFin}) supera la ${salida.nombre} (${salida.horaSalida}).`,
+        details: { horarioExistente: `Salida: ${salida.horaSalida}` },
+      });
+    }
+  }
+
   const allHorariosDay = await getHorarios({ diaSemana });
   const otherSchedules = idHorario
     ? allHorariosDay.filter((h) => h.idHorario !== Number(idHorario))
@@ -2562,13 +2711,17 @@ export async function getPortalRepresentanteData(
   const rep = await getRepresentanteById(idRepresentante);
   if (!rep) return null;
 
-  const [config, recesos, lapsos, misEstudiantes, allHorarios] = await Promise.all([
+  const [config, recesos, salidasAll, lapsos, misEstudiantes, allHorarios] = await Promise.all([
     getConfiguracion(),
     getRecesos(true),
+    getSalidas(true),
     getLapsos(),
     getEstudiantes({ idRepresentante }, false),
     getHorarios(),
   ]);
+
+  const studentAnoIds = new Set(misEstudiantes.map((e) => e.idAnoActual));
+  const salidas = salidasAll.filter((s) => !s.idAno || studentAnoIds.has(s.idAno));
 
   const asistenciasAll = await getAsistencia({ idRepresentante });
   const lapsoActivo = lapsos.find((l) => l.activo) || null;
@@ -2599,6 +2752,7 @@ export async function getPortalRepresentanteData(
     lapsos,
     lapsoActivo,
     recesos,
+    salidas,
     estudiantes: estudiantesConDetalles,
     asistencias: asistenciasAll
       .sort((a, b) => b.fecha.localeCompare(a.fecha) || b.horaEntrada.localeCompare(a.horaEntrada))
@@ -2751,6 +2905,7 @@ export async function getDatabaseStats() {
     representantes: db.representantes.length,
     asistencias: db.asistencia.length,
     horarios: db.horarios.length,
+    salidasInstitucionales: db.salidasInstitucionales.length,
     usuariosPersonal: db.users.length,
     logsAuditoria: db.auditLogs.length,
   };
@@ -2767,6 +2922,7 @@ export async function createFullDatabaseBackup(authorInfo?: { id?: number; email
       resumenConteos: {
         configuracion: db.configuracionInstitucional.length,
         recesos: db.recesosInstitucionales.length,
+        salidas: db.salidasInstitucionales.length,
         lapsosEscolares: db.lapsosEscolares.length,
         anosEscolares: db.anosEscolares.length,
         secciones: db.secciones.length,
@@ -2782,6 +2938,7 @@ export async function createFullDatabaseBackup(authorInfo?: { id?: number; email
     data: {
       configuracionInstitucional: db.configuracionInstitucional,
       recesosInstitucionales: db.recesosInstitucionales,
+      salidasInstitucionales: db.salidasInstitucionales,
       lapsosEscolares: db.lapsosEscolares,
       anosEscolares: db.anosEscolares,
       secciones: db.secciones,
@@ -2969,6 +3126,73 @@ export async function getPushDispatchPayloadForBatch(
     idMateria: Number(idMateria),
     nombreMateria: mat?.nombreMateria || 'Asignatura',
     records: resolvedRecords,
+    subscriptions,
+  };
+}
+
+export async function getSalidasPushDispatchPayload(idSalida: number) {
+  const db = await readDb();
+  const salidaRaw = db.salidasInstitucionales.find((s) => s.idSalida === Number(idSalida));
+  if (!salidaRaw) {
+    throw new Error('Configuración de hora de salida no encontrada.');
+  }
+
+  const anoMap = new Map(db.anosEscolares.map((a) => [a.idAno, a.nombreNivel]));
+  const nombreNivel = salidaRaw.idAno
+    ? anoMap.get(Number(salidaRaw.idAno)) || 'Año Escolar'
+    : 'Toda la institución';
+
+  const salida: SalidaInstitucional = {
+    ...salidaRaw,
+    idAno: salidaRaw.idAno != null && Number(salidaRaw.idAno) > 0 ? Number(salidaRaw.idAno) : null,
+    nombreNivel,
+  };
+
+  const matchingEstudiantes = db.estudiantes.filter(
+    (est) => !salida.idAno || est.idAnoActual === salida.idAno
+  );
+
+  const groupedByRep = new Map<
+    number,
+    {
+      idRepresentante: number;
+      estudiantes: Array<{ idEstudiante: number; nombre: string }>;
+    }
+  >();
+
+  for (const est of matchingEstudiantes) {
+    if (!est.idRepresentante) continue;
+    let bucket = groupedByRep.get(est.idRepresentante);
+    if (!bucket) {
+      bucket = { idRepresentante: est.idRepresentante, estudiantes: [] };
+      groupedByRep.set(est.idRepresentante, bucket);
+    }
+    bucket.estudiantes.push({
+      idEstudiante: est.idEstudiante,
+      nombre: `${est.nombres} ${est.apellidos}`.trim(),
+    });
+  }
+
+  const targets = Array.from(groupedByRep.values());
+  const repIds = new Set(targets.map((t) => t.idRepresentante));
+
+  const subscriptions = db.pushSubscriptions
+    .filter((s) => s.activa && repIds.has(s.idRepresentante))
+    .map((s) => ({
+      idRepresentante: s.idRepresentante,
+      endpoint: s.endpoint,
+      p256dh: s.p256dh,
+      auth: s.auth,
+    }));
+
+  const nombreInstitucion =
+    db.configuracionInstitucional.find((c) => c.clave === 'nombre_institucion')?.valor ||
+    'la institución';
+
+  return {
+    salida,
+    nombreInstitucion,
+    targets,
     subscriptions,
   };
 }

@@ -13,6 +13,7 @@ import type {
   Horario,
   ConfiguracionInstitucional,
   RecesoInstitucional,
+  SalidaInstitucional,
   ConflictoHorarioResult,
   AutoResolveResult,
   SlotSuggestion,
@@ -247,6 +248,55 @@ export async function toggleReceso(idReceso: number): Promise<RecesoInstituciona
 
 export async function deleteReceso(idReceso: number): Promise<void> {
   await apiFetch(`/recesos/${idReceso}`, { method: 'DELETE' });
+}
+
+export async function fetchSalidas(soloActivos: boolean = false): Promise<SalidaInstitucional[]> {
+  return apiFetch(`/salidas${buildQuery({ soloActivos: soloActivos ? 'true' : undefined })}`);
+}
+
+export async function createSalida(data: {
+  nombre: string;
+  horaSalida: string;
+  idAno?: number | null;
+  activo?: boolean;
+  notificarPush?: boolean;
+  descripcion?: string;
+}): Promise<SalidaInstitucional> {
+  return apiFetch('/salidas', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateSalida(
+  idSalida: number,
+  data: Partial<SalidaInstitucional>
+): Promise<SalidaInstitucional> {
+  return apiFetch(`/salidas/${idSalida}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function toggleSalida(idSalida: number): Promise<SalidaInstitucional> {
+  return apiFetch(`/salidas/${idSalida}/toggle`, { method: 'PATCH' });
+}
+
+export async function deleteSalida(idSalida: number): Promise<void> {
+  await apiFetch(`/salidas/${idSalida}`, { method: 'DELETE' });
+}
+
+export async function notifySalidaPush(idSalida: number): Promise<{
+  success: boolean;
+  sent: number;
+  failed: number;
+  totalDispositivos: number;
+  totalRepresentantes: number;
+  expiredRemoved: number;
+  salida: SalidaInstitucional;
+  mensaje: string;
+}> {
+  return apiFetch(`/salidas/${idSalida}/notificar`, { method: 'POST' });
 }
 
 // -------------------------------------------------------------

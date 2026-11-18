@@ -34,6 +34,7 @@ import {
   Loader2,
   CalendarRange,
   RefreshCw,
+  DoorOpen,
 } from 'lucide-react';
 import type {
   Representante,
@@ -41,6 +42,7 @@ import type {
   EstadoAsistencia,
   Horario,
   RecesoInstitucional,
+  SalidaInstitucional,
   LoginResponse,
   LapsoEscolar,
   LapsoBreakdownStats,
@@ -930,6 +932,9 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
   };
 
   const recesos: RecesoInstitucional[] = portalData?.recesos || [];
+  const studentSalidas: SalidaInstitucional[] = (portalData?.salidas || [])
+    .filter((s) => s.activo !== false && (!s.idAno || s.idAno === currentStudent?.idAnoActual))
+    .sort((a, b) => a.horaSalida.localeCompare(b.horaSalida));
 
   return (
     <div className="space-y-6">
@@ -1019,7 +1024,7 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
                       ? 'En iPhone/iPad debes agregar la app a la pantalla de inicio para activar alertas push'
                       : pushSubscribed
                       ? 'Notificaciones push activas en este dispositivo (clic para desactivar)'
-                      : 'Activar notificaciones push de asistencia en tiempo real'
+                      : 'Activar notificaciones push de asistencia y hora de salida en tiempo real'
                   }
                 >
                   {!pushSupported && isIOS && !isStandalone ? (
@@ -1545,11 +1550,11 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Distribución de asignaturas, aulas asignadas, docentes y bloques de receso institucional
+                    Distribución de asignaturas, aulas asignadas, docentes, recesos y hora oficial de salida
                   </p>
                 </div>
 
-                {/* Recess indicator */}
+                {/* Recess & Departure indicators */}
                 <div className="flex flex-wrap items-center gap-2">
                   {recesos
                     .filter((r) => r.activo !== false)
@@ -1566,6 +1571,20 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
                         </span>
                       </span>
                     ))}
+
+                  {studentSalidas.map((sal) => (
+                    <span
+                      key={sal.idSalida}
+                      className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-lg bg-sky-50 dark:bg-sky-950/40 text-sky-800 dark:text-sky-300 border border-sky-200 dark:border-sky-800 shadow-2xs"
+                      title={sal.descripcion || sal.nombre}
+                    >
+                      <DoorOpen className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400 shrink-0" />
+                      <span>{sal.nombre}:</span>
+                      <span className="font-mono text-sky-700 dark:text-sky-400">
+                        {sal.horaSalida.slice(0, 5)}
+                      </span>
+                    </span>
+                  ))}
                 </div>
               </div>
 
@@ -1661,6 +1680,22 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
                                 );
                               })
                             )}
+
+                            {studentSalidas.map((sal) => (
+                              <div
+                                key={`parent-sal-${dia}-${sal.idSalida}`}
+                                className="py-1.5 px-2 rounded-xl bg-sky-50 dark:bg-sky-950/35 text-sky-900 dark:text-sky-200 border border-dashed border-sky-300 dark:border-sky-800/70 text-[10px] font-bold text-center flex flex-col items-center justify-center gap-0.5"
+                                title={sal.descripcion || sal.nombre}
+                              >
+                                <div className="flex items-center gap-1">
+                                  <DoorOpen className="w-3 h-3 text-sky-600 dark:text-sky-400 shrink-0" />
+                                  <span>{sal.nombre}</span>
+                                </div>
+                                <span className="font-mono text-[10px] text-sky-700 dark:text-sky-400">
+                                  {sal.horaSalida.slice(0, 5)}
+                                </span>
+                              </div>
+                            ))}
                           </div>
                         </div>
                       );

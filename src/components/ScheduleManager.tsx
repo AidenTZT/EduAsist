@@ -23,6 +23,10 @@ import {
   Wand2,
   Check,
   Lightbulb,
+  DoorOpen,
+  BellRing,
+  Send,
+  Loader2,
 } from 'lucide-react';
 import type {
   AnoEscolar,
@@ -32,6 +36,7 @@ import type {
   Usuario,
   Horario,
   RecesoInstitucional,
+  SalidaInstitucional,
   ConflictoHorarioResult,
   AutoResolveResult,
   SlotSuggestion,
@@ -46,6 +51,12 @@ import {
   updateReceso,
   toggleReceso,
   deleteReceso,
+  fetchSalidas,
+  createSalida,
+  updateSalida,
+  toggleSalida,
+  deleteSalida,
+  notifySalidaPush,
   validateHorarioConflict,
   autoResolveHorarios,
   fetchSuggestedSlots,
@@ -74,6 +85,7 @@ export const ScheduleManager: React.FC<ScheduleManagerProps> = ({
 }) => {
   const [horariosList, setHorariosList] = useState<Horario[]>([]);
   const [recesosList, setRecesosList] = useState<RecesoInstitucional[]>([]);
+  const [salidasList, setSalidasList] = useState<SalidaInstitucional[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -124,6 +136,30 @@ export const ScheduleManager: React.FC<ScheduleManagerProps> = ({
   const [recessMsg, setRecessMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [confirmDeleteRecesoId, setConfirmDeleteRecesoId] = useState<number | null>(null);
 
+  // Salida (Departure Time) Management Modal & Push Dispatch
+  const [salidaModalOpen, setSalidaModalOpen] = useState<boolean>(false);
+  const [editingSalida, setEditingSalida] = useState<SalidaInstitucional | null>(null);
+  const [salidaForm, setSalidaForm] = useState<{
+    nombre: string;
+    horaSalida: string;
+    idAno: number | null;
+    activo: boolean;
+    notificarPush: boolean;
+    descripcion: string;
+  }>({
+    nombre: 'Hora de Salida Oficial',
+    horaSalida: '12:00',
+    idAno: null,
+    activo: true,
+    notificarPush: true,
+    descripcion: '',
+  });
+  const [savingSalida, setSavingSalida] = useState<boolean>(false);
+  const [salidaMsg, setSalidaMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [confirmDeleteSalidaId, setConfirmDeleteSalidaId] = useState<number | null>(null);
+  const [notifyingSalidaId, setNotifyingSalidaId] = useState<number | null>(null);
+  const [salidaPushToast, setSalidaPushToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
   // Auto-resolve conflicts state
   const [autoResolving, setAutoResolving] = useState<boolean>(false);
   const [autoResolveToast, setAutoResolveToast] = useState<{
@@ -164,17 +200,22 @@ export const ScheduleManager: React.FC<ScheduleManagerProps> = ({
     return () => clearInterval(interval);
   }, []);
 
-  // Fetch all schedules & recesses
+  // Fetch all schedules, recesses & departure times
   const loadData = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [hData, rData] = await Promise.all([fetchHorarios(), fetchRecesos()]);
+      const [hData, rData, sData] = await Promise.all([
+        fetchHorarios(),
+        fetchRecesos(),
+        fetchSalidas(),
+      ]);
       setHorariosList(hData);
       setRecesosList(rData);
+      setSalidasList(sData);
     } catch (err: any) {
-      console.error('Error fetching schedules or recesses:', err);
-      setError(err.message || 'Error al cargar datos de horarios y recesos');
+      console.error('Error fetching schedules, recesses or departures:', err);
+      setError(err.message || 'Error al cargar datos de horarios, recesos y horas de salida');
     } finally {
       setLoading(false);
     }
@@ -268,6 +309,7 @@ export const ScheduleManager: React.FC<ScheduleManagerProps> = ({
 
       return {
         isRecess: false,
+        isSalida: false,
         isActive: true,
         block: activeBlock,
         materia,
@@ -279,7 +321,22 @@ export const ScheduleManager: React.FC<ScheduleManagerProps> = ({
       };
     }
 
-    return { isRecess: false, isActive: false };
+    const activeSalidaReached = salidasList
+      .filter((s) => s.activo !== false && (!s.idAno || s.idAno === selectedAnoId))
+      .filter((s) => currentMins >= toMinutes(s.horaSalida))
+      .sort((a, b) => a.horaSalida.localeCompare(b.horaSalida))
+      .pop();
+
+    if (activeSalidaReached) {
+      return {
+        isRecess: false,
+        isSalida: true,
+        isActive: false,
+        salida: activeSalidaReached,
+      };
+    }
+
+    return { isRecess: false, isSalida: false, isActive: false };
   }, [
     activeDay,
     activeTime,
@@ -287,6 +344,7 @@ export const ScheduleManager: React.FC<ScheduleManagerProps> = ({
     selectedSeccionId,
     horariosList,
     recesosList,
+    salidasList,
     materias,
     secciones,
     docenteMaterias,
@@ -490,6 +548,115 @@ export const ScheduleManager: React.FC<ScheduleManagerProps> = ({
       setRecessMsg({ type: 'success', text: 'Receso eliminado correctamente del sistema.' });
     } catch (err: any) {
       setRecessMsg({ type: 'error', text: err.message || 'Error al eliminar receso' });
+    }
+  };
+
+  // Salida (Departure Time) CRUD & Push Handlers
+  const openSalidaModal = (sal?: SalidaInstitucional) => {
+    setSalidaMsg(null);
+    setConfirmDeleteSalidaId(null);
+    if (sal) {
+      setEditingSalida(sal);
+      setSalidaForm({
+        nombre: sal.nombre,
+        horaSalida: sal.horaSalida.slice(0, 5),
+        idAno: sal.idAno ?? null,
+        activo: sal.activo,
+        notificarPush: sal.notificarPush !== false,
+        descripcion: sal.descripcion || '',
+      });
+    } else {
+      setEditingSalida(null);
+      setSalidaForm({
+        nombre: 'Hora de Salida Oficial',
+        horaSalida: '12:00',
+        idAno: null,
+        activo: true,
+        notificarPush: true,
+        descripcion: 'Fin de la jornada académica escolar y retiro de estudiantes',
+      });
+    }
+    setSalidaModalOpen(true);
+  };
+
+  const handleSaveSalida = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingSalida(true);
+    setSalidaMsg(null);
+    try {
+      const payload = {
+        nombre: salidaForm.nombre,
+        horaSalida: salidaForm.horaSalida,
+        idAno: salidaForm.idAno && Number(salidaForm.idAno) > 0 ? Number(salidaForm.idAno) : null,
+        activo: salidaForm.activo,
+        notificarPush: salidaForm.notificarPush,
+        descripcion: salidaForm.descripcion,
+      };
+      if (editingSalida) {
+        await updateSalida(editingSalida.idSalida, payload);
+        setSalidaMsg({ type: 'success', text: 'Hora de salida actualizada correctamente.' });
+      } else {
+        await createSalida(payload);
+        setSalidaMsg({ type: 'success', text: 'Hora de salida registrada correctamente.' });
+      }
+      await loadData();
+      setEditingSalida(null);
+      setSalidaForm({
+        nombre: 'Hora de Salida Oficial',
+        horaSalida: '12:00',
+        idAno: null,
+        activo: true,
+        notificarPush: true,
+        descripcion: '',
+      });
+    } catch (err: any) {
+      setSalidaMsg({ type: 'error', text: err.message || 'Error al guardar hora de salida' });
+    } finally {
+      setSavingSalida(false);
+    }
+  };
+
+  const handleToggleSalida = async (idSalida: number) => {
+    try {
+      await toggleSalida(idSalida);
+      await loadData();
+      setSalidaMsg({ type: 'success', text: 'Estado de la hora de salida actualizado.' });
+    } catch (err: any) {
+      setSalidaMsg({ type: 'error', text: err.message || 'Error al alternar estado' });
+    }
+  };
+
+  const handleDeleteSalida = async (idSalida: number) => {
+    try {
+      await deleteSalida(idSalida);
+      setConfirmDeleteSalidaId(null);
+      await loadData();
+      setSalidaMsg({ type: 'success', text: 'Hora de salida eliminada correctamente.' });
+    } catch (err: any) {
+      setSalidaMsg({ type: 'error', text: err.message || 'Error al eliminar hora de salida' });
+    }
+  };
+
+  const handleNotifySalida = async (idSalida: number) => {
+    setNotifyingSalidaId(idSalida);
+    setSalidaPushToast(null);
+    setSalidaMsg(null);
+    try {
+      const res = await notifySalidaPush(idSalida);
+      await loadData();
+      const msg = res.mensaje || 'Notificación de hora de salida procesada.';
+      setSalidaPushToast({ type: res.sent > 0 || res.totalDispositivos === 0 ? 'success' : 'error', message: msg });
+      if (salidaModalOpen) {
+        setSalidaMsg({ type: res.sent > 0 || res.totalDispositivos === 0 ? 'success' : 'error', text: msg });
+      }
+    } catch (err: any) {
+      const errMsg = err.message || 'Error al enviar notificación push de salida.';
+      setSalidaPushToast({ type: 'error', message: errMsg });
+      if (salidaModalOpen) {
+        setSalidaMsg({ type: 'error', text: errMsg });
+      }
+    } finally {
+      setNotifyingSalidaId(null);
     }
   };
 
@@ -731,6 +898,48 @@ export const ScheduleManager: React.FC<ScheduleManagerProps> = ({
                 </div>
               </div>
             </div>
+          ) : liveClassStatus?.isSalida && liveClassStatus.salida ? (
+            <div className="p-6 rounded-2xl bg-sky-50/90 dark:bg-[#181818] border border-sky-200 dark:border-sky-900/50 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <div className="flex items-center space-x-4">
+                <div className="w-14 h-14 rounded-2xl bg-sky-100 dark:bg-sky-950/60 text-sky-700 dark:text-sky-400 flex items-center justify-center border border-sky-200 dark:border-sky-800/50 shrink-0">
+                  <DoorOpen className="w-8 h-8 text-sky-600 dark:text-sky-400" />
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-sky-200/80 dark:bg-sky-950/80 text-sky-900 dark:text-sky-300 border border-transparent dark:border-sky-700/40">
+                      Hora de Salida Institucional
+                    </span>
+                    <span className="font-mono text-xs font-bold text-sky-800 dark:text-sky-400">
+                      {liveClassStatus.salida.horaSalida.slice(0, 5)}
+                    </span>
+                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-white dark:bg-[#121212] text-sky-800 dark:text-sky-300 border border-sky-200 dark:border-sky-800">
+                      {liveClassStatus.salida.nombreNivel || 'Toda la institución'}
+                    </span>
+                  </div>
+                  <h3 className="text-xl font-black text-sky-950 dark:text-[#F4F4F5] mt-1">
+                    {liveClassStatus.salida.nombre}
+                  </h3>
+                  <p className="text-xs text-sky-800 dark:text-[#A1A1AA] mt-0.5">
+                    {liveClassStatus.salida.descripcion ||
+                      'Jornada académica finalizada. Los representantes reciben alerta push al llegar la hora de salida.'}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => handleNotifySalida(liveClassStatus.salida!.idSalida)}
+                disabled={notifyingSalidaId === liveClassStatus.salida.idSalida}
+                className="px-4 py-2.5 rounded-2xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold transition-all shadow-sm flex items-center space-x-2 shrink-0 cursor-pointer disabled:opacity-50"
+              >
+                {notifyingSalidaId === liveClassStatus.salida.idSalida ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <BellRing className="w-4 h-4" />
+                )}
+                <span>Notificar Salida por Push</span>
+              </button>
+            </div>
           ) : (
             <div className="p-6 rounded-2xl bg-slate-50 dark:bg-[#181818] border border-slate-200 dark:border-[#27272A] text-center py-8">
               <Clock className="w-8 h-8 text-slate-400 dark:text-[#71717A] mx-auto mb-2" />
@@ -779,6 +988,16 @@ export const ScheduleManager: React.FC<ScheduleManagerProps> = ({
                 >
                   <Coffee className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
                   <span>Configurar Recesos ({recesosList.length})</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => openSalidaModal()}
+                  className="px-3.5 py-2 rounded-xl text-xs font-bold text-sky-800 dark:text-sky-300 bg-sky-50 dark:bg-sky-950/50 hover:bg-sky-100 dark:hover:bg-sky-900/60 border border-sky-200 dark:border-sky-800 transition-colors flex items-center space-x-1.5 cursor-pointer shadow-2xs"
+                  title="Configurar hora oficial de salida y notificación push"
+                >
+                  <DoorOpen className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
+                  <span>Configurar Salida ({salidasList.length})</span>
                 </button>
 
                 <button
@@ -859,6 +1078,92 @@ export const ScheduleManager: React.FC<ScheduleManagerProps> = ({
                 (Aplica para todos los años y secciones)
               </span>
             )}
+          </div>
+        )}
+
+        {/* Departure Push Dispatch Toast */}
+        {salidaPushToast && (
+          <div
+            className={`mt-4 p-3.5 rounded-2xl flex items-center justify-between border ${
+              salidaPushToast.type === 'success'
+                ? 'bg-sky-50 dark:bg-sky-950/40 border-sky-200 dark:border-sky-800 text-sky-900 dark:text-sky-200'
+                : 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-900 dark:text-rose-200'
+            }`}
+          >
+            <div className="flex items-center space-x-2 text-xs font-bold">
+              {salidaPushToast.type === 'success' ? (
+                <BellRing className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
+              ) : (
+                <AlertCircle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
+              )}
+              <span>{salidaPushToast.message}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSalidaPushToast(null)}
+              className="text-xs font-bold px-2 py-0.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* Institutional Departure Times Bar */}
+        {salidasList.length > 0 && (
+          <div className="mt-4 p-3.5 rounded-2xl bg-sky-50/90 dark:bg-sky-950/25 border border-sky-200 dark:border-sky-800/70 flex flex-col gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-bold text-sky-900 dark:text-sky-300 flex items-center gap-1.5">
+                <DoorOpen className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
+                <span>Hora de Salida Institucional Oficial:</span>
+              </span>
+              <span className="text-[11px] text-sky-700 dark:text-sky-400/90 font-medium">
+                Las alertas push se envían automáticamente al llegar la hora o de forma manual
+              </span>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {salidasList.map((sal) => (
+                <div
+                  key={sal.idSalida}
+                  className={`inline-flex flex-wrap items-center gap-2 text-xs px-3 py-1.5 rounded-xl border transition-all ${
+                    sal.activo !== false
+                      ? 'bg-white dark:bg-[#181818] text-sky-900 dark:text-sky-200 border-sky-200 dark:border-sky-800/80 shadow-2xs'
+                      : 'bg-slate-100 dark:bg-[#181818]/50 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-[#27272A] opacity-75'
+                  }`}
+                  title={sal.descripcion || sal.nombre}
+                >
+                  <span className="w-2 h-2 rounded-full bg-sky-500 shrink-0" />
+                  <span className="font-bold">{sal.nombre}</span>
+                  <span className="font-mono font-bold text-sky-700 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/60 px-1.5 py-0.5 rounded-md border border-sky-200/60 dark:border-sky-800/60">
+                    {sal.horaSalida.slice(0, 5)}
+                  </span>
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-[#27272A] text-slate-600 dark:text-slate-300">
+                    {sal.nombreNivel || 'Toda la institución'}
+                  </span>
+                  {sal.notificarPush && (
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60">
+                      Push Auto
+                    </span>
+                  )}
+                  {sal.activo !== false && (
+                    <button
+                      type="button"
+                      onClick={() => handleNotifySalida(sal.idSalida)}
+                      disabled={notifyingSalidaId === sal.idSalida}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white text-[10px] font-bold cursor-pointer disabled:opacity-50 transition-colors"
+                      title="Enviar notificación push de hora de salida ahora a los representantes"
+                    >
+                      {notifyingSalidaId === sal.idSalida ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <Send className="w-3 h-3" />
+                      )}
+                      <span>Notificar Salida</span>
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -990,6 +1295,9 @@ export const ScheduleManager: React.FC<ScheduleManagerProps> = ({
                 const activeRecesos = recesosList
                   .filter((r) => r.activo !== false)
                   .sort((a, b) => a.horaInicio.localeCompare(b.horaInicio));
+                const activeSalidas = salidasList
+                  .filter((s) => s.activo !== false && (!s.idAno || s.idAno === selectedAnoId))
+                  .sort((a, b) => a.horaSalida.localeCompare(b.horaSalida));
 
                 return (
                   <div
@@ -1031,6 +1339,20 @@ export const ScheduleManager: React.FC<ScheduleManagerProps> = ({
                             </div>
                             <span className="font-mono text-[11px] font-bold px-2 py-0.5 rounded bg-white dark:bg-[#121212] text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
                               {rec.horaInicio.slice(0, 5)} - {rec.horaFin.slice(0, 5)}
+                            </span>
+                          </div>
+                        ))}
+                        {activeSalidas.map((sal) => (
+                          <div
+                            key={sal.idSalida}
+                            className="py-2.5 px-3.5 rounded-xl bg-sky-50 dark:bg-sky-950/35 text-sky-900 dark:text-sky-200 border border-dashed border-sky-300 dark:border-sky-800/70 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-1"
+                          >
+                            <div className="flex items-center gap-2 font-bold">
+                              <DoorOpen className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
+                              <span>{sal.nombre}</span>
+                            </div>
+                            <span className="font-mono text-[11px] font-bold px-2 py-0.5 rounded bg-white dark:bg-[#121212] text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800">
+                              {sal.horaSalida.slice(0, 5)}
                             </span>
                           </div>
                         ))}
@@ -1160,6 +1482,27 @@ export const ScheduleManager: React.FC<ScheduleManagerProps> = ({
                             </React.Fragment>
                           );
                         })}
+
+                        {activeSalidas.map((sal) => (
+                          <div
+                            key={`mob-sal-${sal.idSalida}`}
+                            className="py-2.5 px-3.5 rounded-xl bg-sky-50 dark:bg-sky-950/35 text-sky-900 dark:text-sky-200 border border-dashed border-sky-300 dark:border-sky-800/70 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-1"
+                            title={sal.descripcion || sal.nombre}
+                          >
+                            <div className="flex items-center gap-2 font-bold">
+                              <DoorOpen className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
+                              <span>{sal.nombre}</span>
+                              {sal.notificarPush && (
+                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-sky-100 dark:bg-sky-900/60 text-sky-700 dark:text-sky-300">
+                                  Push
+                                </span>
+                              )}
+                            </div>
+                            <span className="font-mono text-[11px] font-bold px-2 py-0.5 rounded bg-white dark:bg-[#121212] text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800 self-start sm:self-auto">
+                              {sal.horaSalida.slice(0, 5)}
+                            </span>
+                          </div>
+                        ))}
                       </div>
                     )}
                   </div>
@@ -1178,6 +1521,9 @@ export const ScheduleManager: React.FC<ScheduleManagerProps> = ({
                 const activeRecesos = recesosList
                   .filter((r) => r.activo !== false)
                   .sort((a, b) => a.horaInicio.localeCompare(b.horaInicio));
+                const activeSalidas = salidasList
+                  .filter((s) => s.activo !== false && (!s.idAno || s.idAno === selectedAnoId))
+                  .sort((a, b) => a.horaSalida.localeCompare(b.horaSalida));
 
                 return (
                   <div
@@ -1213,6 +1559,20 @@ export const ScheduleManager: React.FC<ScheduleManagerProps> = ({
                             </div>
                             <span className="font-mono text-[10px] text-amber-700 dark:text-amber-400">
                               {rec.horaInicio.slice(0, 5)} - {rec.horaFin.slice(0, 5)}
+                            </span>
+                          </div>
+                        ))}
+                        {activeSalidas.map((sal) => (
+                          <div
+                            key={sal.idSalida}
+                            className="py-1.5 px-2.5 rounded-xl bg-sky-50 dark:bg-sky-950/35 text-sky-900 dark:text-sky-200 border border-dashed border-sky-300 dark:border-sky-800/70 text-[10px] font-bold flex flex-col items-center justify-center gap-0.5 text-center"
+                          >
+                            <div className="flex items-center gap-1">
+                              <DoorOpen className="w-3 h-3 text-sky-600 dark:text-sky-400 shrink-0" />
+                              <span>{sal.nombre}</span>
+                            </div>
+                            <span className="font-mono text-[10px] text-sky-700 dark:text-sky-400">
+                              {sal.horaSalida.slice(0, 5)}
                             </span>
                           </div>
                         ))}
@@ -1337,6 +1697,22 @@ export const ScheduleManager: React.FC<ScheduleManagerProps> = ({
                             </React.Fragment>
                           );
                         })}
+
+                        {activeSalidas.map((sal) => (
+                          <div
+                            key={`lg-sal-${sal.idSalida}`}
+                            className="py-1.5 px-2.5 rounded-xl bg-sky-50 dark:bg-sky-950/35 text-sky-900 dark:text-sky-200 border border-dashed border-sky-300 dark:border-sky-800/70 text-[10px] font-bold flex flex-col items-center justify-center gap-0.5 text-center"
+                            title={sal.descripcion || sal.nombre}
+                          >
+                            <div className="flex items-center gap-1">
+                              <DoorOpen className="w-3 h-3 text-sky-600 dark:text-sky-400 shrink-0" />
+                              <span>{sal.nombre}</span>
+                            </div>
+                            <span className="font-mono text-[10px] text-sky-700 dark:text-sky-400">
+                              {sal.horaSalida.slice(0, 5)} {sal.notificarPush ? '• Push' : ''}
+                            </span>
+                          </div>
+                        ))}
                       </div>
                     )}
                   </div>
@@ -1604,7 +1980,7 @@ export const ScheduleManager: React.FC<ScheduleManagerProps> = ({
                   <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/35 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 text-xs flex items-center gap-2">
                     <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
                     <span className="font-semibold">
-                      Horario disponible: Sin colisión de aula, docente ni recesos.
+                      Horario disponible: Sin colisión de aula, docente, recesos ni hora de salida.
                     </span>
                   </div>
                 )}
@@ -1830,6 +2206,263 @@ export const ScheduleManager: React.FC<ScheduleManagerProps> = ({
                   className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 shadow-sm cursor-pointer disabled:opacity-50"
                 >
                   {savingRecess ? 'Guardando...' : editingRecess ? 'Actualizar Receso' : 'Guardar Receso'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 5. Institutional Departure Time (Hora de Salida) Modal */}
+      {salidaModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+          <div className="bg-white dark:bg-[#121212] rounded-3xl max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-slate-200 dark:border-[#27272A] p-6 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-[#27272A] mb-4">
+              <div className="flex items-center space-x-2.5">
+                <div className="p-2 bg-sky-50 dark:bg-sky-950/60 text-sky-600 dark:text-sky-400 rounded-xl">
+                  <DoorOpen className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-slate-900 dark:text-[#F4F4F5]">
+                    Hora de Salida Institucional
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-[#A1A1AA]">
+                    Configuración de salida escolar y notificaciones Push a representantes
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSalidaModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {salidaMsg && (
+              <div
+                className={`mb-4 p-3 rounded-xl text-xs font-bold flex items-center justify-between border ${
+                  salidaMsg.type === 'success'
+                    ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200'
+                    : 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-200'
+                }`}
+              >
+                <span>{salidaMsg.text}</span>
+                <button
+                  type="button"
+                  onClick={() => setSalidaMsg(null)}
+                  className="text-xs font-bold px-1.5 py-0.5 rounded hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
+            {/* List of existing departure rules */}
+            <div className="space-y-2 mb-5">
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                Horas de Salida Configuradas ({salidasList.length}):
+              </p>
+              {salidasList.length === 0 ? (
+                <div className="p-4 rounded-xl border border-dashed border-slate-200 dark:border-[#27272A] text-center text-xs text-slate-400 dark:text-slate-500">
+                  No hay horas de salida registradas actualmente.
+                </div>
+              ) : (
+                salidasList.map((sal) => (
+                  <div
+                    key={sal.idSalida}
+                    className="p-3 rounded-xl border border-slate-200 dark:border-[#27272A] bg-slate-50 dark:bg-[#181818] flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                  >
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-xs text-slate-900 dark:text-[#F4F4F5]">{sal.nombre}</span>
+                        <span className="font-mono text-[11px] font-bold text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-950/60 px-2 py-0.5 rounded border border-sky-200 dark:border-sky-800">
+                          {sal.horaSalida.slice(0, 5)}
+                        </span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-white dark:bg-[#121212] text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-[#27272A]">
+                          {sal.nombreNivel || 'Toda la institución'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleToggleSalida(sal.idSalida)}
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full border cursor-pointer transition-all ${
+                            sal.activo
+                              ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
+                              : 'bg-slate-200 dark:bg-[#27272A] text-slate-600 dark:text-slate-400 border-slate-300 dark:border-[#3F3F46]'
+                          }`}
+                          title="Clic para activar o desactivar esta hora de salida"
+                        >
+                          {sal.activo ? '● Activa' : '○ Inactiva'}
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 mt-1 text-[11px] text-slate-500 dark:text-[#A1A1AA]">
+                        <span>
+                          {sal.notificarPush ? '🔔 Push automático activado' : '🔕 Solo notificación manual'}
+                        </span>
+                        {sal.ultimaNotificacionFecha && (
+                          <span className="font-mono text-[10px] text-sky-700 dark:text-sky-400">
+                            • Último aviso: {sal.ultimaNotificacionFecha}{' '}
+                            {sal.ultimaNotificacionHora || ''}
+                          </span>
+                        )}
+                      </div>
+                      {sal.descripcion && (
+                        <p className="text-[11px] text-slate-500 dark:text-[#A1A1AA] mt-0.5">{sal.descripcion}</p>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1.5 self-end sm:self-auto shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleNotifySalida(sal.idSalida)}
+                        disabled={notifyingSalidaId === sal.idSalida}
+                        className="px-2.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white text-[10px] font-bold flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                        title="Notificar ahora por Web Push a los representantes"
+                      >
+                        {notifyingSalidaId === sal.idSalida ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <BellRing className="w-3 h-3" />
+                        )}
+                        <span>Notificar</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => openSalidaModal(sal)}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 cursor-pointer"
+                        title="Editar"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+
+                      {confirmDeleteSalidaId === sal.idSalida ? (
+                        <div className="flex items-center gap-1 animate-in fade-in duration-150">
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSalida(sal.idSalida)}
+                            className="px-2 py-1 rounded-lg text-[10px] font-bold bg-rose-600 hover:bg-rose-700 text-white cursor-pointer shadow-2xs"
+                          >
+                            Confirmar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteSalidaId(null)}
+                            className="px-1.5 py-1 rounded-lg text-[10px] font-bold bg-slate-200 dark:bg-[#27272A] text-slate-700 dark:text-slate-300 hover:bg-slate-300 cursor-pointer"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteSalidaId(sal.idSalida)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+                          title="Eliminar esta hora de salida"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Form to create/edit departure */}
+            <form onSubmit={handleSaveSalida} className="space-y-3 pt-3 border-t border-slate-100 dark:border-[#27272A]">
+              <p className="text-xs font-bold text-slate-800 dark:text-[#F4F4F5]">
+                {editingSalida ? 'Editar Hora de Salida:' : 'Agregar Nueva Hora de Salida:'}
+              </p>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Nombre:</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ej: Hora de Salida Oficial, Salida Turno Mañana"
+                  value={salidaForm.nombre}
+                  onChange={(e) => setSalidaForm({ ...salidaForm, nombre: e.target.value })}
+                  className="w-full px-3 py-2 rounded-xl text-xs border border-slate-200 dark:border-[#27272A] bg-slate-50 dark:bg-[#181818] text-slate-900 dark:text-[#F4F4F5] focus:outline-none focus:ring-2 focus:ring-sky-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Hora de Salida:
+                  </label>
+                  <input
+                    type="time"
+                    required
+                    value={salidaForm.horaSalida}
+                    onChange={(e) => setSalidaForm({ ...salidaForm, horaSalida: e.target.value })}
+                    className="w-full px-3 py-1.5 rounded-xl text-xs font-mono font-bold border border-slate-200 dark:border-[#27272A] bg-slate-50 dark:bg-[#181818] text-slate-900 dark:text-[#F4F4F5]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Alcance (Año Escolar):
+                  </label>
+                  <select
+                    value={salidaForm.idAno ?? 0}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      setSalidaForm({ ...salidaForm, idAno: v > 0 ? v : null });
+                    }}
+                    className="w-full px-3 py-2 rounded-xl text-xs font-bold border border-slate-200 dark:border-[#27272A] bg-slate-50 dark:bg-[#181818] text-slate-900 dark:text-[#F4F4F5] cursor-pointer"
+                  >
+                    <option value={0}>Toda la institución</option>
+                    {anos.map((a) => (
+                      <option key={a.idAno} value={a.idAno}>
+                        {a.nombreNivel}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <label className="flex items-center gap-2 p-2.5 rounded-xl bg-sky-50/70 dark:bg-sky-950/25 border border-sky-200 dark:border-sky-800/60 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={salidaForm.notificarPush}
+                  onChange={(e) => setSalidaForm({ ...salidaForm, notificarPush: e.target.checked })}
+                  className="rounded border-sky-300 text-sky-600 focus:ring-sky-500"
+                />
+                <span className="text-xs font-semibold text-sky-900 dark:text-sky-200">
+                  Notificar automáticamente por Web Push a representantes al llegar la hora de salida
+                </span>
+              </label>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Descripción (Opcional):
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ej: Culminación de clases y retiro en portón principal"
+                  value={salidaForm.descripcion}
+                  onChange={(e) => setSalidaForm({ ...salidaForm, descripcion: e.target.value })}
+                  className="w-full px-3 py-2 rounded-xl text-xs border border-slate-200 dark:border-[#27272A] bg-slate-50 dark:bg-[#181818] text-slate-900 dark:text-[#F4F4F5] focus:outline-none focus:ring-2 focus:ring-sky-500"
+                />
+              </div>
+
+              <div className="pt-3 flex items-center justify-end space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setSalidaModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-[#181818] cursor-pointer"
+                >
+                  Cerrar
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingSalida}
+                  className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-sky-600 hover:bg-sky-700 shadow-sm cursor-pointer disabled:opacity-50"
+                >
+                  {savingSalida ? 'Guardando...' : editingSalida ? 'Actualizar Salida' : 'Guardar Salida'}
                 </button>
               </div>
             </form>

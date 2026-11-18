@@ -27,6 +27,8 @@ import {
   auditLogsQuerySchema,
   createHorarioSchema,
   recesoSchema,
+  salidaSchema,
+  updateSalidaSchema,
   createLapsoSchema,
   updateLapsoSchema,
   activateLapsoSchema,
@@ -37,6 +39,7 @@ import type { EstadoAsistencia } from '../types.ts';
 import {
   getVapidPublicKey,
   dispatchAttendancePushNotificationsDirect,
+  dispatchDeparturePushNotificationsDirect,
   sendTestPushToSubscriptions,
 } from './pushService.ts';
 
@@ -449,6 +452,306 @@ apiRouter.delete(
       res.json({ success: true });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// 1.1 HORA DE SALIDA INSTITUCIONAL & DESPACHO PUSH
+// ---------------------------------------------------------------------------
+function getSchoolZonedClock(timeZone: string = process.env.SCHOOL_TIMEZONE || 'America/Caracas') {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    weekday: 'short',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(now);
+
+  const map: Record<string, string> = {};
+  for (const p of parts) {
+    if (p.type !== 'literal') map[p.type] = p.value;
+  }
+
+  const weekday = map.weekday || '';
+  const isWeekday = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].includes(weekday);
+  const rawHour = Number(map.hour === '24' ? '0' : map.hour || '0');
+  const rawMinute = Number(map.minute || '0');
+  const hh = String(rawHour).padStart(2, '0');
+  const mm = String(rawMinute).padStart(2, '0');
+
+  return {
+    isWeekday,
+    todayYmd: `${map.year}-${map.month}-${map.day}`,
+    currentHhmm: `${hh}:${mm}`,
+    currentMins: rawHour * 60 + rawMinute,
+  };
+}
+
+function hhmmToMinutes(hhmm: string): number {
+  const [h, m] = String(hhmm || '00:00').split(':').map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+async function executeSalidaPushNotification(
+  idSalida: number,
+  motivo: 'auto' | 'manual',
+  clockOverride?: { todayYmd: string; currentHhmm: string }
+) {
+  const clock = clockOverride || getSchoolZonedClock();
+  const payload = await db.getSalidasPushDispatchPayload(idSalida);
+
+  let sent = 0;
+  let failed = 0;
+  let expiredRemoved = 0;
+  let lastError: string | undefined;
+
+  if (payload.subscriptions.length > 0 && payload.targets.length > 0) {
+    const pushRes = await dispatchDeparturePushNotificationsDirect({
+      idSalida: payload.salida.idSalida,
+      nombreSalida: payload.salida.nombre,
+      horaSalida: payload.salida.horaSalida,
+      alcanceNombre: payload.salida.nombreNivel || 'Toda la institución',
+      nombreInstitucion: payload.nombreInstitucion,
+      fecha: clock.todayYmd,
+      motivo,
+      targets: payload.targets,
+      subscriptions: payload.subscriptions,
+    });
+    sent = pushRes.sent;
+    failed = pushRes.failed;
+    lastError = pushRes.lastError;
+    if (pushRes.expiredEndpoints.length > 0) {
+      expiredRemoved = pushRes.expiredEndpoints.length;
+      await db.deletePushSubscriptionsByEndpoints(pushRes.expiredEndpoints);
+    }
+  }
+
+  await db.markSalidaNotified(payload.salida.idSalida, clock.todayYmd, clock.currentHhmm);
+
+  return {
+    salida: {
+      ...payload.salida,
+      ultimaNotificacionFecha: clock.todayYmd,
+      ultimaNotificacionHora: clock.currentHhmm,
+    },
+    sent,
+    failed,
+    totalDispositivos: payload.subscriptions.length,
+    totalRepresentantes: payload.targets.length,
+    expiredRemoved,
+    lastError,
+  };
+}
+
+let salidaSchedulerTimer: NodeJS.Timeout | null = null;
+let salidaSchedulerRunning = false;
+
+export function startSalidaNotificationScheduler(): void {
+  if (salidaSchedulerTimer) return;
+
+  const tick = async () => {
+    if (salidaSchedulerRunning) return;
+    salidaSchedulerRunning = true;
+    try {
+      const clock = getSchoolZonedClock();
+      if (!clock.isWeekday) return;
+
+      const activeSalidas = await db.getSalidas(true);
+      for (const s of activeSalidas) {
+        if (!s.notificarPush) continue;
+        if (s.ultimaNotificacionFecha === clock.todayYmd) continue;
+
+        const salidaMins = hhmmToMinutes(s.horaSalida);
+        // Ventana de 15 minutos tras la hora configurada para emitir la alerta automática una sola vez al día
+        if (clock.currentMins >= salidaMins && clock.currentMins <= salidaMins + 15) {
+          const result = await executeSalidaPushNotification(s.idSalida, 'auto', clock);
+          await db.logAuditEvent({
+            emailOCedula: 'sistema@eduasist.edu',
+            rol: 'sistema',
+            accion: 'SALIDA_PUSH_AUTOMATICA_ENVIADA',
+            entidad: 'salidas_institucionales',
+            idEntidad: s.idSalida,
+            detalles: {
+              nombre: s.nombre,
+              horaSalida: s.horaSalida,
+              fecha: clock.todayYmd,
+              sent: result.sent,
+              failed: result.failed,
+              totalDispositivos: result.totalDispositivos,
+            },
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('[WebPush] Error en planificador automático de hora de salida:', err);
+    } finally {
+      salidaSchedulerRunning = false;
+    }
+  };
+
+  // Ejecutar primera verificación corta al iniciar y luego cada 30 segundos
+  setTimeout(() => {
+    void tick();
+  }, 5000);
+  salidaSchedulerTimer = setInterval(() => {
+    void tick();
+  }, 30_000);
+}
+
+apiRouter.get('/salidas', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const soloActivos = req.query.soloActivos === 'true';
+    res.json(await db.getSalidas(soloActivos));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+apiRouter.post(
+  '/salidas',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  validateBody(salidaSchema),
+  async (req: Request, res: Response) => {
+    try {
+      const created = await db.createSalida(req.body);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'SALIDA_CREADA',
+        entidad: 'salidas_institucionales',
+        idEntidad: created.idSalida,
+        detalles: req.body,
+      });
+      res.status(201).json(created);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.put(
+  '/salidas/:id',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  validateBody(updateSalidaSchema),
+  async (req: Request, res: Response) => {
+    try {
+      const idSalida = Number(req.params.id);
+      if (!Number.isInteger(idSalida) || idSalida <= 0) {
+        return res.status(400).json({ error: 'ID de hora de salida inválido.' });
+      }
+      const updated = await db.updateSalida(idSalida, req.body || {});
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'SALIDA_ACTUALIZADA',
+        entidad: 'salidas_institucionales',
+        idEntidad: idSalida,
+        detalles: req.body,
+      });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.patch(
+  '/salidas/:id/toggle',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      const idSalida = Number(req.params.id);
+      if (!Number.isInteger(idSalida) || idSalida <= 0) {
+        return res.status(400).json({ error: 'ID de hora de salida inválido.' });
+      }
+      const updated = await db.toggleSalida(idSalida);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'SALIDA_ESTADO_ALTERNADO',
+        entidad: 'salidas_institucionales',
+        idEntidad: idSalida,
+        detalles: { idSalida, nuevoEstado: updated.activo },
+      });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.delete(
+  '/salidas/:id',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      const idSalida = Number(req.params.id);
+      if (!Number.isInteger(idSalida) || idSalida <= 0) {
+        return res.status(400).json({ error: 'ID de hora de salida inválido.' });
+      }
+      await db.deleteSalida(idSalida);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'SALIDA_ELIMINADA',
+        entidad: 'salidas_institucionales',
+        idEntidad: idSalida,
+      });
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.post(
+  '/salidas/:id/notificar',
+  requireAuth,
+  requireRole('director', 'coordinador', 'docente'),
+  async (req: Request, res: Response) => {
+    try {
+      const idSalida = Number(req.params.id);
+      if (!Number.isInteger(idSalida) || idSalida <= 0) {
+        return res.status(400).json({ error: 'ID de hora de salida inválido.' });
+      }
+
+      const result = await executeSalidaPushNotification(idSalida, 'manual');
+
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'SALIDA_PUSH_MANUAL_ENVIADA',
+        entidad: 'salidas_institucionales',
+        idEntidad: idSalida,
+        detalles: {
+          nombre: result.salida.nombre,
+          horaSalida: result.salida.horaSalida,
+          alcance: result.salida.nombreNivel,
+          sent: result.sent,
+          failed: result.failed,
+          totalDispositivos: result.totalDispositivos,
+          totalRepresentantes: result.totalRepresentantes,
+        },
+      });
+
+      const mensaje =
+        result.totalDispositivos === 0
+          ? `Hora de salida (${result.salida.horaSalida}) registrada. No hay dispositivos de representantes suscritos a alertas push para este alcance.`
+          : result.sent > 0
+          ? `Alerta de salida enviada por Web Push a ${result.sent} dispositivo(s) de representantes.`
+          : `No se pudo entregar la notificación push (${result.lastError || 'verifique dispositivos suscritos'}).`;
+
+      res.json({
+        success: true,
+        ...result,
+        mensaje,
+      });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message || 'Error al enviar notificación de hora de salida.' });
     }
   }
 );

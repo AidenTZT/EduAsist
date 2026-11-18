@@ -27,9 +27,18 @@ import type {
   Usuario,
   DocenteMateria,
   LapsoEscolar,
+  InstitutionalConfigSummary,
+  RecesoInstitucional,
 } from '../types.ts';
-import { fetchAsistencia, fetchLapsoActivo, submitAsistenciaBatch } from '../lib/api.ts';
+import {
+  fetchAsistencia,
+  fetchLapsoActivo,
+  submitAsistenciaBatch,
+  fetchConfiguracion,
+  fetchRecesos,
+} from '../lib/api.ts';
 import { formatCedula, sortStudentsByCedula, getLocalTodayDateString } from '../lib/utils.ts';
+import { SchoolScheduleStatusBanner } from './SchoolScheduleStatusBanner.tsx';
 
 interface AttendanceManagerProps {
   anos: AnoEscolar[];
@@ -86,6 +95,8 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
   );
   const [lapsos, setLapsos] = useState<LapsoEscolar[]>([]);
   const [activeLapso, setActiveLapso] = useState<LapsoEscolar | null>(null);
+  const [instConfig, setInstConfig] = useState<InstitutionalConfigSummary | null>(null);
+  const [recesos, setRecesos] = useState<RecesoInstitucional[]>([]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -93,6 +104,12 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
       .then((res) => {
         setActiveLapso(res.lapsoActivo);
         setLapsos(res.lapsos || []);
+      })
+      .catch(() => {});
+    Promise.all([fetchConfiguracion(), fetchRecesos(true)])
+      .then(([cfg, rec]) => {
+        setInstConfig(cfg);
+        setRecesos(rec);
       })
       .catch(() => {});
   }, [currentUser?.id]);
@@ -396,6 +413,13 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
                     {detectedFechaLapso.activo ? ' • Actual' : ''}
                   </span>
                 )}
+                <SchoolScheduleStatusBanner
+                  variant="pill"
+                  horaRecesoInicio={instConfig?.horaRecesoInicio}
+                  horaRecesoFin={instConfig?.horaRecesoFin}
+                  horaSalida={instConfig?.horaSalida}
+                  recesos={recesos}
+                />
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400">
                 Captura de hora oficial en tiempo real con optimización ergonómica táctil

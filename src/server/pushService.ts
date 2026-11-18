@@ -416,3 +416,145 @@ export async function sendTestPushToSubscriptions(
 
   return { sent, failed, expiredEndpoints, lastError };
 }
+
+export interface DirectSalidaPushDispatchParams {
+  idSalida: number;
+  nombreSalida: string;
+  horaSalida: string;
+  alcanceNombre: string;
+  nombreInstitucion?: string;
+  fecha: string;
+  motivo?: 'auto' | 'manual';
+  targets: Array<{
+    idRepresentante: number;
+    estudiantes: Array<{ idEstudiante: number; nombre: string }>;
+  }>;
+  subscriptions: Array<{
+    idRepresentante: number;
+    endpoint: string;
+    p256dh: string;
+    auth: string;
+  }>;
+}
+
+function formatStudentListForNotification(nombres: string[]): string {
+  if (nombres.length === 0) return 'su representado';
+  if (nombres.length === 1) return nombres[0];
+  if (nombres.length === 2) return `${nombres[0]} y ${nombres[1]}`;
+  return `${nombres.slice(0, -1).join(', ')} y ${nombres[nombres.length - 1]}`;
+}
+
+export async function dispatchDeparturePushNotificationsDirect(
+  params: DirectSalidaPushDispatchParams
+): Promise<{ sent: number; failed: number; expiredEndpoints: string[]; lastError?: string }> {
+  if (!params.targets?.length || !params.subscriptions?.length) {
+    return { sent: 0, failed: 0, expiredEndpoints: [] };
+  }
+
+  await ensureVapidConfigured();
+
+  const horaCorta = params.horaSalida ? params.horaSalida.slice(0, 5) : '';
+  const tasks: Array<{
+    endpoint: string;
+    subscription: WebPushSubscription;
+    payload: string;
+  }> = [];
+
+  for (const target of params.targets) {
+    const matchingSubs = params.subscriptions.filter(
+      (s) => s.idRepresentante === target.idRepresentante && s.endpoint && s.p256dh && s.auth
+    );
+    if (!matchingSubs.length) continue;
+
+    const studentNamesText = formatStudentListForNotification(
+      target.estudiantes.map((e) => e.nombre)
+    );
+    const scopeSuffix =
+      params.alcanceNombre && params.alcanceNombre !== 'Toda la institución'
+        ? ` (${params.alcanceNombre})`
+        : '';
+
+    const payload = JSON.stringify({
+      title: `Hora de Salida Escolar • ${params.nombreSalida}${scopeSuffix}`,
+      body: `La jornada escolar de ${studentNamesText} ha finalizado (${horaCorta}). Hora oficial de salida en ${
+        params.nombreInstitucion || 'la institución'
+      }.`,
+      icon: '/pwa-192x192.png',
+      badge: '/pwa-192x192.png',
+      tag: `salida-${params.idSalida}-${target.idRepresentante}-${params.fecha}`,
+      renotify: true,
+      requireInteraction: false,
+      data: {
+        url: '/#portal-representante',
+        tipo: 'salida',
+        idSalida: params.idSalida,
+        horaSalida: horaCorta,
+        fecha: params.fecha,
+        motivo: params.motivo || 'auto',
+      },
+    });
+
+    for (const sub of matchingSubs) {
+      tasks.push({
+        endpoint: sub.endpoint,
+        subscription: {
+          endpoint: sub.endpoint,
+          keys: {
+            p256dh: sub.p256dh,
+            auth: sub.auth,
+          },
+        },
+        payload,
+      });
+    }
+  }
+
+  if (tasks.length === 0) {
+    return { sent: 0, failed: 0, expiredEndpoints: [] };
+  }
+
+  const CONCURRENCY_LIMIT = 10;
+  let sent = 0;
+  let failed = 0;
+  let lastError: string | undefined;
+  const expiredEndpoints: string[] = [];
+
+  for (let i = 0; i < tasks.length; i += CONCURRENCY_LIMIT) {
+    const chunk = tasks.slice(i, i + CONCURRENCY_LIMIT);
+    const settled = await Promise.allSettled(
+      chunk.map((task) =>
+        webPush.sendNotification(task.subscription, task.payload, {
+          TTL: 3600,
+          urgency: 'high',
+        })
+      )
+    );
+
+    settled.forEach((result, idx) => {
+      const endpoint = chunk[idx].endpoint;
+      if (result.status === 'fulfilled') {
+        sent += 1;
+      } else {
+        failed += 1;
+        const err: any = result.reason;
+        const statusCode = err?.statusCode;
+        lastError = err?.body || err?.message || `HTTP ${statusCode || 'error'}`;
+        if (
+          statusCode === 410 ||
+          statusCode === 404 ||
+          statusCode === 401 ||
+          statusCode === 403
+        ) {
+          expiredEndpoints.push(endpoint);
+        } else {
+          console.warn(
+            `[WebPush] Error al enviar notificación de salida (${statusCode || 'unknown'}):`,
+            err?.body || err?.message || err
+          );
+        }
+      }
+    });
+  }
+
+  return { sent, failed, expiredEndpoints, lastError };
+}
