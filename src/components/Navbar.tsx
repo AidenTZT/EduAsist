@@ -18,6 +18,7 @@ import {
   DatabaseBackup,
 } from 'lucide-react';
 import { PWAInstallButton } from './PWAInstallButton.tsx';
+import { InstallPWAButton } from './InstallPWAButton.tsx';
 import type { Usuario, RolUsuario } from '../types.ts';
 
 interface NavbarProps {
@@ -89,17 +90,17 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <header className="sticky top-0 z-40 bg-white dark:bg-[#000000] border-b border-slate-200 dark:border-[#27272A] shadow-xs transition-colors">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between gap-2 h-16">
           {/* Logo & Mobile Menu Trigger */}
-          <div className="flex items-center space-x-3">
+          <div className="flex items-center space-x-2 sm:space-x-3 min-w-0">
             {/* Mobile menu trigger */}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="md:hidden p-2 rounded-xl text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#181818] focus:outline-none transition-colors"
+              className="md:hidden p-1.5 sm:p-2 rounded-xl text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#181818] focus:outline-none transition-colors shrink-0"
               aria-label="Menú principal"
             >
-              {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+              {mobileMenuOpen ? <X className="w-5 h-5 sm:w-6 sm:h-6" /> : <Menu className="w-5 h-5 sm:w-6 sm:h-6" />}
             </button>
 
             <button
@@ -114,17 +115,17 @@ export const Navbar: React.FC<NavbarProps> = ({
                   onViewChange('docente');
                 }
               }}
-              className="flex items-center space-x-3 text-left focus:outline-none group cursor-pointer"
+              className="flex items-center space-x-2 sm:space-x-3 text-left focus:outline-none group cursor-pointer min-w-0"
               title="EduAsist"
             >
-              <div className="w-10 h-10 rounded-xl bg-linear-to-tr from-indigo-600 to-blue-600 flex items-center justify-center text-white shadow-md shadow-indigo-100 dark:shadow-none shrink-0 group-hover:scale-105 transition-transform">
-                <GraduationCap className="w-6 h-6" />
+              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-linear-to-tr from-indigo-600 to-blue-600 flex items-center justify-center text-white shadow-md shadow-indigo-100 dark:shadow-none shrink-0 group-hover:scale-105 transition-transform">
+                <GraduationCap className="w-5 h-5 sm:w-6 sm:h-6" />
               </div>
 
-              <div>
-                <div className="flex items-center space-x-2">
-                  <span className="font-extrabold text-base sm:text-lg tracking-tight text-slate-900 dark:text-[#F4F4F5]">
-                    EduAsist <span className="text-indigo-600 dark:text-indigo-400 font-black">Escolar</span>
+              <div className="min-w-0">
+                <div className="flex items-center space-x-1.5 sm:space-x-2">
+                  <span className="font-extrabold text-sm sm:text-lg tracking-tight text-slate-900 dark:text-[#F4F4F5] truncate">
+                    EduAsist <span className="hidden sm:inline text-indigo-600 dark:text-indigo-400 font-black">Escolar</span>
                   </span>
                   <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
                     <Database className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
@@ -167,7 +168,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           )}
 
           {/* Right: Active Role, Clock, Theme & Logout */}
-          <div className="flex items-center space-x-2 sm:space-x-3">
+          <div className="flex items-center space-x-1.5 sm:space-x-3 shrink-0">
             {/* Live Server Clock */}
             <div className="hidden sm:flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl bg-slate-50 dark:bg-[#181818] border border-slate-200 dark:border-[#27272A] text-xs font-mono text-slate-700 dark:text-slate-300">
               <Clock className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400" />
@@ -195,14 +196,14 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
             )}
 
-            {/* PWA Install Button (Chromium prompt / iOS Safari Home Screen guide) */}
+            {/* PWA Install Button (Always visible on mobile, tablet & desktop) */}
             <PWAInstallButton />
 
             {/* OLED Dark Mode Toggle */}
             <button
               type="button"
               onClick={onToggleTheme}
-              className="p-2 sm:p-2.5 rounded-xl text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-[#181818] hover:bg-slate-200 dark:hover:bg-[#27272A] border border-slate-200 dark:border-[#27272A] transition-colors cursor-pointer flex items-center justify-center min-w-[38px] min-h-[38px]"
+              className="p-2 sm:p-2.5 rounded-xl text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-[#181818] hover:bg-slate-200 dark:hover:bg-[#27272A] border border-slate-200 dark:border-[#27272A] transition-colors cursor-pointer flex items-center justify-center min-w-[36px] min-h-[36px] sm:min-w-[38px] sm:min-h-[38px]"
               title={theme === 'dark' ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro OLED (Negro Puro #000000)'}
               aria-label="Alternar modo oscuro / claro"
             >
@@ -218,7 +219,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               <button
                 type="button"
                 onClick={onLogoutStaff}
-                className="text-xs font-bold text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/60 px-3 py-2 rounded-xl border border-rose-200 dark:border-rose-900 transition-colors flex items-center space-x-1.5 cursor-pointer shadow-2xs"
+                className="text-xs font-bold text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/60 px-2.5 sm:px-3 py-2 rounded-xl border border-rose-200 dark:border-rose-900 transition-colors flex items-center space-x-1.5 cursor-pointer shadow-2xs"
                 title="Cerrar sesión institucional y destruir credenciales"
               >
                 <LogOut className="w-3.5 h-3.5" />
@@ -231,7 +232,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               <button
                 type="button"
                 onClick={onLogoutRepresentante}
-                className="text-xs font-bold text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/60 px-3 py-2 rounded-xl border border-rose-200 dark:border-rose-900 transition-colors flex items-center space-x-1.5 cursor-pointer shadow-2xs"
+                className="text-xs font-bold text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/60 px-2.5 sm:px-3 py-2 rounded-xl border border-rose-200 dark:border-rose-900 transition-colors flex items-center space-x-1.5 cursor-pointer shadow-2xs"
                 title="Cerrar sesión de representante"
               >
                 <LogOut className="w-3.5 h-3.5" />
@@ -532,6 +533,14 @@ export const Navbar: React.FC<NavbarProps> = ({
               <p>Inicie sesión para acceder al panel institucional o al portal de representantes.</p>
             </div>
           )}
+
+          {/* Acceso directo de descarga/instalación en menú móvil */}
+          <div className="pt-2 border-t border-slate-100 dark:border-[#27272A]">
+            <InstallPWAButton
+              accent={currentView === 'representante' ? 'emerald' : 'indigo'}
+              alwaysShow
+            />
+          </div>
         </div>
       )}
     </header>

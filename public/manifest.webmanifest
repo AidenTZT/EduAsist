@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "EduControl Cloud - Portal Escolar",
-  "short_name": "EduControl",
+  "name": "EduAsist - Portal Escolar",
+  "short_name": "EduAsist",
   "description": "Sistema de Control y Reporte de Asistencia Escolar y Portal del Representante.",
   "start_url": "/",
   "scope": "/",
