@@ -168,7 +168,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           )}
 
           {/* Right: Active Role, Clock, Theme & Logout */}
-          <div className="flex items-center space-x-1.5 sm:space-x-3 shrink-0">
+          <div className="flex items-center gap-1 sm:gap-2.5 shrink-0">
             {/* Live Server Clock */}
             <div className="hidden sm:flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl bg-slate-50 dark:bg-[#181818] border border-slate-200 dark:border-[#27272A] text-xs font-mono text-slate-700 dark:text-slate-300">
               <Clock className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400" />
@@ -177,11 +177,11 @@ export const Navbar: React.FC<NavbarProps> = ({
 
             {/* Active User Identity Badge (Only when authenticated as Staff) */}
             {currentView === 'docente' && activeUser && (
-              <div className="flex items-center space-x-2 p-1.5 sm:px-3 sm:py-1.5 rounded-xl border border-slate-200 dark:border-[#27272A] bg-slate-50 dark:bg-[#181818] text-left">
+              <div className="hidden sm:flex items-center space-x-2 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-[#27272A] bg-slate-50 dark:bg-[#181818] text-left">
                 <div className="w-7 h-7 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-bold text-xs shrink-0">
                   {activeUser.nombre[0]}
                 </div>
-                <div className="hidden sm:block">
+                <div>
                   <p className="text-xs font-bold text-slate-800 dark:text-[#F4F4F5] leading-tight">
                     {activeUser.nombre} {activeUser.apellidos}
                   </p>
@@ -219,7 +219,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               <button
                 type="button"
                 onClick={onLogoutStaff}
-                className="text-xs font-bold text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/60 px-2.5 sm:px-3 py-2 rounded-xl border border-rose-200 dark:border-rose-900 transition-colors flex items-center space-x-1.5 cursor-pointer shadow-2xs"
+                className="text-[11px] sm:text-xs font-bold text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/60 px-2 sm:px-3 py-2 rounded-xl border border-rose-200 dark:border-rose-900 transition-colors flex items-center space-x-1 sm:space-x-1.5 cursor-pointer shadow-2xs"
                 title="Cerrar sesión institucional y destruir credenciales"
               >
                 <LogOut className="w-3.5 h-3.5" />
@@ -232,7 +232,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               <button
                 type="button"
                 onClick={onLogoutRepresentante}
-                className="text-xs font-bold text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/60 px-2.5 sm:px-3 py-2 rounded-xl border border-rose-200 dark:border-rose-900 transition-colors flex items-center space-x-1.5 cursor-pointer shadow-2xs"
+                className="text-[11px] sm:text-xs font-bold text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/60 px-2 sm:px-3 py-2 rounded-xl border border-rose-200 dark:border-rose-900 transition-colors flex items-center space-x-1 sm:space-x-1.5 cursor-pointer shadow-2xs"
                 title="Cerrar sesión de representante"
               >
                 <LogOut className="w-3.5 h-3.5" />
