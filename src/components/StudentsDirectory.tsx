@@ -619,8 +619,8 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
             </div>
           </div>
 
-          {/* MOBILE VIEW (< md): Responsive Tactile Cards (NO HORIZONTAL OVERFLOW) */}
-          <div className="block md:hidden space-y-3">
+          {/* MOBILE & TABLET VIEW (< lg): Responsive Tactile Cards (NO HORIZONTAL OVERFLOW) */}
+          <div className="block lg:hidden space-y-3">
             {filteredStudents.length === 0 ? (
               <div className="p-8 text-center bg-white dark:bg-[#121212] rounded-2xl border border-slate-200 dark:border-[#27272A]">
                 <Users className="w-8 h-8 text-slate-300 mx-auto mb-2" />
@@ -687,69 +687,71 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
                     )}
                   </div>
 
-                  {/* Action Buttons for Mobile */}
-                  {canEdit && (
-                    <div className="pt-2 border-t border-slate-100 dark:border-[#27272A] flex items-center gap-2">
-                      {confirmDeleteStudentId === st.idEstudiante ? (
-                        <div className="w-full flex items-center justify-between p-2 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 gap-2">
-                          <span className="text-xs font-bold text-rose-700 dark:text-rose-400">¿Eliminar alumno?</span>
-                          <div className="flex items-center gap-2">
+                  {/* Action Buttons for Mobile & Tablet */}
+                  <div className="pt-2 border-t border-slate-100 dark:border-[#27272A] flex items-center gap-2">
+                    {canEdit && confirmDeleteStudentId === st.idEstudiante ? (
+                      <div className="w-full flex items-center justify-between p-2 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 gap-2">
+                        <span className="text-xs font-bold text-rose-700 dark:text-rose-400">¿Eliminar alumno?</span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => executeDeleteStudent(st)}
+                            disabled={deletingStudentId === st.idEstudiante}
+                            className="px-3 py-2 min-h-[44px] rounded-lg text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white cursor-pointer shadow-xs disabled:opacity-50"
+                          >
+                            {deletingStudentId === st.idEstudiante ? 'Borrando...' : 'Sí, borrar'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteStudentId(null)}
+                            className="px-3 py-2 min-h-[44px] rounded-lg text-xs font-bold bg-slate-200 hover:bg-slate-300 dark:bg-[#27272A] dark:hover:bg-[#333338] text-slate-700 dark:text-slate-300 cursor-pointer"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className={`w-full grid gap-2 ${canEdit ? 'grid-cols-3' : 'grid-cols-1'}`}>
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadStudentAttendancePDF(st)}
+                          disabled={downloadingPdfStudentId === st.idEstudiante}
+                          className="flex items-center justify-center space-x-1.5 py-2.5 min-h-[44px] rounded-xl text-xs font-bold bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 transition-colors cursor-pointer disabled:opacity-50"
+                          title="Exportar Reporte de Asistencia en PDF"
+                        >
+                          <FileDown className="w-3.5 h-3.5 shrink-0" />
+                          <span>{downloadingPdfStudentId === st.idEstudiante ? 'Generando...' : 'Descargar PDF'}</span>
+                        </button>
+                        {canEdit && (
+                          <>
                             <button
                               type="button"
-                              onClick={() => executeDeleteStudent(st)}
-                              disabled={deletingStudentId === st.idEstudiante}
-                              className="px-3 py-2 min-h-[44px] rounded-lg text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white cursor-pointer shadow-xs disabled:opacity-50"
+                              onClick={() => openStudentModal(st)}
+                              className="flex items-center justify-center space-x-1 py-2.5 min-h-[44px] rounded-xl text-xs font-bold bg-slate-100 dark:bg-[#181818] hover:bg-indigo-50 dark:hover:bg-indigo-950/40 text-slate-700 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 border border-slate-200 dark:border-[#27272A] transition-colors cursor-pointer"
                             >
-                              {deletingStudentId === st.idEstudiante ? 'Borrando...' : 'Sí, borrar'}
+                              <Edit2 className="w-3.5 h-3.5 shrink-0" />
+                              <span>Editar</span>
                             </button>
                             <button
                               type="button"
-                              onClick={() => setConfirmDeleteStudentId(null)}
-                              className="px-3 py-2 min-h-[44px] rounded-lg text-xs font-bold bg-slate-200 hover:bg-slate-300 dark:bg-[#27272A] dark:hover:bg-[#333338] text-slate-700 dark:text-slate-300 cursor-pointer"
+                              onClick={() => setConfirmDeleteStudentId(st.idEstudiante)}
+                              className="flex items-center justify-center space-x-1 py-2.5 min-h-[44px] rounded-xl text-xs font-bold bg-slate-100 dark:bg-[#181818] hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-700 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 border border-slate-200 dark:border-[#27272A] transition-colors cursor-pointer"
                             >
-                              Cancelar
+                              <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                              <span>Eliminar</span>
                             </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="w-full grid grid-cols-3 gap-2">
-                          <button
-                            type="button"
-                            onClick={() => handleDownloadStudentAttendancePDF(st)}
-                            disabled={downloadingPdfStudentId === st.idEstudiante}
-                            className="flex items-center justify-center space-x-1 py-2.5 min-h-[44px] rounded-xl text-xs font-bold bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 transition-colors cursor-pointer disabled:opacity-50"
-                            title="Exportar Reporte de Asistencia en PDF"
-                          >
-                            <FileDown className="w-3.5 h-3.5" />
-                            <span>PDF</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => openStudentModal(st)}
-                            className="flex items-center justify-center space-x-1 py-2.5 min-h-[44px] rounded-xl text-xs font-bold bg-slate-100 dark:bg-[#181818] hover:bg-indigo-50 dark:hover:bg-indigo-950/40 text-slate-700 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 border border-slate-200 dark:border-[#27272A] transition-colors cursor-pointer"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                            <span>Editar</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setConfirmDeleteStudentId(st.idEstudiante)}
-                            className="flex items-center justify-center space-x-1 py-2.5 min-h-[44px] rounded-xl text-xs font-bold bg-slate-100 dark:bg-[#181818] hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-700 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 border border-slate-200 dark:border-[#27272A] transition-colors cursor-pointer"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                            <span>Eliminar</span>
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))
             )}
           </div>
 
-          {/* DESKTOP VIEW (>= md): Full Structured Table with Sticky Header & Sticky Student Column */}
-          <div className="hidden md:block bg-white dark:bg-[#121212] rounded-2xl border border-slate-200 dark:border-[#27272A] shadow-xs overflow-hidden">
+          {/* DESKTOP VIEW (>= lg): Full Structured Table with Sticky Header & Sticky Student Column */}
+          <div className="hidden lg:block bg-white dark:bg-[#121212] rounded-2xl border border-slate-200 dark:border-[#27272A] shadow-xs overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse text-sm">
                 <thead>
@@ -761,13 +763,13 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
                     <th className="py-3 px-4">Año / Nivel</th>
                     <th className="py-3 px-4 text-center">Sección</th>
                     <th className="py-3 px-4">Representante Legal</th>
-                    {canEdit && <th className="py-3 px-4 text-right min-w-[140px]">Acciones</th>}
+                    <th className="py-3 px-4 text-right min-w-[140px]">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-[#27272A]">
                   {filteredStudents.length === 0 ? (
                     <tr>
-                      <td colSpan={canEdit ? 6 : 5} className="py-8 text-center text-slate-400 text-xs">
+                      <td colSpan={6} className="py-8 text-center text-slate-400 text-xs">
                         No se encontraron estudiantes con los filtros aplicados.
                       </td>
                     </tr>
@@ -801,56 +803,58 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
                             {formatCedula(st.representanteCedula || '')}
                           </div>
                         </td>
-                        {canEdit && (
-                          <td className="py-3 px-4 text-right">
-                            {confirmDeleteStudentId === st.idEstudiante ? (
-                              <div className="inline-flex items-center gap-1.5 p-1 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 animate-in fade-in duration-150">
-                                <span className="text-[10px] font-bold text-rose-700 dark:text-rose-400">¿Eliminar?</span>
-                                <button
-                                  type="button"
-                                  onClick={() => executeDeleteStudent(st)}
-                                  disabled={deletingStudentId === st.idEstudiante}
-                                  className="px-2 py-1 rounded-lg text-[10px] font-bold bg-rose-600 hover:bg-rose-700 text-white cursor-pointer shadow-xs disabled:opacity-50"
-                                >
-                                  {deletingStudentId === st.idEstudiante ? '...' : 'Sí, borrar'}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setConfirmDeleteStudentId(null)}
-                                  className="px-2 py-1 rounded-lg text-[10px] font-bold bg-slate-200 hover:bg-slate-300 dark:bg-[#27272A] dark:hover:bg-[#333338] text-slate-700 dark:text-slate-300 cursor-pointer"
-                                >
-                                  Cancelar
-                                </button>
-                              </div>
-                            ) : (
-                              <div className="flex items-center justify-end space-x-1">
-                                <button
-                                  type="button"
-                                  onClick={() => handleDownloadStudentAttendancePDF(st)}
-                                  disabled={downloadingPdfStudentId === st.idEstudiante}
-                                  className="p-1.5 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/40 rounded-lg transition-colors cursor-pointer"
-                                  title="Exportar Reporte de Asistencia en PDF"
-                                >
-                                  <FileDown className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  onClick={() => openStudentModal(st)}
-                                  className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-indigo-400 dark:hover:bg-[#181818] rounded-lg transition-colors cursor-pointer"
-                                  title="Editar Estudiante"
-                                >
-                                  <Edit2 className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  onClick={() => setConfirmDeleteStudentId(st.idEstudiante)}
-                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors cursor-pointer"
-                                  title="Eliminar Estudiante"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            )}
-                          </td>
-                        )}
+                        <td className="py-3 px-4 text-right">
+                          {canEdit && confirmDeleteStudentId === st.idEstudiante ? (
+                            <div className="inline-flex items-center gap-1.5 p-1 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 animate-in fade-in duration-150">
+                              <span className="text-[10px] font-bold text-rose-700 dark:text-rose-400">¿Eliminar?</span>
+                              <button
+                                type="button"
+                                onClick={() => executeDeleteStudent(st)}
+                                disabled={deletingStudentId === st.idEstudiante}
+                                className="px-2 py-1 rounded-lg text-[10px] font-bold bg-rose-600 hover:bg-rose-700 text-white cursor-pointer shadow-xs disabled:opacity-50"
+                              >
+                                {deletingStudentId === st.idEstudiante ? '...' : 'Sí, borrar'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteStudentId(null)}
+                                className="px-2 py-1 rounded-lg text-[10px] font-bold bg-slate-200 hover:bg-slate-300 dark:bg-[#27272A] dark:hover:bg-[#333338] text-slate-700 dark:text-slate-300 cursor-pointer"
+                              >
+                                Cancelar
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-end space-x-1">
+                              <button
+                                type="button"
+                                onClick={() => handleDownloadStudentAttendancePDF(st)}
+                                disabled={downloadingPdfStudentId === st.idEstudiante}
+                                className="p-1.5 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/40 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                                title="Exportar Reporte de Asistencia en PDF"
+                              >
+                                <FileDown className="w-3.5 h-3.5" />
+                              </button>
+                              {canEdit && (
+                                <>
+                                  <button
+                                    onClick={() => openStudentModal(st)}
+                                    className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-indigo-400 dark:hover:bg-[#181818] rounded-lg transition-colors cursor-pointer"
+                                    title="Editar Estudiante"
+                                  >
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => setConfirmDeleteStudentId(st.idEstudiante)}
+                                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors cursor-pointer"
+                                    title="Eliminar Estudiante"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </td>
                       </tr>
                     ))
                   )}

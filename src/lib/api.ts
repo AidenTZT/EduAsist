@@ -124,6 +124,18 @@ export async function loginWithCredentials(
     }),
   });
 
+  if (preferredPortal && res.type !== preferredPortal) {
+    setStoredToken(null);
+    const err = new Error(
+      preferredPortal === 'staff'
+        ? 'Las cuentas de representantes deben ingresar exclusivamente a través del Portal de Representantes.'
+        : 'Las cuentas del personal institucional deben ingresar exclusivamente a través del Panel Institucional.'
+    ) as Error & { status?: number; code?: string };
+    err.status = 403;
+    err.code = 'PORTAL_MISMATCH';
+    throw err;
+  }
+
   if (res.token) {
     setStoredToken(res.token);
   }

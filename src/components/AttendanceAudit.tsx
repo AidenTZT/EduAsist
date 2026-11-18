@@ -663,18 +663,18 @@ export const AttendanceAudit: React.FC<AttendanceAuditProps> = ({
   return (
     <div className="space-y-6">
       {/* Subtabs Selector & Export Button */}
-      <div className="flex flex-wrap items-center justify-between gap-3 bg-white dark:bg-[#121212] p-3 rounded-2xl border border-slate-200 dark:border-[#27272A] shadow-xs">
-        <div className="flex items-center space-x-1.5">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white dark:bg-[#121212] p-3 rounded-2xl border border-slate-200 dark:border-[#27272A] shadow-xs">
+        <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"
             onClick={() => setSubTab('asistencias')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-colors flex items-center space-x-2 cursor-pointer ${
+            className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-colors flex items-center space-x-2 cursor-pointer ${
               subTab === 'asistencias'
                 ? 'bg-indigo-600 text-white shadow-xs'
                 : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#181818]'
             }`}
           >
-            <Clock className="w-4 h-4" />
+            <Clock className="w-4 h-4 shrink-0" />
             <span>Historial, Justificantes y Reposos</span>
           </button>
 
@@ -682,28 +682,28 @@ export const AttendanceAudit: React.FC<AttendanceAuditProps> = ({
             <button
               type="button"
               onClick={() => setSubTab('seguridad')}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition-colors flex items-center space-x-2 cursor-pointer ${
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-colors flex items-center space-x-2 cursor-pointer ${
                 subTab === 'seguridad'
                   ? 'bg-indigo-600 text-white shadow-xs'
                   : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#181818]'
               }`}
             >
-              <Shield className="w-4 h-4" />
+              <Shield className="w-4 h-4 shrink-0" />
               <span>Logs de Seguridad y Auditoría</span>
             </button>
           )}
         </div>
 
-        <div className="flex items-center space-x-2">
+        <div className="w-full md:w-auto flex flex-wrap items-center gap-2">
           {subTab === 'asistencias' && (
             <button
               type="button"
               onClick={handleExportPDF}
               disabled={exportingPDF || totalRecords === 0}
-              className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm flex items-center space-x-2 transition-all cursor-pointer disabled:opacity-50"
+              className="flex-1 sm:flex-initial px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm flex items-center justify-center space-x-2 transition-all cursor-pointer disabled:opacity-50 whitespace-nowrap"
               title="Exportar documento oficial en formato PDF listo para impresión"
             >
-              <FileDown className="w-4 h-4" />
+              <FileDown className="w-4 h-4 shrink-0" />
               <span>{exportingPDF ? 'Generando PDF...' : 'Exportar Reporte PDF'}</span>
             </button>
           )}
@@ -711,14 +711,14 @@ export const AttendanceAudit: React.FC<AttendanceAuditProps> = ({
           <button
             type="button"
             onClick={() => (subTab === 'asistencias' ? loadGeneralAttendance() : loadSecurityLogs())}
-            className="px-3 py-2 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-[#181818] text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-[#27272A] border border-slate-200 dark:border-[#27272A] transition-colors flex items-center space-x-1.5 cursor-pointer"
+            className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-[#181818] text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-[#27272A] border border-slate-200 dark:border-[#27272A] transition-colors flex items-center justify-center space-x-1.5 cursor-pointer whitespace-nowrap"
           >
             <RefreshCw
-              className={`w-3.5 h-3.5 ${
+              className={`w-3.5 h-3.5 shrink-0 ${
                 (subTab === 'asistencias' ? loadingAsistencia : loadingLogs) ? 'animate-spin' : ''
               }`}
             />
-            <span className="hidden sm:inline">Actualizar</span>
+            <span>Actualizar</span>
           </button>
         </div>
       </div>

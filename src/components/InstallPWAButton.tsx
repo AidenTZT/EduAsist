@@ -58,7 +58,8 @@ function detectMobileOrTablet(): boolean {
     /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini|tablet|playbook|silk/i.test(ua);
   const isIPadOS = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
   const isCoarseSmallScreen =
-    window.matchMedia('(pointer: coarse)').matches && window.innerWidth <= 1280;
+    (window.matchMedia('(pointer: coarse)').matches && window.innerWidth <= 1280) ||
+    window.innerWidth <= 1024;
   return isMobileUA || isIPadOS || isCoarseSmallScreen;
 }
 
@@ -204,7 +205,7 @@ export const InstallPWAButton: React.FC<InstallPWAButtonProps> = ({
             <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
               {canNativeInstall
                 ? 'Acceso directo y notificaciones en tu teléfono'
-                : 'Agregar EduControl a tu pantalla de inicio'}
+                : 'Agregar EduAsist a tu pantalla de inicio'}
             </p>
           </div>
         </div>

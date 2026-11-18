@@ -131,18 +131,45 @@ apiRouter.post(
       const attempt = await db.authenticateCredentials(identifier, password, preferredPortal);
 
       if (!attempt.ok) {
+        const accion =
+          attempt.code === 'PORTAL_MISMATCH'
+            ? 'LOGIN_RECHAZADO_PORTAL_INCORRECTO'
+            : attempt.code === 'USER_INACTIVE'
+            ? 'LOGIN_RECHAZADO_INACTIVO'
+            : 'LOGIN_FALLIDO';
+
         await db.logAuditEvent({
           emailOCedula: identifier,
-          accion: attempt.code === 'USER_INACTIVE' ? 'LOGIN_RECHAZADO_INACTIVO' : 'LOGIN_FALLIDO',
+          accion,
           entidad: 'auth',
           ipOrigen: req.ip || req.socket.remoteAddress || null,
           userAgent: req.headers['user-agent'] || null,
           detalles: { motivo: attempt.code, preferredPortal },
         });
-        const status = attempt.code === 'USER_INACTIVE' ? 403 : 401;
+        const status =
+          attempt.code === 'USER_INACTIVE' || attempt.code === 'PORTAL_MISMATCH' ? 403 : 401;
         return res.status(status).json({
           error: attempt.error,
           code: attempt.code,
+        });
+      }
+
+      // Doble verificación de separación de portales en el controlador HTTP
+      if (preferredPortal && attempt.type !== preferredPortal) {
+        await db.logAuditEvent({
+          emailOCedula: identifier,
+          accion: 'LOGIN_RECHAZADO_PORTAL_INCORRECTO',
+          entidad: 'auth',
+          ipOrigen: req.ip || req.socket.remoteAddress || null,
+          userAgent: req.headers['user-agent'] || null,
+          detalles: { motivo: 'PORTAL_MISMATCH', preferredPortal, resolvedType: attempt.type },
+        });
+        return res.status(403).json({
+          error:
+            preferredPortal === 'staff'
+              ? 'Las cuentas de representantes deben ingresar exclusivamente a través del Portal de Representantes.'
+              : 'Las cuentas del personal institucional deben ingresar exclusivamente a través del Panel Institucional.',
+          code: 'PORTAL_MISMATCH',
         });
       }
 

@@ -266,8 +266,15 @@ export default function App() {
     };
   }, []);
 
-  // Redirección automática basada en el rol de la base de datos
+  // Autenticación estricta por portal: cada formulario solo admite su rol correspondiente
   const handleAuthSuccess = async (response: LoginResponse) => {
+    if (portalMode === 'staff' && response.type !== 'staff') {
+      return;
+    }
+    if (portalMode === 'representante' && response.type !== 'representante') {
+      return;
+    }
+
     if (response.type === 'staff' && response.user) {
       setActiveStaffUser(response.user);
       setCurrentRepresentante(null);

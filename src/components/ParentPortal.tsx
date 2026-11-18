@@ -145,6 +145,7 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
   const [showLoginPassword, setShowLoginPassword] = useState<boolean>(false);
   const [loginLoading, setLoginLoading] = useState<boolean>(false);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [loginPortalMismatch, setLoginPortalMismatch] = useState<boolean>(false);
 
   // Portal Master Data for authenticated representative
   const [portalData, setPortalData] = useState<PortalRepresentanteData | null>(null);
@@ -522,16 +523,27 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
     }
 
     setLoginLoading(true);
+    setLoginPortalMismatch(false);
     try {
       const response = await loginWithCredentials(cleanUser, loginPassword, 'representante');
+      if (response.type !== 'representante' || !response.representante) {
+        setLoginPortalMismatch(true);
+        setLoginError(
+          'Las cuentas del personal institucional deben ingresar exclusivamente a través del Panel Institucional.'
+        );
+        return;
+      }
       if (onAuthSuccess) {
         await onAuthSuccess(response);
-      } else if (response.type === 'representante' && response.representante) {
+      } else {
         setAuthedRep(response.representante);
         await loadPortal(response.representante.idRepresentante);
         onLoginSuccess?.(response.representante);
       }
     } catch (err: any) {
+      if (err?.code === 'PORTAL_MISMATCH') {
+        setLoginPortalMismatch(true);
+      }
       setLoginError(
         err?.message ||
           'No se pudo iniciar sesión. Verifique su usuario y contraseña e intente nuevamente.'
@@ -649,10 +661,22 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
           {loginError && (
             <div
               role="alert"
-              className="mb-5 p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-300 text-xs font-semibold flex items-start space-x-2"
+              className="mb-5 p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-300 text-xs font-semibold space-y-2.5"
             >
-              <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 dark:text-rose-400 mt-0.5" />
-              <span>{loginError}</span>
+              <div className="flex items-start space-x-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 dark:text-rose-400 mt-0.5" />
+                <span>{loginError}</span>
+              </div>
+              {loginPortalMismatch && onSwitchToStaff && (
+                <button
+                  type="button"
+                  onClick={onSwitchToStaff}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold transition-colors cursor-pointer"
+                >
+                  <span>Ir al Panel Institucional</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
           )}
 
@@ -1065,7 +1089,7 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
                 Desliza hacia abajo y selecciona <strong>&ldquo;Agregar a pantalla de inicio&rdquo;</strong>.
               </li>
               <li>
-                Abre <strong>EduControl</strong> desde el nuevo ícono en tu pantalla de inicio, inicia sesión y pulsa{' '}
+                Abre <strong>EduAsist</strong> desde el nuevo ícono en tu pantalla de inicio, inicia sesión y pulsa{' '}
                 <strong>&ldquo;Activar Alertas Push&rdquo;</strong>.
               </li>
             </ol>
@@ -1177,10 +1201,10 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
               type="button"
               onClick={handleExportAttendancePDF}
               disabled={!currentStudent}
-              className="flex items-center space-x-1.5 text-xs font-bold text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 border border-indigo-200 dark:border-indigo-800 px-3.5 py-2 rounded-xl transition-all cursor-pointer shadow-2xs disabled:opacity-50"
+              className="w-full sm:w-auto flex items-center justify-center space-x-1.5 text-xs font-bold text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 border border-indigo-200 dark:border-indigo-800 px-3.5 py-2 rounded-xl transition-all cursor-pointer shadow-2xs disabled:opacity-50 shrink-0 whitespace-nowrap"
               title="Descargar Reporte Oficial de Asistencias en PDF"
             >
-              <FileDown className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+              <FileDown className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
               <span>Descargar Asistencias (PDF)</span>
             </button>
           </div>
@@ -1232,14 +1256,14 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
                     Detalle de cada clase con la hora exacta registrada en el servidor
                   </p>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="w-full sm:w-auto flex flex-wrap items-center gap-2">
                   {portalLapsos.length > 0 && (
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 flex-1 sm:flex-initial min-w-[160px]">
                       <CalendarRange className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
                       <select
                         value={selectedLapsoId}
                         onChange={(e) => setSelectedLapsoId(Number(e.target.value))}
-                        className="bg-white dark:bg-[#121212] border border-slate-200 dark:border-[#27272A] rounded-xl px-2.5 py-1.5 text-xs font-bold text-slate-800 dark:text-[#F4F4F5] focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+                        className="w-full sm:w-auto bg-white dark:bg-[#121212] border border-slate-200 dark:border-[#27272A] rounded-xl px-2.5 py-2 text-xs font-bold text-slate-800 dark:text-[#F4F4F5] focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
                         aria-label="Filtrar por Lapso Escolar"
                       >
                         <option value={0}>Todos los Lapsos</option>
@@ -1256,13 +1280,13 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
                     type="button"
                     onClick={handleExportAttendancePDF}
                     disabled={studentAttendances.length === 0}
-                    className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs flex items-center space-x-1.5 cursor-pointer disabled:opacity-50 transition-colors"
+                    className="flex-1 sm:flex-initial px-3.5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs flex items-center justify-center space-x-1.5 cursor-pointer disabled:opacity-50 transition-colors whitespace-nowrap"
                     title="Exportar reporte de asistencia del estudiante en PDF"
                   >
-                    <FileDown className="w-3.5 h-3.5" />
+                    <FileDown className="w-3.5 h-3.5 shrink-0" />
                     <span>Exportar Reporte PDF</span>
                   </button>
-                  <span className="hidden sm:inline-block text-xs font-semibold px-2.5 py-1 rounded-md bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                  <span className="text-xs font-semibold px-2.5 py-1 rounded-md bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 whitespace-nowrap">
                     {studentAttendances.length} clases
                   </span>
                 </div>

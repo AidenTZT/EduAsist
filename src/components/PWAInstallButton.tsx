@@ -64,10 +64,11 @@ export const PWAInstallButton: React.FC = () => {
       <button
         type="button"
         onClick={handleInstall}
-        className="flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white transition-colors cursor-pointer shadow-2xs"
+        className="flex items-center space-x-1.5 px-2.5 sm:px-3 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white transition-colors cursor-pointer shadow-2xs shrink-0 whitespace-nowrap"
         title="Instalar aplicación en este dispositivo"
       >
-        <Download className="w-3.5 h-3.5" />
+        <Download className="w-3.5 h-3.5 shrink-0" />
+        <span className="sm:hidden">Instalar</span>
         <span className="hidden sm:inline">Instalar App</span>
       </button>
     );
@@ -79,10 +80,11 @@ export const PWAInstallButton: React.FC = () => {
         <button
           type="button"
           onClick={() => setShowIOSGuide(true)}
-          className="flex items-center space-x-1.5 px-2.5 sm:px-3 py-2 rounded-xl text-xs font-bold text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/50 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 border border-indigo-200 dark:border-indigo-800 transition-colors cursor-pointer shadow-2xs"
+          className="flex items-center space-x-1.5 px-2.5 sm:px-3 py-2 rounded-xl text-xs font-bold text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/50 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 border border-indigo-200 dark:border-indigo-800 transition-colors cursor-pointer shadow-2xs shrink-0 whitespace-nowrap"
           title="Instalar en iPhone / iPad para activar notificaciones"
         >
-          <Smartphone className="w-3.5 h-3.5" />
+          <Smartphone className="w-3.5 h-3.5 shrink-0" />
+          <span className="sm:hidden">Instalar</span>
           <span className="hidden sm:inline">Instalar iOS</span>
         </button>
 

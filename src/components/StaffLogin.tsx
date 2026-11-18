@@ -28,6 +28,7 @@ export const StaffLogin: React.FC<StaffLoginProps> = ({
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [portalMismatch, setPortalMismatch] = useState<boolean>(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -44,10 +45,21 @@ export const StaffLogin: React.FC<StaffLoginProps> = ({
     }
 
     setLoading(true);
+    setPortalMismatch(false);
     try {
       const response = await loginWithCredentials(cleanUser, password, 'staff');
+      if (response.type !== 'staff' || !response.user) {
+        setPortalMismatch(true);
+        setError(
+          'Las cuentas de representantes deben ingresar exclusivamente a través del Portal de Representantes.'
+        );
+        return;
+      }
       onLoginSuccess(response);
     } catch (err: any) {
+      if (err?.code === 'PORTAL_MISMATCH') {
+        setPortalMismatch(true);
+      }
       setError(
         err?.message ||
           'No se pudo iniciar sesión. Verifique sus credenciales e intente nuevamente.'
@@ -79,10 +91,22 @@ export const StaffLogin: React.FC<StaffLoginProps> = ({
         {error && (
           <div
             role="alert"
-            className="p-3.5 mb-5 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 text-xs font-semibold text-rose-800 dark:text-rose-300 flex items-start gap-2"
+            className="p-3.5 mb-5 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 text-xs font-semibold text-rose-800 dark:text-rose-300 space-y-2.5"
           >
-            <AlertCircle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
-            <span>{error}</span>
+            <div className="flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
+              <span>{error}</span>
+            </div>
+            {portalMismatch && (
+              <button
+                type="button"
+                onClick={onSwitchToRepresentante}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold transition-colors cursor-pointer"
+              >
+                <span>Ir al Portal de Representantes</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
         )}
 
@@ -164,7 +188,7 @@ export const StaffLogin: React.FC<StaffLoginProps> = ({
           </button>
 
           <p className="text-[11px] text-center text-slate-500 dark:text-slate-400 leading-relaxed">
-            El sistema detecta automáticamente su rol asignado (Director, Coordinador, Docente o Representante) y lo redirige a su portal correspondiente.
+            Acceso exclusivo para el personal institucional autorizado (Director, Coordinador y Docente).
           </p>
         </form>
 

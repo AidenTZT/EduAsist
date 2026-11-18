@@ -443,7 +443,7 @@ export type AuthAttemptResult =
     }
   | {
       ok: false;
-      code: 'INVALID_CREDENTIALS' | 'USER_INACTIVE';
+      code: 'INVALID_CREDENTIALS' | 'USER_INACTIVE' | 'PORTAL_MISMATCH';
       error: string;
     };
 
@@ -532,10 +532,56 @@ export async function authenticateCredentials(
     return null;
   };
 
-  const order = preferredPortal === 'representante' ? [checkRep, checkStaff] : [checkStaff, checkRep];
-  let inactiveHit: AuthAttemptResult | null = null;
+  // Separación estricta de portales:
+  // - Panel Institucional ('staff'): solo permite usuarios de la tabla `users` (Director, Coordinador, Docente).
+  // - Portal de Representantes ('representante'): solo permite usuarios de la tabla `representantes`.
+  if (preferredPortal === 'staff') {
+    const staffRes = await checkStaff();
+    if (staffRes) {
+      return staffRes;
+    }
 
-  for (const fn of order) {
+    const repRes = await checkRep();
+    if (repRes) {
+      return {
+        ok: false,
+        code: 'PORTAL_MISMATCH',
+        error: 'Las cuentas de representantes deben ingresar exclusivamente a través del Portal de Representantes.',
+      };
+    }
+
+    return {
+      ok: false,
+      code: 'INVALID_CREDENTIALS',
+      error: 'Usuario o contraseña incorrectos. Verifique sus credenciales e intente nuevamente.',
+    };
+  }
+
+  if (preferredPortal === 'representante') {
+    const repRes = await checkRep();
+    if (repRes) {
+      return repRes;
+    }
+
+    const staffRes = await checkStaff();
+    if (staffRes) {
+      return {
+        ok: false,
+        code: 'PORTAL_MISMATCH',
+        error: 'Las cuentas del personal institucional deben ingresar exclusivamente a través del Panel Institucional.',
+      };
+    }
+
+    return {
+      ok: false,
+      code: 'INVALID_CREDENTIALS',
+      error: 'Usuario o contraseña incorrectos. Verifique sus credenciales e intente nuevamente.',
+    };
+  }
+
+  // Sin portal especificado: mantener compatibilidad ordenada
+  let inactiveHit: AuthAttemptResult | null = null;
+  for (const fn of [checkStaff, checkRep]) {
     const res = await fn();
     if (res) {
       if (res.ok) return res;
