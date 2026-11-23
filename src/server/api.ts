@@ -34,6 +34,8 @@ import {
   activateLapsoSchema,
   pushSubscriptionSchema,
   pushUnsubscribeSchema,
+  updateHorariosConfigSchema,
+  triggerMilestonePushSchema,
 } from './validation.ts';
 import type { EstadoAsistencia } from '../types.ts';
 import {
@@ -42,6 +44,13 @@ import {
   dispatchDeparturePushNotificationsDirect,
   sendTestPushToSubscriptions,
 } from './pushService.ts';
+import {
+  getSchoolClockInTimezone,
+  triggerMilestonePush,
+  startInstitutionalMilestoneScheduler,
+} from './scheduleNotifier.ts';
+
+export { startInstitutionalMilestoneScheduler };
 
 export const apiRouter = express.Router();
 export const schoolApp = express();
@@ -352,6 +361,28 @@ apiRouter.put(
         entidad: 'configuracion_institucional',
         idEntidad: clave,
         detalles: { clave, valor, descripcion },
+      });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.put(
+  '/configuracion/horarios',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  validateBody(updateHorariosConfigSchema),
+  async (req: Request, res: Response) => {
+    try {
+      const updated = await db.updateHorariosConfiguracion(req.body);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'CONFIGURACION_HORARIOS_MODIFICADA',
+        entidad: 'configuracion_institucional',
+        idEntidad: 'horarios',
+        detalles: req.body,
       });
       res.json(updated);
     } catch (e: any) {
@@ -2098,6 +2129,54 @@ apiRouter.post('/push/test', requireAuth, async (req: Request, res: Response) =>
     res.status(500).json({ error: e.message || 'Error al enviar notificación de prueba.' });
   }
 });
+
+apiRouter.get(
+  '/push/milestones/status',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (_req: Request, res: Response) => {
+    try {
+      const clock = getSchoolClockInTimezone();
+      const [targets, recentHistory] = await Promise.all([
+        db.getMilestonePushTargets(),
+        db.getMilestoneDispatches(20),
+      ]);
+      res.json({
+        targetDevices: targets.targetDevices,
+        targetRepresentantes: targets.targetRepresentantes,
+        serverSchoolTime: clock.timeHHMM,
+        serverSchoolDate: clock.dateYmd,
+        timezone: clock.timezone,
+        recentHistory,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || 'Error al consultar estado de hitos push.' });
+    }
+  }
+);
+
+apiRouter.post(
+  '/push/milestones/trigger',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  validateBody(triggerMilestonePushSchema),
+  async (req: Request, res: Response) => {
+    try {
+      const { tipo, mensajePersonalizado } = req.body as {
+        tipo: 'receso' | 'salida';
+        mensajePersonalizado?: string;
+      };
+      const result = await triggerMilestonePush(tipo, {
+        trigger: 'manual',
+        mensajePersonalizado,
+        author: getAuditAuthorFromReq(req),
+      });
+      res.json(result);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message || 'Error al disparar notificación de hito.' });
+    }
+  }
+);
 
 apiRouter.use((_req: Request, res: Response) => {
   res.status(404).json({ error: 'Endpoint de API no encontrado.' });

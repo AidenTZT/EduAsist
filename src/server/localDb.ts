@@ -27,6 +27,8 @@ import type {
   AuditLog,
   PaginatedResponse,
   LapsoBreakdownStats,
+  InstitutionalConfigSummary,
+  MilestoneDispatchRecord,
 } from '../types.ts';
 
 // ---------------------------------------------------------------------------
@@ -76,6 +78,7 @@ export interface DatabaseState {
   users: StoredUser[];
   auditLogs: AuditLog[];
   pushSubscriptions: PushSubscriptionRecord[];
+  milestoneDispatches: MilestoneDispatchRecord[];
 }
 
 let cachedDb: DatabaseState | null = null;
@@ -181,6 +184,7 @@ async function normalizeAndEnsureIntegrity(raw: Partial<DatabaseState>): Promise
     users: Array.isArray(raw.users) ? (raw.users as StoredUser[]) : [],
     auditLogs: Array.isArray(raw.auditLogs) ? raw.auditLogs : [],
     pushSubscriptions: Array.isArray(raw.pushSubscriptions) ? raw.pushSubscriptions : [],
+    milestoneDispatches: Array.isArray(raw.milestoneDispatches) ? raw.milestoneDispatches : [],
   };
 
   // Garantizar hashes bcrypt y campos usuario/activo en personal institucional
@@ -836,21 +840,68 @@ export async function deleteUser(id: number): Promise<void> {
 // ---------------------------------------------------------------------------
 // 2. CONFIGURACIÓN & RECESOS
 // ---------------------------------------------------------------------------
-export async function getConfiguracion() {
-  const db = await readDb();
+function buildConfiguracionSummary(
+  db: DatabaseState
+): InstitutionalConfigSummary & { raw: ConfiguracionInstitucional[] } {
   const raw = [...db.configuracionInstitucional]
     .filter((c) => c.clave !== 'lapso_activo')
     .sort((a, b) => a.idConfig - b.idConfig);
   const findVal = (clave: string, fallback: string) =>
     raw.find((c) => c.clave === clave)?.valor || fallback;
+  const findBool = (clave: string, fallback: boolean) => {
+    const entry = raw.find((c) => c.clave === clave);
+    if (!entry) return fallback;
+    return entry.valor !== 'false' && entry.valor !== '0';
+  };
   return {
     anoLectivo: findVal('ano_lectivo', '2025 - 2026'),
     nombreInstitucion: findVal(
       'nombre_institucion',
       'Liceo Nacional Bolivariano Gran Mariscal de Ayacucho'
     ),
+    horaRecesoInicio: findVal('hora_receso_inicio', '09:15').slice(0, 5),
+    horaRecesoFin: findVal('hora_receso_fin', '09:45').slice(0, 5),
+    horaSalida: findVal('hora_salida', '13:00').slice(0, 5),
+    alertaRecesoActiva: findBool('alerta_receso_activa', true),
+    alertaSalidaActiva: findBool('alerta_salida_activa', true),
     raw,
   };
+}
+
+export async function getConfiguracion(): Promise<
+  InstitutionalConfigSummary & { raw: ConfiguracionInstitucional[] }
+> {
+  const db = await readDb();
+  return buildConfiguracionSummary(db);
+}
+
+function upsertConfigEntry(
+  db: DatabaseState,
+  clave: string,
+  valor: string,
+  descripcion?: string
+): ConfiguracionInstitucional {
+  const cleanKey = clave.trim();
+  const nowIso = new Date().toISOString();
+  const idx = db.configuracionInstitucional.findIndex((c) => c.clave === cleanKey);
+  if (idx !== -1) {
+    db.configuracionInstitucional[idx] = {
+      ...db.configuracionInstitucional[idx],
+      valor: String(valor).trim(),
+      ...(descripcion !== undefined ? { descripcion } : {}),
+      updatedAt: nowIso,
+    };
+    return db.configuracionInstitucional[idx];
+  }
+  const created: ConfiguracionInstitucional = {
+    idConfig: nextNumericId(db.configuracionInstitucional, (c) => c.idConfig),
+    clave: cleanKey,
+    valor: String(valor).trim(),
+    descripcion: descripcion || null,
+    updatedAt: nowIso,
+  };
+  db.configuracionInstitucional.push(created);
+  return created;
 }
 
 export async function setConfiguracion(
@@ -858,28 +909,48 @@ export async function setConfiguracion(
   valor: string,
   descripcion?: string
 ): Promise<ConfiguracionInstitucional> {
+  return withWriteLock((db) => upsertConfigEntry(db, clave, valor, descripcion));
+}
+
+export async function updateHorariosConfiguracion(data: {
+  horaRecesoInicio: string;
+  horaRecesoFin: string;
+  horaSalida: string;
+  alertaRecesoActiva: boolean;
+  alertaSalidaActiva: boolean;
+}): Promise<InstitutionalConfigSummary> {
   return withWriteLock((db) => {
-    const cleanKey = clave.trim();
-    const nowIso = new Date().toISOString();
-    const idx = db.configuracionInstitucional.findIndex((c) => c.clave === cleanKey);
-    if (idx !== -1) {
-      db.configuracionInstitucional[idx] = {
-        ...db.configuracionInstitucional[idx],
-        valor: String(valor).trim(),
-        ...(descripcion !== undefined ? { descripcion } : {}),
-        updatedAt: nowIso,
-      };
-      return db.configuracionInstitucional[idx];
-    }
-    const created: ConfiguracionInstitucional = {
-      idConfig: nextNumericId(db.configuracionInstitucional, (c) => c.idConfig),
-      clave: cleanKey,
-      valor: String(valor).trim(),
-      descripcion: descripcion || null,
-      updatedAt: nowIso,
-    };
-    db.configuracionInstitucional.push(created);
-    return created;
+    upsertConfigEntry(
+      db,
+      'hora_receso_inicio',
+      data.horaRecesoInicio.slice(0, 5),
+      'Hora de inicio del receso escolar institucional'
+    );
+    upsertConfigEntry(
+      db,
+      'hora_receso_fin',
+      data.horaRecesoFin.slice(0, 5),
+      'Hora de finalización del receso escolar institucional'
+    );
+    upsertConfigEntry(
+      db,
+      'hora_salida',
+      data.horaSalida.slice(0, 5),
+      'Hora oficial de salida institucional'
+    );
+    upsertConfigEntry(
+      db,
+      'alerta_receso_activa',
+      String(Boolean(data.alertaRecesoActiva)),
+      'Activar notificación push automática de receso'
+    );
+    upsertConfigEntry(
+      db,
+      'alerta_salida_activa',
+      String(Boolean(data.alertaSalidaActiva)),
+      'Activar notificación push automática de salida'
+    );
+    return buildConfiguracionSummary(db);
   });
 }
 
@@ -2963,6 +3034,7 @@ export async function restoreFullDatabaseBackup(backupPayload: any) {
       ...backupPayload.data,
       auditLogs: db.auditLogs,
       pushSubscriptions: db.pushSubscriptions,
+      milestoneDispatches: db.milestoneDispatches,
     });
 
     Object.assign(db, normalized);
@@ -3195,4 +3267,84 @@ export async function getSalidasPushDispatchPayload(idSalida: number) {
     targets,
     subscriptions,
   };
+}
+
+export async function getMilestonePushTargets(): Promise<{
+  targetRepresentantes: number;
+  targetDevices: number;
+  subscriptions: Array<{
+    idRepresentante: number;
+    endpoint: string;
+    p256dh: string;
+    auth: string;
+  }>;
+}> {
+  const db = await readDb();
+  const activeAnoIds = new Set(
+    db.anosEscolares.filter((a) => a.activo !== false).map((a) => a.idAno)
+  );
+  const activeRepIds = new Set(
+    db.representantes.filter((r) => r.activo !== false).map((r) => r.idRepresentante)
+  );
+
+  // Representantes con al menos un estudiante en un año escolar activo (o cualquier año si ninguno tiene activo)
+  const eligibleRepIds = new Set<number>();
+  for (const est of db.estudiantes) {
+    if (!est.idRepresentante || !activeRepIds.has(est.idRepresentante)) continue;
+    if (activeAnoIds.size === 0 || activeAnoIds.has(est.idAnoActual)) {
+      eligibleRepIds.add(est.idRepresentante);
+    }
+  }
+
+  const rawSubs = db.pushSubscriptions.filter(
+    (s) => s.activa && eligibleRepIds.has(s.idRepresentante)
+  );
+  const uniqueSubs = Array.from(
+    new Map(
+      rawSubs.map((s) => [
+        s.endpoint,
+        {
+          idRepresentante: s.idRepresentante,
+          endpoint: s.endpoint,
+          p256dh: s.p256dh,
+          auth: s.auth,
+        },
+      ])
+    ).values()
+  );
+
+  const uniqueSubscribedReps = new Set(uniqueSubs.map((s) => s.idRepresentante));
+
+  return {
+    targetRepresentantes: uniqueSubscribedReps.size,
+    targetDevices: uniqueSubs.length,
+    subscriptions: uniqueSubs,
+  };
+}
+
+export async function recordMilestoneDispatch(entry: MilestoneDispatchRecord): Promise<void> {
+  await withWriteLock((db) => {
+    db.milestoneDispatches.unshift(entry);
+    if (db.milestoneDispatches.length > 100) {
+      db.milestoneDispatches = db.milestoneDispatches.slice(0, 100);
+    }
+  });
+}
+
+export async function hasMilestoneDispatchedToday(
+  date: string,
+  tipo: 'receso' | 'salida',
+  trigger: 'auto' | 'manual'
+): Promise<boolean> {
+  const db = await readDb();
+  return db.milestoneDispatches.some(
+    (d) => d.date === date && d.tipo === tipo && d.trigger === trigger
+  );
+}
+
+export async function getMilestoneDispatches(
+  limit: number = 20
+): Promise<MilestoneDispatchRecord[]> {
+  const db = await readDb();
+  return db.milestoneDispatches.slice(0, Math.max(1, limit));
 }

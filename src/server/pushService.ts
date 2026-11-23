@@ -558,3 +558,114 @@ export async function dispatchDeparturePushNotificationsDirect(
 
   return { sent, failed, expiredEndpoints, lastError };
 }
+
+export interface MilestonePushDispatchParams {
+  tipo: 'receso' | 'salida';
+  nombreInstitucion?: string;
+  horaRecesoInicio: string;
+  horaRecesoFin: string;
+  horaSalida: string;
+  mensajePersonalizado?: string;
+  subscriptions: Array<{
+    idRepresentante: number;
+    endpoint: string;
+    p256dh: string;
+    auth: string;
+  }>;
+}
+
+export async function dispatchMilestonePushNotifications(
+  params: MilestonePushDispatchParams
+): Promise<{ sent: number; failed: number; expiredEndpoints: string[]; lastError?: string }> {
+  const validSubs = (params.subscriptions || []).filter(
+    (s) => s.endpoint && s.p256dh && s.auth
+  );
+  if (validSubs.length === 0) {
+    return { sent: 0, failed: 0, expiredEndpoints: [] };
+  }
+
+  await ensureVapidConfigured();
+
+  // Deduplicar por endpoint para evitar envíos duplicados al mismo dispositivo
+  const uniqueSubs = Array.from(new Map(validSubs.map((s) => [s.endpoint, s])).values());
+
+  const institucion = params.nombreInstitucion?.trim() || 'la institución';
+  const recInicio = (params.horaRecesoInicio || '09:15').slice(0, 5);
+  const recFin = (params.horaRecesoFin || '09:45').slice(0, 5);
+  const salidaHora = (params.horaSalida || '13:00').slice(0, 5);
+  const customMsg = params.mensajePersonalizado?.trim();
+
+  const isReceso = params.tipo === 'receso';
+  const title = isReceso
+    ? `Receso Escolar • ${institucion}`
+    : `Hora de Salida Escolar • ${institucion}`;
+  const defaultBody = isReceso
+    ? `Inicia el receso escolar (${recInicio} - ${recFin}) en ${institucion}.`
+    : `Ha culminado la jornada escolar (${salidaHora}) en ${institucion}. Los estudiantes se encuentran en hora de salida.`;
+
+  const payload = JSON.stringify({
+    title,
+    body: customMsg || defaultBody,
+    icon: '/pwa-192x192.png',
+    badge: '/pwa-192x192.png',
+    tag: `milestone-${params.tipo}-${Date.now()}`,
+    renotify: true,
+    requireInteraction: false,
+    data: {
+      url: '/#portal-representante',
+      tipo: params.tipo,
+      horaRecesoInicio: recInicio,
+      horaRecesoFin: recFin,
+      horaSalida: salidaHora,
+    },
+  });
+
+  const CONCURRENCY_LIMIT = 10;
+  let sent = 0;
+  let failed = 0;
+  let lastError: string | undefined;
+  const expiredEndpoints: string[] = [];
+
+  for (let i = 0; i < uniqueSubs.length; i += CONCURRENCY_LIMIT) {
+    const chunk = uniqueSubs.slice(i, i + CONCURRENCY_LIMIT);
+    const settled = await Promise.allSettled(
+      chunk.map((sub) =>
+        webPush.sendNotification(
+          {
+            endpoint: sub.endpoint,
+            keys: { p256dh: sub.p256dh, auth: sub.auth },
+          },
+          payload,
+          { TTL: 3600, urgency: 'high' }
+        )
+      )
+    );
+
+    settled.forEach((result, idx) => {
+      const endpoint = chunk[idx].endpoint;
+      if (result.status === 'fulfilled') {
+        sent += 1;
+      } else {
+        failed += 1;
+        const err: any = result.reason;
+        const statusCode = err?.statusCode;
+        lastError = err?.body || err?.message || `HTTP ${statusCode || 'error'}`;
+        if (
+          statusCode === 410 ||
+          statusCode === 404 ||
+          statusCode === 401 ||
+          statusCode === 403
+        ) {
+          expiredEndpoints.push(endpoint);
+        } else {
+          console.warn(
+            `[WebPush] Error al enviar hito ${params.tipo} (${statusCode || 'unknown'}):`,
+            err?.body || err?.message || err
+          );
+        }
+      }
+    });
+  }
+
+  return { sent, failed, expiredEndpoints, lastError };
+}

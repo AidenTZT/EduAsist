@@ -22,7 +22,11 @@ import type {
   LoginResponse,
   PaginatedResponse,
   LapsoEscolar,
+  InstitutionalConfigSummary,
+  MilestonePushStatusResponse,
 } from '../types.ts';
+
+export type { InstitutionalConfigSummary, MilestonePushStatusResponse };
 
 const AUTH_TOKEN_KEY = 'eduasist_auth_token';
 const LEGACY_AUTH_TOKEN_KEY = 'educontrol_auth_token';
@@ -196,11 +200,9 @@ export async function fetchAuditLogs(filters?: {
 // -------------------------------------------------------------
 // 1. CONFIGURACIÓN INSTITUCIONAL GLOBAL & RECESOS
 // -------------------------------------------------------------
-export async function fetchConfiguracion(): Promise<{
-  anoLectivo: string;
-  nombreInstitucion: string;
-  raw: ConfiguracionInstitucional[];
-}> {
+export async function fetchConfiguracion(): Promise<
+  InstitutionalConfigSummary & { raw: ConfiguracionInstitucional[] }
+> {
   return apiFetch('/configuracion');
 }
 
@@ -212,6 +214,19 @@ export async function updateConfiguracion(
   return apiFetch('/configuracion', {
     method: 'PUT',
     body: JSON.stringify({ clave, valor, descripcion }),
+  });
+}
+
+export async function updateHorariosConfiguracion(data: {
+  horaRecesoInicio: string;
+  horaRecesoFin: string;
+  horaSalida: string;
+  alertaRecesoActiva: boolean;
+  alertaSalidaActiva: boolean;
+}): Promise<InstitutionalConfigSummary> {
+  return apiFetch('/configuracion/horarios', {
+    method: 'PUT',
+    body: JSON.stringify(data),
   });
 }
 
@@ -858,5 +873,31 @@ export async function sendTestPushNotification(): Promise<{
 }> {
   return apiFetch('/push/test', {
     method: 'POST',
+  });
+}
+
+export async function fetchMilestonePushStatus(): Promise<MilestonePushStatusResponse> {
+  return apiFetch('/push/milestones/status');
+}
+
+export async function triggerMilestonePush(data: {
+  tipo: 'receso' | 'salida';
+  mensajePersonalizado?: string;
+}): Promise<{
+  success: boolean;
+  tipo: 'receso' | 'salida';
+  trigger: 'auto' | 'manual';
+  date: string;
+  sentAt: string;
+  sent: number;
+  failed: number;
+  targetRepresentantes: number;
+  targetDevices: number;
+  expiredRemoved: number;
+  message: string;
+}> {
+  return apiFetch('/push/milestones/trigger', {
+    method: 'POST',
+    body: JSON.stringify(data),
   });
 }

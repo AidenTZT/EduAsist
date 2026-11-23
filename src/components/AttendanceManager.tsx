@@ -6,12 +6,10 @@ import {
   XCircle,
   AlertCircle,
   Save,
-  HelpCircle,
   RefreshCw,
   ArrowUpDown,
-  Check,
-  Smartphone,
   Table,
+  LayoutList,
   Layers,
   Lock,
   ShieldCheck,
@@ -39,6 +37,11 @@ import {
 } from '../lib/api.ts';
 import { formatCedula, sortStudentsByCedula, getLocalTodayDateString } from '../lib/utils.ts';
 import { SchoolScheduleStatusBanner } from './SchoolScheduleStatusBanner.tsx';
+import { QuickCardsView, type AttendanceRecordState } from './attendance/QuickCardsView.tsx';
+import { FocusedStudentView } from './attendance/FocusedStudentView.tsx';
+
+type AttendanceViewMode = 'table' | 'cards' | 'focused';
+const VIEW_MODE_STORAGE_KEY = 'eduasist_attendance_view_mode';
 
 interface AttendanceManagerProps {
   anos: AnoEscolar[];
@@ -71,23 +74,35 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
   const [selectedMateriaId, setSelectedMateriaId] = useState<number>(0);
   const [fecha, setFecha] = useState<string>(() => getLocalTodayDateString());
 
-  // Mobile Tactile Cards view vs Desktop Table view
-  const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
+  // Modo de vista persistente en localStorage (Tabla predeterminada)
+  const [viewMode, setViewMode] = useState<AttendanceViewMode>(() => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const saved = window.localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+        if (saved === 'table' || saved === 'cards' || saved === 'focused') {
+          return saved;
+        }
+      }
+    } catch {
+      // Ignorar en entornos con almacenamiento restringido
+    }
+    return 'table';
+  });
+  const [focusedIndex, setFocusedIndex] = useState<number>(0);
+
+  const handleChangeViewMode = (mode: AttendanceViewMode) => {
+    setViewMode(mode);
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
+      }
+    } catch {
+      // Ignorar en entornos con almacenamiento restringido
+    }
+  };
 
   // Attendance map: idEstudiante -> { estado, horaEntrada, isModified, lockedByCoordination, motivoJustificacion, numeroJustificante }
-  const [attendanceMap, setAttendanceMap] = useState<
-    Record<
-      number,
-      {
-        estado: EstadoAsistencia;
-        horaEntrada: string;
-        isModified: boolean;
-        lockedByCoordination?: boolean;
-        motivoJustificacion?: string | null;
-        numeroJustificante?: string | null;
-      }
-    >
-  >({});
+  const [attendanceMap, setAttendanceMap] = useState<Record<number, AttendanceRecordState>>({});
   const [loading, setLoading] = useState<boolean>(false);
   const [saving, setSaving] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(
@@ -265,6 +280,16 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
     };
   }, [selectedMateriaId, selectedSeccionId, fecha, selectedAnoId, estudiantes, currentUser]);
 
+  useEffect(() => {
+    setFocusedIndex(0);
+  }, [selectedAnoId, selectedSeccionId, selectedMateriaId, fecha]);
+
+  useEffect(() => {
+    if (sortedStudents.length > 0 && focusedIndex >= sortedStudents.length) {
+      setFocusedIndex(sortedStudents.length - 1);
+    }
+  }, [sortedStudents.length, focusedIndex]);
+
   const handleStatusChange = (idEstudiante: number, estado: EstadoAsistencia) => {
     if (attendanceMap[idEstudiante]?.lockedByCoordination) {
       return;
@@ -282,6 +307,20 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
         isModified: true,
       },
     }));
+  };
+
+  const handleCycleStatus = (idEstudiante: number) => {
+    const current = attendanceMap[idEstudiante];
+    if (current?.lockedByCoordination) {
+      return;
+    }
+    const cycleOrder: EstadoAsistencia[] = isDocente
+      ? ['Presente', 'Ausente', 'Tarde']
+      : ['Presente', 'Ausente', 'Tarde', 'Justificado'];
+    const currentEstado = current?.estado || 'Presente';
+    const currentIdx = cycleOrder.indexOf(currentEstado);
+    const nextEstado = cycleOrder[(currentIdx + 1) % cycleOrder.length];
+    handleStatusChange(idEstudiante, nextEstado);
   };
 
   const handleMarkAll = (estado: EstadoAsistencia) => {
@@ -427,37 +466,8 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
             </div>
           </div>
 
-          {/* Quick Mark & View Switcher */}
+          {/* Quick Mark Actions */}
           <div className="flex flex-wrap items-center gap-2">
-            {/* View Mode Switcher: visible solo en tablets/escritorio (en móvil siempre es táctil) */}
-            <div className="hidden md:flex bg-slate-100 dark:bg-[#181818] p-1 rounded-xl items-center text-xs border border-slate-200 dark:border-[#27272A]">
-              <button
-                type="button"
-                onClick={() => setViewMode('cards')}
-                className={`flex items-center space-x-1 px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
-                  viewMode === 'cards'
-                    ? 'bg-white dark:bg-[#27272A] text-indigo-700 dark:text-indigo-400 shadow-xs'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-                }`}
-                title="Diseño táctil en tarjetas"
-              >
-                <Smartphone className="w-3.5 h-3.5" />
-                <span>Tarjetas</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode('table')}
-                className={`flex items-center space-x-1 px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
-                  viewMode === 'table'
-                    ? 'bg-white dark:bg-[#27272A] text-indigo-700 dark:text-indigo-400 shadow-xs'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-                }`}
-                title="Diseño en tabla para escritorio"
-              >
-                <Table className="w-3.5 h-3.5" />
-                <span>Tabla</span>
-              </button>
-            </div>
 
             <button
               onClick={() => handleMarkAll('Presente')}
@@ -631,396 +641,241 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
       ) : (
         /* RESPONSIVE ATTENDANCE CONTAINER: CARDS ALWAYS ON MOBILE (< md), CARDS/TABLE ON DESKTOP (>= md) */
         <div className="space-y-4">
-          <div className="flex items-center justify-between text-xs font-bold text-slate-500 dark:text-slate-400 px-1">
-            <span className="flex items-center gap-1.5">
-              <ArrowUpDown className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
-              Nómina ordenada numéricamente por Cédula (Ascendente)
-            </span>
-            <span className="bg-slate-100 dark:bg-[#181818] px-2.5 py-0.5 rounded-md border border-slate-200 dark:border-[#27272A]">
-              {sortedStudents.length} estudiantes
-            </span>
+          {/* Cabecera del listado de estudiantes + Selector Segmented Control de Modo de Vista */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-[#121212] p-3.5 rounded-2xl border border-slate-200 dark:border-[#27272A]">
+            <div className="flex items-center justify-between sm:justify-start gap-2 text-xs font-bold text-slate-600 dark:text-zinc-300">
+              <span className="flex items-center gap-1.5">
+                <ArrowUpDown className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                <span>Nómina por Cédula</span>
+              </span>
+              <span aria-hidden="true" className="text-slate-300 dark:text-zinc-700">·</span>
+              <span className="font-mono tabular-nums text-slate-500 dark:text-zinc-400">
+                {sortedStudents.length} estudiantes
+              </span>
+            </div>
+
+            {/* Conmutador Segmentado (Segmented Control) accesible en móvil, tablet y escritorio */}
+            <div
+              role="tablist"
+              aria-label="Modo de vista del pase de asistencia"
+              className="grid grid-cols-3 sm:inline-flex items-center gap-1 p-1 rounded-xl bg-slate-100 dark:bg-[#000000] border border-slate-200 dark:border-[#27272A]"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={viewMode === 'table'}
+                onClick={() => handleChangeViewMode('table')}
+                className={`min-h-[40px] sm:min-h-[36px] px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all whitespace-nowrap shrink-0 cursor-pointer ${
+                  viewMode === 'table'
+                    ? 'bg-white dark:bg-[#181818] text-indigo-700 dark:text-indigo-300 shadow-xs border border-slate-200/80 dark:border-[#27272A]'
+                    : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-100 border border-transparent'
+                }`}
+              >
+                <Table className="w-3.5 h-3.5 shrink-0" />
+                <span>Tabla</span>
+              </button>
+
+              <button
+                type="button"
+                role="tab"
+                aria-selected={viewMode === 'cards'}
+                onClick={() => handleChangeViewMode('cards')}
+                className={`min-h-[40px] sm:min-h-[36px] px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all whitespace-nowrap shrink-0 cursor-pointer ${
+                  viewMode === 'cards'
+                    ? 'bg-white dark:bg-[#181818] text-indigo-700 dark:text-indigo-300 shadow-xs border border-slate-200/80 dark:border-[#27272A]'
+                    : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-100 border border-transparent'
+                }`}
+              >
+                <LayoutList className="w-3.5 h-3.5 shrink-0" />
+                <span className="sm:hidden">Tarjetas</span>
+                <span className="hidden sm:inline">Tarjetas Rápidas</span>
+              </button>
+
+              <button
+                type="button"
+                role="tab"
+                aria-selected={viewMode === 'focused'}
+                onClick={() => handleChangeViewMode('focused')}
+                className={`min-h-[40px] sm:min-h-[36px] px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all whitespace-nowrap shrink-0 cursor-pointer ${
+                  viewMode === 'focused'
+                    ? 'bg-white dark:bg-[#181818] text-indigo-700 dark:text-indigo-300 shadow-xs border border-slate-200/80 dark:border-[#27272A]'
+                    : 'text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-zinc-100 border border-transparent'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5 shrink-0" />
+                <span className="sm:hidden">1 a 1</span>
+                <span className="hidden sm:inline">Enfocada (1 a 1)</span>
+              </button>
+            </div>
           </div>
 
-          {/* 1. VISTA MÓVIL (block md:hidden): SIEMPRE TARJETAS TÁCTILES VERTICALES ERGONÓMICAS */}
-          <div className="block md:hidden space-y-3">
-            {sortedStudents.map((student, index) => {
-              const state = attendanceMap[student.idEstudiante] || {
-                estado: 'Presente' as EstadoAsistencia,
-                horaEntrada: '--:--:--',
-              };
+          {/* 1. VISTA TARJETAS RÁPIDAS (Tap-to-Cycle anti-aglomeración) */}
+          {viewMode === 'cards' && (
+            <QuickCardsView
+              students={sortedStudents}
+              attendanceMap={attendanceMap}
+              isDocente={isDocente}
+              onCycleStatus={handleCycleStatus}
+            />
+          )}
 
-              return (
-                <div
-                  key={`mobile-${student.idEstudiante}`}
-                  className={`bg-white dark:bg-[#121212] rounded-2xl border p-4 shadow-xs transition-all ${
-                    state.isModified
-                      ? 'border-indigo-400 dark:border-indigo-600 bg-indigo-50/20 dark:bg-indigo-950/20 ring-2 ring-indigo-200 dark:ring-indigo-900/40'
-                      : 'border-slate-200 dark:border-[#27272A]'
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-2 mb-3">
-                    <div className="flex items-center space-x-2.5">
-                      <div className="w-9 h-9 rounded-xl bg-indigo-50 dark:bg-[#181818] text-indigo-600 dark:text-indigo-400 font-extrabold text-xs flex items-center justify-center border border-indigo-100 dark:border-[#27272A] shrink-0">
-                        {student.nombres[0]}
-                      </div>
-                      <div>
-                        <h4 className="font-bold text-sm text-slate-900 dark:text-[#F4F4F5] leading-tight">
-                          {student.apellidos}, {student.nombres}
-                        </h4>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <span className="font-mono text-xs font-bold text-slate-600 dark:text-slate-400">
-                            {formatCedula(student.cedula)}
-                          </span>
-                          <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-slate-100 dark:bg-[#27272A] text-slate-700 dark:text-slate-300">
-                            {student.nombreSeccion ? `Sec. ${student.nombreSeccion}` : 'Sin Sección'}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
+          {/* 2. VISTA ENFOCADA (1 A 1 - Carrusel paso a paso) */}
+          {viewMode === 'focused' && (
+            <FocusedStudentView
+              students={sortedStudents}
+              attendanceMap={attendanceMap}
+              isDocente={isDocente}
+              currentIndex={focusedIndex}
+              onIndexChange={setFocusedIndex}
+              onSelectStatus={handleStatusChange}
+            />
+          )}
 
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-md font-mono text-[10px] font-bold bg-slate-100 dark:bg-[#181818] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-[#27272A] shrink-0">
-                      <Clock className="w-3 h-3 mr-1 text-slate-400" />
-                      {state.horaEntrada || '--:--:--'}
-                    </span>
-                  </div>
+          {/* 3. VISTA TABLA (Predeterminada, conserva exactamente el diseño original) */}
+          {viewMode === 'table' && (
+            <div className="bg-white dark:bg-[#121212] rounded-2xl border border-slate-200 dark:border-[#27272A] overflow-hidden shadow-xs">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 dark:border-[#27272A] text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider bg-slate-50/50 dark:bg-[#181818]">
+                      <th className="py-3 px-4 w-12 text-center">#</th>
+                      <th className="sticky left-0 z-20 bg-slate-50 dark:bg-[#181818] py-3 px-4 min-w-[200px] border-r border-slate-200 dark:border-[#27272A] shadow-[4px_0_6px_-2px_rgba(0,0,0,0.06)] dark:shadow-[4px_0_6px_-2px_rgba(0,0,0,0.5)]">
+                        Estudiante / Cédula
+                      </th>
+                      <th className="py-3 px-4 w-28 text-center">Sección</th>
+                      <th className="py-3 px-4 w-32 text-center">Hora Entrada</th>
+                      <th className="py-3 px-4 text-center w-72">Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-[#27272A]">
+                    {sortedStudents.map((student, index) => {
+                      const state = attendanceMap[student.idEstudiante] || {
+                        estado: 'Presente' as EstadoAsistencia,
+                        horaEntrada: '--:--:--',
+                      };
 
-                  {/* Botones Grandes Táctiles para Pulgar (Ergonomía Móvil) */}
-                  {state.lockedByCoordination ? (
-                    <div className="pt-2.5 border-t border-slate-100 dark:border-[#27272A]">
-                      <div className="p-2.5 rounded-xl bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800 text-sky-800 dark:text-sky-200 text-xs font-bold flex items-center justify-between gap-2">
-                        <span className="flex items-center gap-1.5">
-                          <Lock className="w-3.5 h-3.5 shrink-0" />
-                          Validado por Coordinación: {state.estado}
-                        </span>
-                        {state.numeroJustificante && (
-                          <span className="font-mono text-[10px]">{state.numeroJustificante}</span>
-                        )}
-                      </div>
-                      {state.motivoJustificacion && (
-                        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                          {state.motivoJustificacion}
-                        </p>
-                      )}
-                    </div>
-                  ) : (
-                    <div
-                      className={`grid ${isDocente ? 'grid-cols-3' : 'grid-cols-4'} gap-1.5 pt-2.5 border-t border-slate-100 dark:border-[#27272A]`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => handleStatusChange(student.idEstudiante, 'Presente')}
-                        className={`min-h-[46px] py-1.5 px-1 rounded-xl text-xs font-bold transition-all text-center flex flex-col items-center justify-center gap-1 cursor-pointer ${
-                          state.estado === 'Presente'
-                            ? 'bg-emerald-600 text-white shadow-sm ring-2 ring-emerald-300 dark:ring-emerald-800 scale-102'
-                            : 'bg-slate-50 dark:bg-[#181818] text-slate-600 dark:text-slate-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 hover:text-emerald-700 dark:hover:text-emerald-300 border border-transparent dark:border-[#27272A]'
-                        }`}
-                      >
-                        <Check className="w-4 h-4" />
-                        <span className="text-[10px] font-extrabold">Presente</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => handleStatusChange(student.idEstudiante, 'Tarde')}
-                        className={`min-h-[46px] py-1.5 px-1 rounded-xl text-xs font-bold transition-all text-center flex flex-col items-center justify-center gap-1 cursor-pointer ${
-                          state.estado === 'Tarde'
-                            ? 'bg-amber-500 text-white shadow-sm ring-2 ring-amber-300 dark:ring-amber-800 scale-102'
-                            : 'bg-slate-50 dark:bg-[#181818] text-slate-600 dark:text-slate-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 hover:text-amber-700 dark:hover:text-amber-300 border border-transparent dark:border-[#27272A]'
-                        }`}
-                      >
-                        <Clock className="w-4 h-4" />
-                        <span className="text-[10px] font-extrabold">Tarde</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => handleStatusChange(student.idEstudiante, 'Ausente')}
-                        className={`min-h-[46px] py-1.5 px-1 rounded-xl text-xs font-bold transition-all text-center flex flex-col items-center justify-center gap-1 cursor-pointer ${
-                          state.estado === 'Ausente'
-                            ? 'bg-rose-600 text-white shadow-sm ring-2 ring-rose-300 dark:ring-rose-800 scale-102'
-                            : 'bg-slate-50 dark:bg-[#181818] text-slate-600 dark:text-slate-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 hover:text-rose-700 dark:hover:text-rose-300 border border-transparent dark:border-[#27272A]'
-                        }`}
-                      >
-                        <XCircle className="w-4 h-4" />
-                        <span className="text-[10px] font-extrabold">Ausente</span>
-                      </button>
-
-                      {!isDocente && (
-                        <button
-                          type="button"
-                          onClick={() => handleStatusChange(student.idEstudiante, 'Justificado')}
-                          className={`min-h-[46px] py-1.5 px-1 rounded-xl text-xs font-bold transition-all text-center flex flex-col items-center justify-center gap-1 cursor-pointer ${
-                            state.estado === 'Justificado' || state.estado === 'Reposo Médico'
-                              ? 'bg-sky-600 text-white shadow-sm ring-2 ring-sky-300 dark:ring-sky-800 scale-102'
-                              : 'bg-slate-50 dark:bg-[#181818] text-slate-600 dark:text-slate-400 hover:bg-sky-50 dark:hover:bg-sky-950/30 hover:text-sky-700 dark:hover:text-sky-300 border border-transparent dark:border-[#27272A]'
-                          }`}
-                        >
-                          <HelpCircle className="w-4 h-4" />
-                          <span className="text-[10px] font-extrabold">
-                            {state.estado === 'Reposo Médico' ? 'Reposo' : 'Justif.'}
-                          </span>
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          {/* 2. VISTA ESCRITORIO (hidden md:block): SEGÚN VIEWMODE (CARDS O TABLA) */}
-          <div className="hidden md:block">
-            {viewMode === 'cards' ? (
-              <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-                {sortedStudents.map((student, index) => {
-                  const state = attendanceMap[student.idEstudiante] || {
-                    estado: 'Presente' as EstadoAsistencia,
-                    horaEntrada: '--:--:--',
-                  };
-
-                  return (
-                    <div
-                      key={`desktop-card-${student.idEstudiante}`}
-                      className={`bg-white dark:bg-[#121212] rounded-2xl border p-4 shadow-xs transition-all ${
-                        state.isModified
-                          ? 'border-indigo-400 dark:border-indigo-600 bg-indigo-50/20 dark:bg-indigo-950/20 ring-2 ring-indigo-200 dark:ring-indigo-900/40'
-                          : 'border-slate-200 dark:border-[#27272A]'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-2 mb-3">
-                        <div className="flex items-center space-x-2.5">
-                          <span className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-[#181818] font-mono font-black text-xs text-slate-600 dark:text-slate-300 flex items-center justify-center border border-slate-200 dark:border-[#27272A]">
+                      return (
+                        <tr key={`desktop-row-${student.idEstudiante}`} className="hover:bg-slate-50/70 dark:hover:bg-[#181818]/70 transition-colors">
+                          <td className="py-3 px-4 text-center font-mono text-xs text-slate-400 font-bold">
                             {index + 1}
-                          </span>
-                          <div>
-                            <h4 className="font-bold text-sm text-slate-900 dark:text-[#F4F4F5] leading-tight">
+                          </td>
+                          <td className="sticky left-0 z-10 bg-white dark:bg-[#121212] py-3 px-4 min-w-[200px] border-r border-slate-100 dark:border-[#27272A] shadow-[4px_0_6px_-2px_rgba(0,0,0,0.06)] dark:shadow-[4px_0_6px_-2px_rgba(0,0,0,0.5)]">
+                            <div className="font-bold text-slate-900 dark:text-[#F4F4F5]">
                               {student.apellidos}, {student.nombres}
-                            </h4>
-                            <div className="flex items-center gap-2 mt-0.5">
-                              <span className="font-mono text-xs font-bold text-slate-600 dark:text-slate-400">
-                                {formatCedula(student.cedula)}
-                              </span>
-                              <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
-                                {student.nombreSeccion ? `Sec. ${student.nombreSeccion}` : 'Sin Sección'}
-                              </span>
                             </div>
-                          </div>
-                        </div>
-
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-md font-mono text-[11px] font-bold bg-slate-100 dark:bg-[#181818] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-[#27272A]">
-                          <Clock className="w-3 h-3 mr-1 text-slate-400" />
-                          {state.horaEntrada || '--:--:--'}
-                        </span>
-                      </div>
-
-                      {/* Botones de acción táctiles para escritorio */}
-                      {state.lockedByCoordination ? (
-                        <div className="pt-2 border-t border-slate-100 dark:border-[#27272A]">
-                          <div className="p-2.5 rounded-xl bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800 text-sky-800 dark:text-sky-200 text-xs font-bold flex items-center justify-between gap-2">
-                            <span className="flex items-center gap-1.5">
-                              <Lock className="w-3.5 h-3.5 shrink-0" />
-                              Validado por Coordinación: {state.estado}
+                            <div className="font-mono text-xs font-bold text-slate-500 dark:text-slate-400 mt-0.5">
+                              {formatCedula(student.cedula)}
+                            </div>
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            <span className="text-xs font-semibold px-2 py-0.5 rounded bg-slate-100 dark:bg-[#27272A] text-slate-700 dark:text-slate-300">
+                              {student.nombreSeccion ? `Sec. ${student.nombreSeccion}` : '--'}
                             </span>
-                            {state.numeroJustificante && (
-                              <span className="font-mono text-[10px]">{state.numeroJustificante}</span>
-                            )}
-                          </div>
-                          {state.motivoJustificacion && (
-                            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 line-clamp-2">
-                              {state.motivoJustificacion}
-                            </p>
-                          )}
-                        </div>
-                      ) : (
-                        <div
-                          className={`grid ${isDocente ? 'grid-cols-3' : 'grid-cols-4'} gap-1.5 pt-2 border-t border-slate-100 dark:border-[#27272A]`}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => handleStatusChange(student.idEstudiante, 'Presente')}
-                            className={`py-2 px-1 rounded-xl text-xs font-bold transition-all text-center flex flex-col items-center justify-center gap-1 cursor-pointer ${
-                              state.estado === 'Presente'
-                                ? 'bg-emerald-600 text-white shadow-sm ring-2 ring-emerald-300 dark:ring-emerald-800 scale-102'
-                                : 'bg-slate-50 dark:bg-[#181818] text-slate-600 dark:text-slate-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 hover:text-emerald-700 dark:hover:text-emerald-300'
-                            }`}
-                          >
-                            <Check className="w-4 h-4" />
-                            <span className="text-[11px]">Presente</span>
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => handleStatusChange(student.idEstudiante, 'Tarde')}
-                            className={`py-2 px-1 rounded-xl text-xs font-bold transition-all text-center flex flex-col items-center justify-center gap-1 cursor-pointer ${
-                              state.estado === 'Tarde'
-                                ? 'bg-amber-500 text-white shadow-sm ring-2 ring-amber-300 dark:ring-amber-800 scale-102'
-                                : 'bg-slate-50 dark:bg-[#181818] text-slate-600 dark:text-slate-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 hover:text-amber-700 dark:hover:text-amber-300'
-                            }`}
-                          >
-                            <Clock className="w-4 h-4" />
-                            <span className="text-[11px]">Tarde</span>
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => handleStatusChange(student.idEstudiante, 'Ausente')}
-                            className={`py-2 px-1 rounded-xl text-xs font-bold transition-all text-center flex flex-col items-center justify-center gap-1 cursor-pointer ${
-                              state.estado === 'Ausente'
-                                ? 'bg-rose-600 text-white shadow-sm ring-2 ring-rose-300 dark:ring-rose-800 scale-102'
-                                : 'bg-slate-50 dark:bg-[#181818] text-slate-600 dark:text-slate-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 hover:text-rose-700 dark:hover:text-rose-300'
-                            }`}
-                          >
-                            <XCircle className="w-4 h-4" />
-                            <span className="text-[11px]">Ausente</span>
-                          </button>
-
-                          {!isDocente && (
-                            <button
-                              type="button"
-                              onClick={() => handleStatusChange(student.idEstudiante, 'Justificado')}
-                              className={`py-2 px-1 rounded-xl text-xs font-bold transition-all text-center flex flex-col items-center justify-center gap-1 cursor-pointer ${
-                                state.estado === 'Justificado' || state.estado === 'Reposo Médico'
-                                  ? 'bg-sky-600 text-white shadow-sm ring-2 ring-sky-300 dark:ring-sky-800 scale-102'
-                                  : 'bg-slate-50 dark:bg-[#181818] text-slate-600 dark:text-slate-400 hover:bg-sky-50 dark:hover:bg-sky-950/30 hover:text-sky-700 dark:hover:text-sky-300'
-                              }`}
-                            >
-                              <HelpCircle className="w-4 h-4" />
-                              <span className="text-[11px]">
-                                {state.estado === 'Reposo Médico' ? 'Reposo' : 'Justif.'}
-                              </span>
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="bg-white dark:bg-[#121212] rounded-2xl border border-slate-200 dark:border-[#27272A] overflow-hidden shadow-xs">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-sm">
-                    <thead>
-                      <tr className="border-b border-slate-200 dark:border-[#27272A] text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider bg-slate-50/50 dark:bg-[#181818]">
-                        <th className="py-3 px-4 w-12 text-center">#</th>
-                        <th className="sticky left-0 z-20 bg-slate-50 dark:bg-[#181818] py-3 px-4 min-w-[200px] border-r border-slate-200 dark:border-[#27272A] shadow-[4px_0_6px_-2px_rgba(0,0,0,0.06)] dark:shadow-[4px_0_6px_-2px_rgba(0,0,0,0.5)]">
-                          Estudiante / Cédula
-                        </th>
-                        <th className="py-3 px-4 w-28 text-center">Sección</th>
-                        <th className="py-3 px-4 w-32 text-center">Hora Entrada</th>
-                        <th className="py-3 px-4 text-center w-72">Estado</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-[#27272A]">
-                      {sortedStudents.map((student, index) => {
-                        const state = attendanceMap[student.idEstudiante] || {
-                          estado: 'Presente' as EstadoAsistencia,
-                          horaEntrada: '--:--:--',
-                        };
-
-                        return (
-                          <tr key={`desktop-row-${student.idEstudiante}`} className="hover:bg-slate-50/70 dark:hover:bg-[#181818]/70 transition-colors">
-                            <td className="py-3 px-4 text-center font-mono text-xs text-slate-400 font-bold">
-                              {index + 1}
-                            </td>
-                            <td className="sticky left-0 z-10 bg-white dark:bg-[#121212] py-3 px-4 min-w-[200px] border-r border-slate-100 dark:border-[#27272A] shadow-[4px_0_6px_-2px_rgba(0,0,0,0.06)] dark:shadow-[4px_0_6px_-2px_rgba(0,0,0,0.5)]">
-                              <div className="font-bold text-slate-900 dark:text-[#F4F4F5]">
-                                {student.apellidos}, {student.nombres}
-                              </div>
-                              <div className="font-mono text-xs font-bold text-slate-500 dark:text-slate-400 mt-0.5">
-                                {formatCedula(student.cedula)}
-                              </div>
-                            </td>
-                            <td className="py-3 px-4 text-center">
-                              <span className="text-xs font-semibold px-2 py-0.5 rounded bg-slate-100 dark:bg-[#27272A] text-slate-700 dark:text-slate-300">
-                                {student.nombreSeccion ? `Sec. ${student.nombreSeccion}` : '--'}
-                              </span>
-                            </td>
-                            <td className="py-3 px-4 text-center font-mono text-xs font-semibold text-slate-700 dark:text-slate-300">
-                              {state.horaEntrada || '--:--:--'}
-                            </td>
-                            <td className="py-3 px-4">
-                              {state.lockedByCoordination ? (
-                                <div className="flex flex-col items-center text-center">
-                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-sky-50 dark:bg-sky-950/50 text-sky-800 dark:text-sky-200 border border-sky-200 dark:border-sky-800 text-xs font-bold">
-                                    <Lock className="w-3 h-3" />
-                                    {state.estado} (Coordinación)
+                          </td>
+                          <td className="py-3 px-4 text-center font-mono text-xs font-semibold text-slate-700 dark:text-slate-300">
+                            {state.horaEntrada || '--:--:--'}
+                          </td>
+                          <td className="py-3 px-4">
+                            {state.lockedByCoordination ? (
+                              <div className="flex flex-col items-center text-center">
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-sky-50 dark:bg-sky-950/50 text-sky-800 dark:text-sky-200 border border-sky-200 dark:border-sky-800 text-xs font-bold">
+                                  <Lock className="w-3 h-3" />
+                                  {state.estado} (Coordinación)
+                                </span>
+                                {state.motivoJustificacion && (
+                                  <span className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 max-w-[240px] truncate">
+                                    {state.motivoJustificacion}
                                   </span>
-                                  {state.motivoJustificacion && (
-                                    <span className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 max-w-[240px] truncate">
-                                      {state.motivoJustificacion}
-                                    </span>
-                                  )}
-                                </div>
-                              ) : (
-                                <div className="flex items-center justify-center space-x-1">
+                                )}
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-center space-x-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handleStatusChange(student.idEstudiante, 'Presente')}
+                                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                                    state.estado === 'Presente'
+                                      ? 'bg-emerald-600 text-white shadow-xs'
+                                      : 'bg-slate-100 dark:bg-[#27272A] text-slate-600 dark:text-slate-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 hover:text-emerald-700 dark:hover:text-emerald-300'
+                                  }`}
+                                >
+                                  Presente
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleStatusChange(student.idEstudiante, 'Tarde')}
+                                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                                    state.estado === 'Tarde'
+                                      ? 'bg-amber-500 text-white shadow-xs'
+                                      : 'bg-slate-100 dark:bg-[#27272A] text-slate-600 dark:text-slate-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 hover:text-amber-700 dark:hover:text-amber-300'
+                                  }`}
+                                >
+                                  Tarde
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleStatusChange(student.idEstudiante, 'Ausente')}
+                                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                                    state.estado === 'Ausente'
+                                      ? 'bg-rose-600 text-white shadow-xs'
+                                      : 'bg-slate-100 dark:bg-[#27272A] text-slate-600 dark:text-slate-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 hover:text-rose-700 dark:hover:text-rose-300'
+                                  }`}
+                                >
+                                  Ausente
+                                </button>
+                                {!isDocente && (
                                   <button
                                     type="button"
-                                    onClick={() => handleStatusChange(student.idEstudiante, 'Presente')}
+                                    onClick={() => handleStatusChange(student.idEstudiante, 'Justificado')}
                                     className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                                      state.estado === 'Presente'
-                                        ? 'bg-emerald-600 text-white shadow-xs'
-                                        : 'bg-slate-100 dark:bg-[#27272A] text-slate-600 dark:text-slate-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 hover:text-emerald-700 dark:hover:text-emerald-300'
+                                      state.estado === 'Justificado' || state.estado === 'Reposo Médico'
+                                        ? 'bg-sky-600 text-white shadow-xs'
+                                        : 'bg-slate-100 dark:bg-[#27272A] text-slate-600 dark:text-slate-400 hover:bg-sky-50 dark:hover:bg-sky-950/40 hover:text-sky-700 dark:hover:text-sky-300'
                                     }`}
                                   >
-                                    Presente
+                                    {state.estado === 'Reposo Médico' ? 'Reposo' : 'Justif.'}
                                   </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleStatusChange(student.idEstudiante, 'Tarde')}
-                                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                                      state.estado === 'Tarde'
-                                        ? 'bg-amber-500 text-white shadow-xs'
-                                        : 'bg-slate-100 dark:bg-[#27272A] text-slate-600 dark:text-slate-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 hover:text-amber-700 dark:hover:text-amber-300'
-                                    }`}
-                                  >
-                                    Tarde
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleStatusChange(student.idEstudiante, 'Ausente')}
-                                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                                      state.estado === 'Ausente'
-                                        ? 'bg-rose-600 text-white shadow-xs'
-                                        : 'bg-slate-100 dark:bg-[#27272A] text-slate-600 dark:text-slate-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 hover:text-rose-700 dark:hover:text-rose-300'
-                                    }`}
-                                  >
-                                    Ausente
-                                  </button>
-                                  {!isDocente && (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleStatusChange(student.idEstudiante, 'Justificado')}
-                                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                                        state.estado === 'Justificado' || state.estado === 'Reposo Médico'
-                                          ? 'bg-sky-600 text-white shadow-xs'
-                                          : 'bg-slate-100 dark:bg-[#27272A] text-slate-600 dark:text-slate-400 hover:bg-sky-50 dark:hover:bg-sky-950/40 hover:text-sky-700 dark:hover:text-sky-300'
-                                      }`}
-                                    >
-                                      {state.estado === 'Reposo Médico' ? 'Reposo' : 'Justif.'}
-                                    </button>
-                                  )}
-                                </div>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Floating / Sticky Save Bar */}
-      <div className="sticky bottom-4 z-30 bg-slate-900/90 backdrop-blur-md text-white p-4 rounded-2xl shadow-xl flex flex-col sm:flex-row items-center justify-between gap-3 border border-slate-800">
-        <div className="text-xs text-slate-300 flex items-center space-x-2 text-center sm:text-left">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-          <span>
-            Los cambios se guardan de forma atómica en la base de datos institucional. La hora actual será sellada en el registro.
+      {/* Barra Fija Inferior (Sticky Bottom) con resumen en tiempo real y botón Guardar Asistencia */}
+      <div className="sticky bottom-2 sm:bottom-4 z-30 bg-slate-900/95 dark:bg-[#0A0A0A]/95 backdrop-blur-md text-white px-3.5 py-3 sm:p-4 rounded-2xl shadow-xl flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 sm:gap-3 border border-slate-800 dark:border-[#27272A]">
+        {/* Resumen de conteo en tiempo real (compacto en móvil, completo en escritorio) */}
+        <div className="flex items-center justify-between sm:justify-start gap-3 text-xs">
+          <div className="flex items-center gap-3 font-mono tabular-nums font-bold">
+            <span className="text-emerald-400 flex items-center gap-1">
+              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+              <span>{counts.presentes}</span>
+              <span className="font-sans font-semibold text-slate-300">Pres.</span>
+            </span>
+            <span aria-hidden="true" className="text-slate-700">/</span>
+            <span className="text-rose-400 flex items-center gap-1">
+              <XCircle className="w-3.5 h-3.5 shrink-0" />
+              <span>{counts.ausentes}</span>
+              <span className="font-sans font-semibold text-slate-300">Aus.</span>
+            </span>
+            <span aria-hidden="true" className="text-slate-700">/</span>
+            <span className="text-amber-400 flex items-center gap-1">
+              <Clock className="w-3.5 h-3.5 shrink-0" />
+              <span>{counts.tardes}</span>
+              <span className="font-sans font-semibold text-slate-300">Tard.</span>
+            </span>
+          </div>
+
+          <span className="hidden lg:inline text-slate-400 font-sans border-l border-slate-700 pl-3">
+            Los cambios se guardan de forma atómica con sellado de hora oficial.
           </span>
         </div>
 
@@ -1028,7 +883,7 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
           type="button"
           onClick={handleSaveAttendance}
           disabled={saving || sortedStudents.length === 0}
-          className="w-full sm:w-auto px-6 py-2.5 rounded-xl font-bold text-xs sm:text-sm bg-indigo-600 hover:bg-indigo-500 transition-all shadow-md shadow-indigo-900/50 flex items-center justify-center space-x-2 disabled:opacity-50 cursor-pointer"
+          className="w-full sm:w-auto min-h-[44px] px-5 py-2.5 rounded-xl font-bold text-xs sm:text-sm bg-indigo-600 hover:bg-indigo-500 active:scale-[0.99] transition-all shadow-md shadow-indigo-900/50 flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer whitespace-nowrap shrink-0"
         >
           {saving ? (
             <>
@@ -1038,7 +893,8 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
           ) : (
             <>
               <Save className="w-4 h-4" />
-              <span>Guardar Asistencia de la Clase</span>
+              <span className="sm:hidden">Guardar Asistencia</span>
+              <span className="hidden sm:inline">Guardar Asistencia de la Clase</span>
             </>
           )}
         </button>

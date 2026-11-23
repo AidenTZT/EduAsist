@@ -25,6 +25,36 @@ export interface ConfiguracionInstitucional {
   updatedAt?: string | Date | null;
 }
 
+export interface InstitutionalConfigSummary {
+  anoLectivo: string;
+  nombreInstitucion: string;
+  horaRecesoInicio: string;
+  horaRecesoFin: string;
+  horaSalida: string;
+  alertaRecesoActiva: boolean;
+  alertaSalidaActiva: boolean;
+  raw?: ConfiguracionInstitucional[];
+}
+
+export interface MilestoneDispatchRecord {
+  date: string;
+  tipo: 'receso' | 'salida';
+  sentAt: string;
+  sent: number;
+  failed: number;
+  targetReps: number;
+  trigger: 'auto' | 'manual';
+}
+
+export interface MilestonePushStatusResponse {
+  targetDevices: number;
+  targetRepresentantes: number;
+  serverSchoolTime: string;
+  serverSchoolDate: string;
+  timezone: string;
+  recentHistory: MilestoneDispatchRecord[];
+}
+
 export interface RecesoInstitucional {
   idReceso: number;
   nombre: string;

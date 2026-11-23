@@ -333,6 +333,32 @@ export const pushUnsubscribeSchema = z.object({
   endpoint: z.string().url('Endpoint de suscripción push inválido').min(10),
 });
 
+export const updateHorariosConfigSchema = z
+  .object({
+    horaRecesoInicio: z.string().regex(/^\d{2}:\d{2}$/, 'Formato HH:MM requerido para inicio de receso'),
+    horaRecesoFin: z.string().regex(/^\d{2}:\d{2}$/, 'Formato HH:MM requerido para fin de receso'),
+    horaSalida: z.string().regex(/^\d{2}:\d{2}$/, 'Formato HH:MM requerido para hora de salida'),
+    alertaRecesoActiva: z.boolean(),
+    alertaSalidaActiva: z.boolean(),
+  })
+  .refine((d) => d.horaRecesoInicio < d.horaRecesoFin, {
+    message: 'La hora de fin del receso debe ser posterior a la hora de inicio.',
+    path: ['horaRecesoFin'],
+  })
+  .refine((d) => d.horaRecesoFin <= d.horaSalida, {
+    message: 'La hora oficial de salida debe ser igual o posterior al fin del receso.',
+    path: ['horaSalida'],
+  });
+
+export const triggerMilestonePushSchema = z.object({
+  tipo: z.enum(['receso', 'salida']),
+  mensajePersonalizado: z
+    .string()
+    .trim()
+    .max(240, 'El mensaje personalizado no puede exceder 240 caracteres.')
+    .optional(),
+});
+
 const emptyToUndefined = (val: unknown) =>
   typeof val === 'string' && val.trim() === '' ? undefined : val;
 
