@@ -136,14 +136,12 @@ export const estudiantes = pgTable('estudiantes', {
   cedula: text('cedula').notNull().unique(),
   nombres: text('nombres').notNull(),
   apellidos: text('apellidos').notNull(),
-  idAnoActual: integer('id_ano_actual')
-    .references(() => anosEscolares.idAno, { onDelete: 'cascade' })
-    .notNull(),
-  idSeccion: integer('id_seccion')
-    .references(() => secciones.idSeccion, { onDelete: 'set null' }),
+  idAnoActual: integer('id_ano_actual').references(() => anosEscolares.idAno, { onDelete: 'set null' }),
+  idSeccion: integer('id_seccion').references(() => secciones.idSeccion, { onDelete: 'set null' }),
   idRepresentante: integer('id_representante')
     .references(() => representantes.idRepresentante, { onDelete: 'cascade' })
     .notNull(),
+  estadoAcademico: text('estado_academico').default('ACTIVO').notNull(), // 'ACTIVO' | 'EGRESADO'
 });
 
 // 5. Asistencia: id_asistencia (PK), id_estudiante (FK), id_materia (FK), lapso_id (FK), fecha, hora_entrada, estado ('Presente', 'Tarde', 'Ausente', 'Justificado', 'Reposo Médico') + campos de justificación/auditoría
@@ -226,6 +224,16 @@ export const pushSubscriptions = pgTable('push_subscriptions', {
   lastUsed: timestamp('last_used'),
 });
 
+// 9. Calendario de Días No Laborables y Feriados: dias_no_laborables
+export const diasNoLaborables = pgTable('dias_no_laborables', {
+  id: serial('id').primaryKey(),
+  fechaInicio: text('fecha_inicio').notNull(), // Formato YYYY-MM-DD
+  fechaFin: text('fecha_fin').notNull(), // Formato YYYY-MM-DD
+  motivo: text('motivo').notNull(),
+  lapsoId: integer('lapso_id').references(() => lapsosEscolares.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
 // Relaciones Drizzle
 export const anosEscolaresRelations = relations(anosEscolares, ({ many }) => ({
   materias: many(materias),
@@ -298,6 +306,14 @@ export const estudiantesRelations = relations(estudiantes, ({ one, many }) => ({
 
 export const lapsosEscolaresRelations = relations(lapsosEscolares, ({ many }) => ({
   asistencias: many(asistencia),
+  diasNoLaborables: many(diasNoLaborables),
+}));
+
+export const diasNoLaborablesRelations = relations(diasNoLaborables, ({ one }) => ({
+  lapso: one(lapsosEscolares, {
+    fields: [diasNoLaborables.lapsoId],
+    references: [lapsosEscolares.id],
+  }),
 }));
 
 export const asistenciaRelations = relations(asistencia, ({ one }) => ({

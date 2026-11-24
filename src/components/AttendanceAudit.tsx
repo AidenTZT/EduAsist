@@ -1004,9 +1004,15 @@ export const AttendanceAudit: React.FC<AttendanceAuditProps> = ({
               <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
                 Registros Evaluados
               </p>
-              <p className="text-xl sm:text-2xl font-black text-slate-900 dark:text-[#F4F4F5] mt-1">
+              <p className="text-xl sm:text-2xl font-black text-slate-900 dark:text-[#F4F4F5] mt-1 tabular-nums">
                 {totalRecords}
               </p>
+              {summary.diasHabiles !== undefined && (
+                <p className="text-[10px] font-mono text-slate-500 dark:text-zinc-400 mt-1 tabular-nums">
+                  {summary.diasHabiles} días hábiles
+                  {summary.diasNoLaborablesExcluidos ? ` (${summary.diasNoLaborablesExcluidos} fer. excl.)` : ''}
+                </p>
+              )}
             </div>
 
             <div className="bg-emerald-50/70 dark:bg-emerald-950/30 p-3.5 rounded-2xl border border-emerald-200/80 dark:border-emerald-800/60 shadow-2xs">
@@ -1119,11 +1125,18 @@ export const AttendanceAudit: React.FC<AttendanceAuditProps> = ({
                           {lb.porcentajeAsistencia}%
                         </span>
                       </div>
-                      <p className="text-[10px] font-mono text-slate-500 dark:text-slate-400 mb-2">
-                        {lb.fechaInicio && lb.fechaFin
-                          ? `${formatDateEs(lb.fechaInicio)} — ${formatDateEs(lb.fechaFin)}`
-                          : 'Fuera de rango de lapso'}
-                      </p>
+                      <div className="flex items-center justify-between gap-2 text-[10px] font-mono text-slate-500 dark:text-slate-400 mb-2 tabular-nums">
+                        <span>
+                          {lb.fechaInicio && lb.fechaFin
+                            ? `${formatDateEs(lb.fechaInicio)} — ${formatDateEs(lb.fechaFin)}`
+                            : 'Fuera de rango de lapso'}
+                        </span>
+                        {lb.diasHabiles !== undefined && (
+                          <span className="font-sans font-semibold text-slate-600 dark:text-zinc-300 shrink-0">
+                            {lb.diasHabiles} días hábiles
+                          </span>
+                        )}
+                      </div>
                       <div className="grid grid-cols-4 gap-1 text-center text-[10px]">
                         <div className="bg-white dark:bg-[#121212] rounded-lg py-1 border border-slate-200/70 dark:border-[#27272A]">
                           <div className="font-bold text-emerald-600 dark:text-emerald-400">

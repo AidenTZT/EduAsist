@@ -175,14 +175,17 @@ export interface Representante {
   activo?: boolean;
 }
 
+export type EstadoAcademicoEstudiante = 'ACTIVO' | 'EGRESADO';
+
 export interface Estudiante {
   idEstudiante: number;
   cedula: string;
   nombres: string;
   apellidos: string;
-  idAnoActual: number;
+  idAnoActual: number | null;
   idSeccion?: number | null;
   idRepresentante: number;
+  estadoAcademico?: EstadoAcademicoEstudiante;
   nombreNivel?: string;
   nombreSeccion?: string | null;
   representanteNombres?: string;
@@ -190,6 +193,41 @@ export interface Estudiante {
   representanteCedula?: string;
   representanteTelefono?: string | null;
   representanteEmail?: string;
+}
+
+export interface DiaNoLaborable {
+  id: number;
+  fechaInicio: string; // YYYY-MM-DD
+  fechaFin: string; // YYYY-MM-DD
+  motivo: string;
+  lapsoId?: number | null;
+  lapsoNombre?: string | null;
+  createdAt?: string | null;
+}
+
+export interface VerificarDiaNoLaborableResult {
+  fecha: string;
+  esNoLaborable: boolean;
+  esFinDeSemana: boolean;
+  motivo: string | null;
+  registro?: DiaNoLaborable | null;
+}
+
+export interface PromocionMasivaPayload {
+  anioOrigenId: number;
+  seccionOrigenId?: number | null;
+  anioDestinoId: number | 'EGRESADO';
+  seccionDestinoId?: number | null;
+  estudiantesIds: number[];
+}
+
+export interface PromocionMasivaResult {
+  success: boolean;
+  promovidosCount: number;
+  estadoDestino: EstadoAcademicoEstudiante;
+  destinoLabel: string;
+  estudiantesPromovidos: number[];
+  message: string;
 }
 
 export interface RegistroAsistencia {
@@ -233,8 +271,9 @@ export interface PortalRepresentanteData {
     cedula: string;
     nombres: string;
     apellidos: string;
-    idAnoActual: number;
+    idAnoActual: number | null;
     idSeccion?: number | null;
+    estadoAcademico?: EstadoAcademicoEstudiante;
     nombreNivel: string;
     nombreSeccion?: string | null;
     horarios?: Horario[];
@@ -330,6 +369,8 @@ export interface AttendanceSummaryStats {
   ausentes: number;
   justificadosYReposos: number;
   porcentajeAsistencia: number;
+  diasHabiles?: number;
+  diasNoLaborablesExcluidos?: number;
 }
 
 export interface LapsoBreakdownStats extends AttendanceSummaryStats {

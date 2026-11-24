@@ -14,6 +14,7 @@ import {
   Lock,
   ShieldCheck,
   CalendarRange,
+  CalendarOff,
 } from 'lucide-react';
 import type {
   AnoEscolar,
@@ -27,6 +28,7 @@ import type {
   LapsoEscolar,
   InstitutionalConfigSummary,
   RecesoInstitucional,
+  VerificarDiaNoLaborableResult,
 } from '../types.ts';
 import {
   fetchAsistencia,
@@ -34,6 +36,7 @@ import {
   submitAsistenciaBatch,
   fetchConfiguracion,
   fetchRecesos,
+  verificarDiaNoLaborable,
 } from '../lib/api.ts';
 import { formatCedula, sortStudentsByCedula, getLocalTodayDateString } from '../lib/utils.ts';
 import { SchoolScheduleStatusBanner } from './SchoolScheduleStatusBanner.tsx';
@@ -112,6 +115,7 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
   const [activeLapso, setActiveLapso] = useState<LapsoEscolar | null>(null);
   const [instConfig, setInstConfig] = useState<InstitutionalConfigSummary | null>(null);
   const [recesos, setRecesos] = useState<RecesoInstitucional[]>([]);
+  const [nonWorkingDay, setNonWorkingDay] = useState<VerificarDiaNoLaborableResult | null>(null);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -128,6 +132,26 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
       })
       .catch(() => {});
   }, [currentUser?.id]);
+
+  useEffect(() => {
+    if (!currentUser || !fecha || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
+      setNonWorkingDay(null);
+      return;
+    }
+    let mounted = true;
+    verificarDiaNoLaborable(fecha)
+      .then((res) => {
+        if (mounted) setNonWorkingDay(res);
+      })
+      .catch(() => {
+        if (mounted) setNonWorkingDay(null);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [fecha, currentUser?.id]);
+
+  const isNonWorkingDay = Boolean(nonWorkingDay?.esNoLaborable);
 
   const detectedFechaLapso =
     lapsos.find((l) => fecha >= l.fechaInicio && fecha <= l.fechaFin) || activeLapso;
@@ -291,6 +315,7 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
   }, [sortedStudents.length, focusedIndex]);
 
   const handleStatusChange = (idEstudiante: number, estado: EstadoAsistencia) => {
+    if (isNonWorkingDay) return;
     if (attendanceMap[idEstudiante]?.lockedByCoordination) {
       return;
     }
@@ -310,6 +335,7 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
   };
 
   const handleCycleStatus = (idEstudiante: number) => {
+    if (isNonWorkingDay) return;
     const current = attendanceMap[idEstudiante];
     if (current?.lockedByCoordination) {
       return;
@@ -324,6 +350,7 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
   };
 
   const handleMarkAll = (estado: EstadoAsistencia) => {
+    if (isNonWorkingDay) return;
     if (isDocente && (estado === 'Justificado' || estado === 'Reposo Médico')) {
       return;
     }
@@ -344,6 +371,13 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
   };
 
   const handleSaveAttendance = async () => {
+    if (isNonWorkingDay) {
+      setStatusMessage({
+        type: 'error',
+        text: `Sin actividades escolares: ${nonWorkingDay?.motivo || 'Día no laborable'}`,
+      });
+      return;
+    }
     if (!selectedMateriaId) {
       setStatusMessage({ type: 'error', text: 'Seleccione una materia válida' });
       return;
@@ -470,15 +504,19 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
           <div className="flex flex-wrap items-center gap-2">
 
             <button
+              type="button"
               onClick={() => handleMarkAll('Presente')}
-              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 border border-emerald-200 dark:border-emerald-800 transition-colors flex items-center space-x-1 cursor-pointer"
+              disabled={isNonWorkingDay}
+              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 border border-emerald-200 dark:border-emerald-800 transition-colors flex items-center space-x-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <CheckCircle2 className="w-3.5 h-3.5" />
               <span>Todos Presentes</span>
             </button>
             <button
+              type="button"
               onClick={() => handleMarkAll('Ausente')}
-              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/50 border border-rose-200 dark:border-rose-800 transition-colors flex items-center space-x-1 cursor-pointer"
+              disabled={isNonWorkingDay}
+              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/50 border border-rose-200 dark:border-rose-800 transition-colors flex items-center space-x-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <XCircle className="w-3.5 h-3.5" />
               <span>Todos Ausentes</span>
@@ -602,6 +640,23 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
         )
       )}
 
+      {/* Non-working day / Holiday Lock Banner */}
+      {isNonWorkingDay && (
+        <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200 flex items-start gap-3">
+          <div className="p-2 rounded-xl bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300 shrink-0">
+            <CalendarOff className="w-5 h-5" />
+          </div>
+          <div className="space-y-0.5">
+            <p className="text-sm font-bold">
+              Sin actividades escolares: {nonWorkingDay?.motivo || 'Día no laborable'}
+            </p>
+            <p className="text-xs text-amber-800/90 dark:text-amber-300/90">
+              El pase de asistencia y las alertas automáticas permanecen deshabilitados para la fecha seleccionada ({fecha}). Seleccione un día hábil para registrar asistencia.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Status Alert Banner */}
       {statusMessage && (
         <div
@@ -709,6 +764,7 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
             </div>
           </div>
 
+          <div className={isNonWorkingDay ? 'pointer-events-none opacity-55 select-none space-y-4' : 'space-y-4'}>
           {/* 1. VISTA TARJETAS RÁPIDAS (Tap-to-Cycle anti-aglomeración) */}
           {viewMode === 'cards' && (
             <QuickCardsView
@@ -847,6 +903,7 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
               </div>
             </div>
           )}
+          </div>
         </div>
       )}
 
@@ -882,8 +939,8 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
         <button
           type="button"
           onClick={handleSaveAttendance}
-          disabled={saving || sortedStudents.length === 0}
-          className="w-full sm:w-auto min-h-[44px] px-5 py-2.5 rounded-xl font-bold text-xs sm:text-sm bg-indigo-600 hover:bg-indigo-500 active:scale-[0.99] transition-all shadow-md shadow-indigo-900/50 flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer whitespace-nowrap shrink-0"
+          disabled={saving || sortedStudents.length === 0 || isNonWorkingDay}
+          className="w-full sm:w-auto min-h-[44px] px-5 py-2.5 rounded-xl font-bold text-xs sm:text-sm bg-indigo-600 hover:bg-indigo-500 active:scale-[0.99] transition-all shadow-md shadow-indigo-900/50 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer whitespace-nowrap shrink-0"
         >
           {saving ? (
             <>

@@ -36,6 +36,10 @@ import {
   pushUnsubscribeSchema,
   updateHorariosConfigSchema,
   triggerMilestonePushSchema,
+  promoverEstudiantesSchema,
+  createDiaNoLaborableSchema,
+  verificarFechaQuerySchema,
+  testPushLoadSchema,
 } from './validation.ts';
 import type { EstadoAsistencia } from '../types.ts';
 import {
@@ -43,14 +47,25 @@ import {
   dispatchAttendancePushNotificationsDirect,
   dispatchDeparturePushNotificationsDirect,
   sendTestPushToSubscriptions,
+  testPushLoad,
+  type PushAuditAuthor,
 } from './pushService.ts';
 import {
   getSchoolClockInTimezone,
   triggerMilestonePush,
+  enqueueManualMilestonePush,
   startInstitutionalMilestoneScheduler,
 } from './scheduleNotifier.ts';
 
 export { startInstitutionalMilestoneScheduler };
+
+function enqueueDetachedPushJob(label: string, job: () => Promise<void>): void {
+  setImmediate(() => {
+    void job().catch((err) => {
+      console.warn(`[WebPush] Error aislado en tarea asíncrona (${label}):`, err);
+    });
+  });
+}
 
 export const apiRouter = express.Router();
 export const schoolApp = express();
@@ -531,14 +546,18 @@ function hhmmToMinutes(hhmm: string): number {
 async function executeSalidaPushNotification(
   idSalida: number,
   motivo: 'auto' | 'manual',
-  clockOverride?: { todayYmd: string; currentHhmm: string }
+  clockOverride?: { todayYmd: string; currentHhmm: string },
+  author?: PushAuditAuthor,
+  preloadedPayload?: Awaited<ReturnType<typeof db.getSalidasPushDispatchPayload>>
 ) {
   const clock = clockOverride || getSchoolZonedClock();
-  const payload = await db.getSalidasPushDispatchPayload(idSalida);
+  const payload = preloadedPayload || (await db.getSalidasPushDispatchPayload(idSalida));
 
   let sent = 0;
   let failed = 0;
   let expiredRemoved = 0;
+  let fallidosRed = 0;
+  let duracionMs = 0;
   let lastError: string | undefined;
 
   if (payload.subscriptions.length > 0 && payload.targets.length > 0) {
@@ -552,14 +571,14 @@ async function executeSalidaPushNotification(
       motivo,
       targets: payload.targets,
       subscriptions: payload.subscriptions,
+      author,
     });
     sent = pushRes.sent;
     failed = pushRes.failed;
+    expiredRemoved = pushRes.metrics.eliminados410;
+    fallidosRed = pushRes.metrics.fallidosRed;
+    duracionMs = pushRes.metrics.duracionMs;
     lastError = pushRes.lastError;
-    if (pushRes.expiredEndpoints.length > 0) {
-      expiredRemoved = pushRes.expiredEndpoints.length;
-      await db.deletePushSubscriptionsByEndpoints(pushRes.expiredEndpoints);
-    }
   }
 
   await db.markSalidaNotified(payload.salida.idSalida, clock.todayYmd, clock.currentHhmm);
@@ -575,6 +594,8 @@ async function executeSalidaPushNotification(
     totalDispositivos: payload.subscriptions.length,
     totalRepresentantes: payload.targets.length,
     expiredRemoved,
+    fallidosRed,
+    duracionMs,
     lastError,
   };
 }
@@ -592,6 +613,9 @@ export function startSalidaNotificationScheduler(): void {
       const clock = getSchoolZonedClock();
       if (!clock.isWeekday) return;
 
+      const nonWorkingCheck = await db.verificarDiaNoLaborable(clock.todayYmd);
+      if (nonWorkingCheck.esNoLaborable) return;
+
       const activeSalidas = await db.getSalidas(true);
       for (const s of activeSalidas) {
         if (!s.notificarPush) continue;
@@ -600,7 +624,10 @@ export function startSalidaNotificationScheduler(): void {
         const salidaMins = hhmmToMinutes(s.horaSalida);
         // Ventana de 15 minutos tras la hora configurada para emitir la alerta automática una sola vez al día
         if (clock.currentMins >= salidaMins && clock.currentMins <= salidaMins + 15) {
-          const result = await executeSalidaPushNotification(s.idSalida, 'auto', clock);
+          const result = await executeSalidaPushNotification(s.idSalida, 'auto', clock, {
+            emailOCedula: 'sistema@eduasist.edu',
+            rol: 'sistema',
+          });
           await db.logAuditEvent({
             emailOCedula: 'sistema@eduasist.edu',
             rol: 'sistema',
@@ -611,9 +638,11 @@ export function startSalidaNotificationScheduler(): void {
               nombre: s.nombre,
               horaSalida: s.horaSalida,
               fecha: clock.todayYmd,
-              sent: result.sent,
-              failed: result.failed,
-              totalDispositivos: result.totalDispositivos,
+              totalObjetivos: result.totalDispositivos,
+              enviadosExitosos: result.sent,
+              eliminados410: result.expiredRemoved,
+              fallidosRed: result.fallidosRed,
+              duracionMs: result.duracionMs,
             },
           });
         }
@@ -751,35 +780,72 @@ apiRouter.post(
         return res.status(400).json({ error: 'ID de hora de salida inválido.' });
       }
 
-      const result = await executeSalidaPushNotification(idSalida, 'manual');
+      const clock = getSchoolZonedClock();
+      const author = getAuditAuthorFromReq(req);
+      const payload = await db.getSalidasPushDispatchPayload(idSalida);
 
-      await db.logAuditEvent({
-        ...getAuditAuthorFromReq(req),
-        accion: 'SALIDA_PUSH_MANUAL_ENVIADA',
-        entidad: 'salidas_institucionales',
-        idEntidad: idSalida,
-        detalles: {
-          nombre: result.salida.nombre,
-          horaSalida: result.salida.horaSalida,
-          alcance: result.salida.nombreNivel,
-          sent: result.sent,
-          failed: result.failed,
-          totalDispositivos: result.totalDispositivos,
-          totalRepresentantes: result.totalRepresentantes,
-        },
+      if (payload.subscriptions.length === 0 || payload.targets.length === 0) {
+        await db.markSalidaNotified(payload.salida.idSalida, clock.todayYmd, clock.currentHhmm);
+        return res.json({
+          success: true,
+          queued: false,
+          salida: {
+            ...payload.salida,
+            ultimaNotificacionFecha: clock.todayYmd,
+            ultimaNotificacionHora: clock.currentHhmm,
+          },
+          sent: 0,
+          failed: 0,
+          totalDispositivos: 0,
+          totalRepresentantes: payload.targets.length,
+          expiredRemoved: 0,
+          mensaje: `Hora de salida (${payload.salida.horaSalida}) registrada. No hay dispositivos de representantes suscritos a alertas push para este alcance.`,
+        });
+      }
+
+      // Marcar fecha/hora de despacho y ejecutar el envío masivo por lotes de forma desacoplada
+      await db.markSalidaNotified(payload.salida.idSalida, clock.todayYmd, clock.currentHhmm);
+      enqueueDetachedPushJob(`salida_manual_${idSalida}`, async () => {
+        const result = await executeSalidaPushNotification(
+          idSalida,
+          'manual',
+          clock,
+          author,
+          payload
+        );
+        await db.logAuditEvent({
+          ...author,
+          accion: 'SALIDA_PUSH_MANUAL_ENVIADA',
+          entidad: 'salidas_institucionales',
+          idEntidad: idSalida,
+          detalles: {
+            nombre: result.salida.nombre,
+            horaSalida: result.salida.horaSalida,
+            alcance: result.salida.nombreNivel,
+            totalObjetivos: result.totalDispositivos,
+            enviadosExitosos: result.sent,
+            eliminados410: result.expiredRemoved,
+            fallidosRed: result.fallidosRed,
+            duracionMs: result.duracionMs,
+            totalRepresentantes: result.totalRepresentantes,
+          },
+        });
       });
 
-      const mensaje =
-        result.totalDispositivos === 0
-          ? `Hora de salida (${result.salida.horaSalida}) registrada. No hay dispositivos de representantes suscritos a alertas push para este alcance.`
-          : result.sent > 0
-          ? `Alerta de salida enviada por Web Push a ${result.sent} dispositivo(s) de representantes.`
-          : `No se pudo entregar la notificación push (${result.lastError || 'verifique dispositivos suscritos'}).`;
-
-      res.json({
+      res.status(202).json({
         success: true,
-        ...result,
-        mensaje,
+        queued: true,
+        salida: {
+          ...payload.salida,
+          ultimaNotificacionFecha: clock.todayYmd,
+          ultimaNotificacionHora: clock.currentHhmm,
+        },
+        sent: 0,
+        failed: 0,
+        totalDispositivos: payload.subscriptions.length,
+        totalRepresentantes: payload.targets.length,
+        expiredRemoved: 0,
+        mensaje: `Alerta de salida encolada en segundo plano para ${payload.subscriptions.length} dispositivo(s) de ${payload.targets.length} representante(s).`,
       });
     } catch (e: any) {
       res.status(400).json({ error: e.message || 'Error al enviar notificación de hora de salida.' });
@@ -1470,6 +1536,118 @@ apiRouter.delete(
   }
 );
 
+apiRouter.post(
+  '/estudiantes/promover',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  validateBody(promoverEstudiantesSchema),
+  async (req: Request, res: Response) => {
+    try {
+      const result = await db.promoverEstudiantesMasivo(req.body);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'PROMOCION_MASIVA_ESTUDIANTES',
+        entidad: 'estudiantes',
+        idEntidad: String(req.body.anioDestinoId),
+        detalles: {
+          anioOrigenId: req.body.anioOrigenId,
+          seccionOrigenId: req.body.seccionOrigenId ?? null,
+          anioDestinoId: req.body.anioDestinoId,
+          seccionDestinoId: req.body.seccionDestinoId ?? null,
+          promovidosCount: result.promovidosCount,
+          estadoDestino: result.estadoDestino,
+          destinoLabel: result.destinoLabel,
+          estudiantesIds: result.estudiantesPromovidos,
+        },
+      });
+      res.json(result);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// 4.1 CALENDARIO DE DÍAS NO LABORABLES Y FERIADOS
+// ---------------------------------------------------------------------------
+apiRouter.get('/calendario/no-laborables', requireAuth, async (_req: Request, res: Response) => {
+  try {
+    res.json(await db.getDiasNoLaborables());
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+apiRouter.post(
+  '/calendario/no-laborables',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  validateBody(createDiaNoLaborableSchema),
+  async (req: Request, res: Response) => {
+    try {
+      const created = await db.createDiaNoLaborable(req.body);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'DIA_NO_LABORABLE_CREADO',
+        entidad: 'dias_no_laborables',
+        idEntidad: created.id,
+        detalles: {
+          fechaInicio: created.fechaInicio,
+          fechaFin: created.fechaFin,
+          motivo: created.motivo,
+          lapsoId: created.lapsoId ?? null,
+        },
+      });
+      res.status(201).json(created);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.delete(
+  '/calendario/no-laborables/:id',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (req: Request, res: Response) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ error: 'ID de registro inválido.' });
+      }
+      const removed = await db.deleteDiaNoLaborable(id);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'DIA_NO_LABORABLE_ELIMINADO',
+        entidad: 'dias_no_laborables',
+        idEntidad: id,
+        detalles: {
+          fechaInicio: removed.fechaInicio,
+          fechaFin: removed.fechaFin,
+          motivo: removed.motivo,
+        },
+      });
+      res.json({ success: true, removed });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.get(
+  '/calendario/verificar',
+  requireAuth,
+  validateQuery(verificarFechaQuerySchema),
+  async (_req: Request, res: Response) => {
+    try {
+      const { fecha } = res.locals.validatedQuery as { fecha: string };
+      res.json(await db.verificarDiaNoLaborable(fecha));
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
 // ---------------------------------------------------------------------------
 // 5. ASISTENCIA & PORTAL REPRESENTANTE
 // ---------------------------------------------------------------------------
@@ -1542,6 +1720,15 @@ apiRouter.get(
 const handleRegistrarAsistenciaBatch = async (req: Request, res: Response) => {
   try {
     const { idMateria, fecha, records } = req.body;
+    const nonWorkingCheck = await db.verificarDiaNoLaborable(fecha);
+    if (nonWorkingCheck.esNoLaborable) {
+      return res.status(400).json({
+        error: `Sin actividades escolares: ${nonWorkingCheck.motivo}`,
+        code: 'NON_WORKING_DAY',
+        check: nonWorkingCheck,
+      });
+    }
+
     const ownership = await validateDocenteOwnership(req, Number(idMateria));
     if (!ownership.allowed) {
       return res.status(403).json({ error: ownership.reason });
@@ -1618,23 +1805,22 @@ const handleRegistrarAsistenciaBatch = async (req: Request, res: Response) => {
       },
     });
 
-    // Despacho asíncrono de notificaciones Web Push a representantes suscritos
-    db.getPushDispatchPayloadForBatch(Number(idMateria), saved)
-      .then(async (payload) => {
-        if (payload.subscriptions.length > 0 && payload.records.length > 0) {
-          const pushRes = await dispatchAttendancePushNotificationsDirect({
-            idMateria: payload.idMateria,
-            nombreMateria: payload.nombreMateria,
-            fecha,
-            records: payload.records,
-            subscriptions: payload.subscriptions,
-          });
-          if (pushRes.expiredEndpoints.length > 0) {
-            await db.deletePushSubscriptionsByEndpoints(pushRes.expiredEndpoints);
-          }
-        }
-      })
-      .catch((err) => console.warn('[WebPush] Error en despacho automático de asistencia:', err));
+    // Despacho asíncrono desacoplado de notificaciones Web Push en lotes controlados
+    const author = getAuditAuthorFromReq(req);
+    enqueueDetachedPushJob(`asistencia_batch_${idMateria}`, async () => {
+      const payload = await db.getPushDispatchPayloadForBatch(Number(idMateria), saved);
+      if (payload.subscriptions.length > 0 && payload.records.length > 0) {
+        await dispatchAttendancePushNotificationsDirect({
+          idMateria: payload.idMateria,
+          nombreMateria: payload.nombreMateria,
+          fecha,
+          records: payload.records,
+          subscriptions: payload.subscriptions,
+          author,
+          context: 'asistencia_batch',
+        });
+      }
+    });
 
     res.json({ success: true, count: saved.length });
   } catch (e: any) {
@@ -1712,25 +1898,24 @@ const handleUpdateAsistenciaJustificacion = async (req: Request, res: Response) 
       },
     });
 
-    // Notificar al representante sobre la validación / actualización del registro de asistencia
-    db.getPushDispatchPayloadForBatch(updated.registro.idMateria, [updated.registro])
-      .then(async (payload) => {
-        if (payload.subscriptions.length > 0 && payload.records.length > 0) {
-          const pushRes = await dispatchAttendancePushNotificationsDirect({
-            idMateria: payload.idMateria,
-            nombreMateria: payload.nombreMateria,
-            fecha: updated.registro.fecha,
-            records: payload.records,
-            subscriptions: payload.subscriptions,
-          });
-          if (pushRes.expiredEndpoints.length > 0) {
-            await db.deletePushSubscriptionsByEndpoints(pushRes.expiredEndpoints);
-          }
-        }
-      })
-      .catch((err) =>
-        console.warn('[WebPush] Error al notificar actualización de justificación:', err)
-      );
+    // Notificar al representante de forma asíncrona desacoplada
+    const author = getAuditAuthorFromReq(req);
+    enqueueDetachedPushJob(`asistencia_justificacion_${idAsistencia}`, async () => {
+      const payload = await db.getPushDispatchPayloadForBatch(updated.registro.idMateria, [
+        updated.registro,
+      ]);
+      if (payload.subscriptions.length > 0 && payload.records.length > 0) {
+        await dispatchAttendancePushNotificationsDirect({
+          idMateria: payload.idMateria,
+          nombreMateria: payload.nombreMateria,
+          fecha: updated.registro.fecha,
+          records: payload.records,
+          subscriptions: payload.subscriptions,
+          author,
+          context: 'asistencia_justificacion',
+        });
+      }
+    });
 
     res.json({
       success: true,
@@ -2109,17 +2294,14 @@ apiRouter.post('/push/test', requireAuth, async (req: Request, res: Response) =>
     }
 
     const repNombre = `${req.representante.nombres} ${req.representante.apellidos}`.trim();
-    const result = await sendTestPushToSubscriptions(subs, repNombre);
-    if (result.expiredEndpoints.length > 0) {
-      await db.deletePushSubscriptionsByEndpoints(result.expiredEndpoints);
-    }
+    const result = await sendTestPushToSubscriptions(subs, repNombre, getAuditAuthorFromReq(req));
 
     res.json({
       success: result.sent > 0,
       sent: result.sent,
       failed: result.failed,
       totalDevices: subs.length,
-      expiredRemoved: result.expiredEndpoints.length,
+      expiredRemoved: result.metrics.eliminados410,
       message:
         result.sent > 0
           ? `Notificación de prueba enviada a ${result.sent} dispositivo(s).`
@@ -2166,14 +2348,51 @@ apiRouter.post(
         tipo: 'receso' | 'salida';
         mensajePersonalizado?: string;
       };
-      const result = await triggerMilestonePush(tipo, {
-        trigger: 'manual',
+      const result = await enqueueManualMilestonePush(tipo, {
         mensajePersonalizado,
         author: getAuditAuthorFromReq(req),
       });
-      res.json(result);
+      res.status(result.queued ? 202 : 200).json(result);
     } catch (e: any) {
       res.status(400).json({ error: e.message || 'Error al disparar notificación de hito.' });
+    }
+  }
+);
+
+apiRouter.post(
+  '/push/test-load',
+  requireAuth,
+  requireRole('director'),
+  validateBody(testPushLoadSchema),
+  async (req: Request, res: Response) => {
+    try {
+      const { totalObjetivos, chunkSize, chunkDelayMs } = (req.body || {}) as {
+        totalObjetivos?: number;
+        chunkSize?: number;
+        chunkDelayMs?: number;
+      };
+      const report = await testPushLoad({
+        totalObjetivos: totalObjetivos ?? 3000,
+        chunkSize: chunkSize ?? 35,
+        chunkDelayMs: chunkDelayMs ?? 75,
+      });
+
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'PUSH_TEST_CARGA_SIMULADA',
+        entidad: 'push_notifications',
+        idEntidad: 'testPushLoad',
+        detalles: {
+          ...report.metricasDespacho,
+          heapUsedAntesMB: report.memoriaRAM.heapUsedAntesMB,
+          heapUsedDespuesMB: report.memoriaRAM.heapUsedDespuesMB,
+          excepcionesNoCapturadas: report.estabilidad.excepcionesNoCapturadas,
+        },
+      });
+
+      res.json(report);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || 'Error ejecutando prueba de carga simulada.' });
     }
   }
 );

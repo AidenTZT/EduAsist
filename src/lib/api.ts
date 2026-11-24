@@ -24,6 +24,10 @@ import type {
   LapsoEscolar,
   InstitutionalConfigSummary,
   MilestonePushStatusResponse,
+  DiaNoLaborable,
+  VerificarDiaNoLaborableResult,
+  PromocionMasivaPayload,
+  PromocionMasivaResult,
 } from '../types.ts';
 
 export type { InstitutionalConfigSummary, MilestonePushStatusResponse };
@@ -303,6 +307,7 @@ export async function deleteSalida(idSalida: number): Promise<void> {
 
 export async function notifySalidaPush(idSalida: number): Promise<{
   success: boolean;
+  queued?: boolean;
   sent: number;
   failed: number;
   totalDispositivos: number;
@@ -885,6 +890,7 @@ export async function triggerMilestonePush(data: {
   mensajePersonalizado?: string;
 }): Promise<{
   success: boolean;
+  queued?: boolean;
   tipo: 'receso' | 'salida';
   trigger: 'auto' | 'manual';
   date: string;
@@ -900,4 +906,47 @@ export async function triggerMilestonePush(data: {
     method: 'POST',
     body: JSON.stringify(data),
   });
+}
+
+// -------------------------------------------------------------
+// 9. PROMOCIÓN MASIVA DE ESTUDIANTES
+// -------------------------------------------------------------
+export async function promoverEstudiantes(
+  payload: PromocionMasivaPayload
+): Promise<PromocionMasivaResult> {
+  return apiFetch('/estudiantes/promover', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+// -------------------------------------------------------------
+// 10. CALENDARIO DE DÍAS NO LABORABLES Y FERIADOS
+// -------------------------------------------------------------
+export async function fetchDiasNoLaborables(): Promise<DiaNoLaborable[]> {
+  return apiFetch('/calendario/no-laborables');
+}
+
+export async function createDiaNoLaborable(data: {
+  fechaInicio: string;
+  fechaFin: string;
+  motivo: string;
+  lapsoId?: number | null;
+}): Promise<DiaNoLaborable> {
+  return apiFetch('/calendario/no-laborables', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteDiaNoLaborable(id: number): Promise<{ success: boolean }> {
+  return apiFetch(`/calendario/no-laborables/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function verificarDiaNoLaborable(
+  fecha: string
+): Promise<VerificarDiaNoLaborableResult> {
+  return apiFetch(`/calendario/verificar${buildQuery({ fecha })}`);
 }

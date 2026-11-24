@@ -137,8 +137,13 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
       generateStudentAttendancePDF({
         estudiante: st,
         representante: rep,
-        nombreAno: ano ? ano.nombreNivel : st.nombreNivel || 'Año Escolar',
-        nombreSeccion: sec ? sec.nombreSeccion : st.nombreSeccion || 'A',
+        nombreAno:
+          st.estadoAcademico === 'EGRESADO'
+            ? 'Egresado'
+            : ano
+            ? ano.nombreNivel
+            : st.nombreNivel || 'Año Escolar',
+        nombreSeccion: st.estadoAcademico === 'EGRESADO' ? '--' : sec ? sec.nombreSeccion : st.nombreSeccion || 'A',
         registros: records,
         config: {
           nombrePlantel: cfg.nombreInstitucion,
@@ -232,7 +237,7 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
         cedula: student.cedula,
         nombres: student.nombres,
         apellidos: student.apellidos,
-        idAnoActual: student.idAnoActual,
+        idAnoActual: student.idAnoActual ?? (anos[0]?.idAno || 1),
         idSeccion: student.idSeccion || secciones[0]?.idSeccion || 1,
         idRepresentante: student.idRepresentante,
       });
@@ -429,7 +434,12 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
   const sortedStudents = sortStudentsByCedula(estudiantes);
 
   const filteredStudents = sortedStudents.filter((st) => {
-    const matchesAno = filterAnoId === 0 || st.idAnoActual === filterAnoId;
+    const matchesAno =
+      filterAnoId === 0
+        ? true
+        : filterAnoId === -1
+        ? st.estadoAcademico === 'EGRESADO'
+        : st.estadoAcademico !== 'EGRESADO' && st.idAnoActual === filterAnoId;
     const matchesSec = filterSeccionId === 0 || st.idSeccion === filterSeccionId;
     const term = searchTerm.toLowerCase();
     const fullName = `${st.nombres} ${st.apellidos}`.toLowerCase();
@@ -559,6 +569,7 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
                       {ano.nombreNivel}
                     </option>
                   ))}
+                  <option value={-1}>Egresados</option>
                 </select>
               </div>
 
@@ -655,12 +666,20 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
 
                   {/* Nivel & Sección Badges */}
                   <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-100 dark:border-[#27272A]/70 text-xs">
-                    <span className="px-2.5 py-1 rounded-lg font-semibold bg-slate-100 dark:bg-[#181818] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-[#27272A]">
-                      {st.nombreNivel}
-                    </span>
-                    <span className="px-2.5 py-1 rounded-lg font-mono font-bold bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-100 dark:border-indigo-900/60">
-                      {st.nombreSeccion ? `Sección ${st.nombreSeccion}` : 'Sin Sección'}
-                    </span>
+                    {st.estadoAcademico === 'EGRESADO' ? (
+                      <span className="px-2.5 py-1 rounded-lg font-bold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                        Egresado
+                      </span>
+                    ) : (
+                      <>
+                        <span className="px-2.5 py-1 rounded-lg font-semibold bg-slate-100 dark:bg-[#181818] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-[#27272A]">
+                          {st.nombreNivel}
+                        </span>
+                        <span className="px-2.5 py-1 rounded-lg font-mono font-bold bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-100 dark:border-indigo-900/60">
+                          {st.nombreSeccion ? `Sección ${st.nombreSeccion}` : 'Sin Sección'}
+                        </span>
+                      </>
+                    )}
                   </div>
 
                   {/* Legal Guardian Info */}
@@ -788,11 +807,21 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
                           </div>
                         </td>
                         <td className="py-3 px-4 text-xs font-semibold text-slate-700 dark:text-slate-300">
-                          {st.nombreNivel}
+                          {st.estadoAcademico === 'EGRESADO' ? (
+                            <span className="inline-block px-2.5 py-0.5 rounded-md font-bold text-xs bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                              Egresado
+                            </span>
+                          ) : (
+                            st.nombreNivel
+                          )}
                         </td>
                         <td className="py-3 px-4 text-center">
                           <span className="inline-block px-2.5 py-0.5 rounded-md font-mono font-bold text-xs bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-100 dark:border-indigo-900/60">
-                            {st.nombreSeccion ? `Sec. ${st.nombreSeccion}` : 'Sin Sección'}
+                            {st.estadoAcademico === 'EGRESADO'
+                              ? '--'
+                              : st.nombreSeccion
+                              ? `Sec. ${st.nombreSeccion}`
+                              : 'Sin Sección'}
                           </span>
                         </td>
                         <td className="py-3 px-4">

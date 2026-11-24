@@ -106,6 +106,7 @@ export async function triggerMilestonePush(
   targetRepresentantes: number;
   targetDevices: number;
   expiredRemoved: number;
+  duracionMs: number;
   message: string;
 }> {
   const clock = getSchoolClockInTimezone();
@@ -117,6 +118,8 @@ export async function triggerMilestonePush(
   let sent = 0;
   let failed = 0;
   let expiredRemoved = 0;
+  let fallidosRed = 0;
+  let duracionMs = 0;
 
   if (targets.subscriptions.length > 0) {
     const dispatchRes = await dispatchMilestonePushNotifications({
@@ -126,14 +129,15 @@ export async function triggerMilestonePush(
       horaRecesoFin: config.horaRecesoFin,
       horaSalida: config.horaSalida,
       mensajePersonalizado: options.mensajePersonalizado,
+      trigger: options.trigger,
       subscriptions: targets.subscriptions,
+      author: options.author,
     });
     sent = dispatchRes.sent;
     failed = dispatchRes.failed;
-    if (dispatchRes.expiredEndpoints.length > 0) {
-      await db.deletePushSubscriptionsByEndpoints(dispatchRes.expiredEndpoints);
-      expiredRemoved = dispatchRes.expiredEndpoints.length;
-    }
+    expiredRemoved = dispatchRes.metrics.eliminados410;
+    fallidosRed = dispatchRes.metrics.fallidosRed;
+    duracionMs = dispatchRes.metrics.duracionMs;
   }
 
   const sentAt = new Date().toISOString();
@@ -168,10 +172,11 @@ export async function triggerMilestonePush(
       trigger: options.trigger,
       horaConfigurada: tipo === 'receso' ? config.horaRecesoInicio : config.horaSalida,
       targetRepresentantes: targets.targetRepresentantes,
-      targetDevices: targets.targetDevices,
-      sent,
-      failed,
-      expiredRemoved,
+      totalObjetivos: targets.targetDevices,
+      enviadosExitosos: sent,
+      eliminados410: expiredRemoved,
+      fallidosRed,
+      duracionMs,
     },
   });
 
@@ -194,7 +199,77 @@ export async function triggerMilestonePush(
     targetRepresentantes: targets.targetRepresentantes,
     targetDevices: targets.targetDevices,
     expiredRemoved,
+    duracionMs,
     message,
+  };
+}
+
+export async function enqueueManualMilestonePush(
+  tipo: 'receso' | 'salida',
+  options: {
+    mensajePersonalizado?: string;
+    author?: {
+      idUsuario?: number | null;
+      emailOCedula?: string | null;
+      rol?: string | null;
+      ipOrigen?: string | null;
+      userAgent?: string | null;
+    };
+  }
+): Promise<{
+  success: boolean;
+  queued: boolean;
+  tipo: 'receso' | 'salida';
+  trigger: 'manual';
+  date: string;
+  sentAt: string;
+  sent: number;
+  failed: number;
+  targetRepresentantes: number;
+  targetDevices: number;
+  expiredRemoved: number;
+  message: string;
+}> {
+  const clock = getSchoolClockInTimezone();
+  const targets = await db.getMilestonePushTargets();
+
+  if (targets.targetDevices === 0) {
+    const syncRes = await triggerMilestonePush(tipo, {
+      trigger: 'manual',
+      mensajePersonalizado: options.mensajePersonalizado,
+      author: options.author,
+    });
+    return {
+      ...syncRes,
+      trigger: 'manual',
+      queued: false,
+    };
+  }
+
+  setImmediate(() => {
+    void triggerMilestonePush(tipo, {
+      trigger: 'manual',
+      mensajePersonalizado: options.mensajePersonalizado,
+      author: options.author,
+    }).catch((err) => {
+      console.error(`[ScheduleNotifier] Error en despacho asíncrono de hito ${tipo}:`, err);
+    });
+  });
+
+  const label = tipo === 'receso' ? 'Aviso de Receso' : 'Aviso de Salida';
+  return {
+    success: true,
+    queued: true,
+    tipo,
+    trigger: 'manual',
+    date: clock.dateYmd,
+    sentAt: new Date().toISOString(),
+    sent: 0,
+    failed: 0,
+    targetRepresentantes: targets.targetRepresentantes,
+    targetDevices: targets.targetDevices,
+    expiredRemoved: 0,
+    message: `${label} encolado en segundo plano para ${targets.targetDevices} dispositivo(s) de ${targets.targetRepresentantes} representante(s).`,
   };
 }
 
@@ -208,6 +283,9 @@ export async function checkAndDispatchDailyMilestones(): Promise<void> {
   try {
     const clock = getSchoolClockInTimezone();
     if (clock.isWeekend) return;
+
+    const nonWorkingCheck = await db.verificarDiaNoLaborable(clock.dateYmd);
+    if (nonWorkingCheck.esNoLaborable) return;
 
     const config = await db.getConfiguracion();
     const WINDOW_MINUTES = 2;

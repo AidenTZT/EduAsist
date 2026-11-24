@@ -22,9 +22,12 @@ import {
   Send,
   LogOut,
   Loader2,
+  CalendarOff,
 } from 'lucide-react';
 import { LapsosManager } from './LapsosManager.tsx';
 import { SchoolScheduleStatusBanner } from './SchoolScheduleStatusBanner.tsx';
+import { StudentPromotionManager } from './StudentPromotionManager.tsx';
+import { NonWorkingDaysManager } from './NonWorkingDaysManager.tsx';
 import type {
   AnoEscolar,
   Seccion,
@@ -32,6 +35,7 @@ import type {
   DocenteMateria,
   Usuario,
   Horario,
+  Estudiante,
 } from '../types.ts';
 import {
   createAnoEscolar,
@@ -91,6 +95,7 @@ interface AcademicManagerProps {
   materias: Materia[];
   docenteMaterias: DocenteMateria[];
   staffUsers: Usuario[];
+  estudiantes?: Estudiante[];
   currentUser?: Usuario | null;
   onRefreshData: () => void;
 }
@@ -101,11 +106,12 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
   materias,
   docenteMaterias,
   staffUsers,
+  estudiantes = [],
   currentUser,
   onRefreshData,
 }) => {
   const [activeTab, setActiveTab] = useState<
-    'lapsos' | 'secciones' | 'materias' | 'asignaciones' | 'anos' | 'configuracion'
+    'lapsos' | 'calendario' | 'promocion' | 'secciones' | 'materias' | 'asignaciones' | 'anos' | 'configuracion'
   >('lapsos');
 
   // Modals state
@@ -788,6 +794,34 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
             <span>Lapsos Escolares</span>
           </button>
 
+          {canManageHorariosConfig && (
+            <button
+              onClick={() => setActiveTab('calendario')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors flex items-center space-x-1.5 cursor-pointer ${
+                activeTab === 'calendario'
+                  ? 'bg-amber-100 text-amber-900 shadow-2xs font-extrabold'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <CalendarOff className="w-3.5 h-3.5 text-amber-600" />
+              <span>Días No Laborables</span>
+            </button>
+          )}
+
+          {canManageHorariosConfig && (
+            <button
+              onClick={() => setActiveTab('promocion')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors flex items-center space-x-1.5 cursor-pointer ${
+                activeTab === 'promocion'
+                  ? 'bg-indigo-100 text-indigo-900 shadow-2xs font-extrabold'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <GraduationCap className="w-3.5 h-3.5 text-indigo-600" />
+              <span>Promoción Masiva</span>
+            </button>
+          )}
+
           <button
             onClick={() => setActiveTab('configuracion')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors flex items-center space-x-1.5 cursor-pointer ${
@@ -866,6 +900,22 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
       {/* -1. LAPSOS ESCOLARES */}
       {activeTab === 'lapsos' && (
         <LapsosManager currentUser={currentUser} onRefreshData={onRefreshData} />
+      )}
+
+      {/* -0.5 DÍAS NO LABORABLES Y FERIADOS */}
+      {activeTab === 'calendario' && (
+        <NonWorkingDaysManager currentUser={currentUser} />
+      )}
+
+      {/* -0.2 PROMOCIÓN MASIVA DE AÑO ESCOLAR */}
+      {activeTab === 'promocion' && (
+        <StudentPromotionManager
+          anos={anos}
+          secciones={secciones}
+          estudiantes={estudiantes}
+          currentUser={currentUser}
+          onRefreshData={onRefreshData}
+        />
       )}
 
       {/* 0. CONFIGURACIÓN INSTITUCIONAL */}

@@ -46,7 +46,7 @@ function drawInstitutionalLetterhead(
   doc.setFontSize(7.5);
   doc.setTextColor(80, 80, 80);
   doc.text(
-    `CÓDIGO DEA: S0424D0101  •  AÑO LECTIVO: ${config.anoLectivo || '2025 - 2026'}`,
+    `AÑO LECTIVO: ${config.anoLectivo || '2025 - 2026'}`,
     pageWidth / 2,
     25,
     { align: 'center' }
@@ -201,6 +201,7 @@ export function generateGeneralAttendancePDF(params: GeneralAttendanceReportPara
         [
           'LAPSO ESCOLAR',
           'PERÍODO',
+          'DÍAS HÁBILES',
           'REGISTROS',
           'PRESENTES',
           'TARDANZAS',
@@ -214,6 +215,7 @@ export function generateGeneralAttendancePDF(params: GeneralAttendanceReportPara
         lb.fechaInicio && lb.fechaFin
           ? `${formatDateEs(lb.fechaInicio)} al ${formatDateEs(lb.fechaFin)}`
           : 'Sin período definido',
+        lb.diasHabiles !== undefined ? String(lb.diasHabiles) : '--',
         String(lb.total),
         String(lb.presentes),
         String(lb.tardes),
@@ -225,24 +227,25 @@ export function generateGeneralAttendancePDF(params: GeneralAttendanceReportPara
       headStyles: {
         fillColor: [79, 70, 229],
         textColor: [255, 255, 255],
-        fontSize: 7,
+        fontSize: 6.5,
         fontStyle: 'bold',
         halign: 'center',
       },
       styles: {
-        fontSize: 7,
+        fontSize: 6.5,
         cellPadding: 1.5,
         textColor: [30, 41, 59],
       },
       columnStyles: {
         0: { halign: 'left', fontStyle: 'bold' },
         1: { halign: 'center' },
-        2: { halign: 'center' },
-        3: { halign: 'center', textColor: [16, 185, 129] },
-        4: { halign: 'center', textColor: [217, 119, 6] },
-        5: { halign: 'center', textColor: [239, 68, 68] },
-        6: { halign: 'center', textColor: [124, 58, 237] },
-        7: { halign: 'center', fontStyle: 'bold' },
+        2: { halign: 'center', fontStyle: 'bold' },
+        3: { halign: 'center' },
+        4: { halign: 'center', textColor: [16, 185, 129] },
+        5: { halign: 'center', textColor: [217, 119, 6] },
+        6: { halign: 'center', textColor: [239, 68, 68] },
+        7: { halign: 'center', textColor: [124, 58, 237] },
+        8: { halign: 'center', fontStyle: 'bold' },
       },
       margin: { left: 14, right: 14 },
     });

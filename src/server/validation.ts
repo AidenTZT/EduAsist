@@ -478,6 +478,116 @@ export const auditLogsQuerySchema = z
     { message: 'La fecha inicial (startDate) no puede ser mayor que la fecha final (endDate).' }
   );
 
+export const promoverEstudiantesSchema = z
+  .object({
+    anioOrigenId: z.coerce.number().int().positive('Debe seleccionar el año escolar de origen.'),
+    seccionOrigenId: z.preprocess(
+      (v) => (v === '' || v === null || v === undefined || Number(v) === 0 ? null : Number(v)),
+      z.number().int().positive().nullable().optional()
+    ),
+    anioDestinoId: z.union([
+      z.literal('EGRESADO'),
+      z.coerce.number().int().positive('Debe seleccionar un año destino válido o EGRESADO.'),
+    ]),
+    seccionDestinoId: z.preprocess(
+      (v) => (v === '' || v === null || v === undefined || Number(v) === 0 ? null : Number(v)),
+      z.number().int().positive().nullable().optional()
+    ),
+    estudiantesIds: z
+      .array(z.coerce.number().int().positive('ID de estudiante inválido.'))
+      .min(1, 'Debe seleccionar al menos un estudiante para ejecutar la promoción.'),
+  })
+  .refine(
+    (data) => {
+      if (data.anioDestinoId === 'EGRESADO') return true;
+      return data.seccionDestinoId != null && data.seccionDestinoId > 0;
+    },
+    {
+      message: 'Debe seleccionar una sección de destino cuando el año destino es regular.',
+      path: ['seccionDestinoId'],
+    }
+  )
+  .refine(
+    (data) => {
+      if (data.anioDestinoId === 'EGRESADO') return true;
+      if (data.anioOrigenId !== data.anioDestinoId) return true;
+      if (!data.seccionOrigenId) return true;
+      return data.seccionOrigenId !== data.seccionDestinoId;
+    },
+    {
+      message: 'El año y sección de destino deben ser diferentes al origen.',
+      path: ['seccionDestinoId'],
+    }
+  );
+
+export const createDiaNoLaborableSchema = z.preprocess(
+  (raw) => {
+    if (!raw || typeof raw !== 'object') return {};
+    const obj = raw as Record<string, unknown>;
+    return {
+      ...obj,
+      fechaInicio: obj.fechaInicio ?? obj.fecha_inicio,
+      fechaFin: obj.fechaFin ?? obj.fecha_fin ?? obj.fechaInicio ?? obj.fecha_inicio,
+      lapsoId: obj.lapsoId ?? obj.lapso_id,
+    };
+  },
+  z
+    .object({
+      fechaInicio: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, 'La fecha inicial debe tener el formato YYYY-MM-DD.'),
+      fechaFin: z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, 'La fecha final debe tener el formato YYYY-MM-DD.'),
+      motivo: z
+        .string()
+        .trim()
+        .min(3, 'El motivo debe tener al menos 3 caracteres.')
+        .max(160, 'El motivo no puede exceder los 160 caracteres.'),
+      lapsoId: z.preprocess(
+        (v) => (v === '' || v === null || v === undefined || Number(v) === 0 ? null : Number(v)),
+        z.number().int().positive().nullable().optional()
+      ),
+    })
+    .refine((d) => d.fechaInicio <= d.fechaFin, {
+      message: 'La fecha de inicio no puede ser posterior a la fecha final.',
+      path: ['fechaFin'],
+    })
+);
+
+export const verificarFechaQuerySchema = z.object({
+  fecha: z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'La fecha a verificar debe tener el formato YYYY-MM-DD.'),
+});
+
+export const testPushLoadSchema = z
+  .object({
+    totalObjetivos: z.coerce
+      .number()
+      .int('El total de objetivos debe ser entero.')
+      .min(100, 'El mínimo para prueba de carga es 100.')
+      .max(10000, 'El máximo permitido es 10000.')
+      .optional(),
+    chunkSize: z.coerce
+      .number()
+      .int('El tamaño de lote debe ser entero.')
+      .min(25, 'El tamaño de lote mínimo es 25.')
+      .max(50, 'El tamaño de lote máximo es 50.')
+      .optional(),
+    chunkDelayMs: z.coerce
+      .number()
+      .int('La pausa entre lotes debe ser entera.')
+      .min(50, 'La pausa mínima entre lotes es 50ms.')
+      .max(100, 'La pausa máxima entre lotes es 100ms.')
+      .optional(),
+  })
+  .optional()
+  .default({});
+
 /**
  * Middleware de validación con Zod para req.body
  * Si el cuerpo no cumple con el esquema, devuelve 400 Bad Request estructurado

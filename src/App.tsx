@@ -507,6 +507,7 @@ export default function App() {
                     materias={materias}
                     docenteMaterias={docenteMaterias}
                     staffUsers={staffUsers}
+                    estudiantes={estudiantes}
                     currentUser={activeStaffUser}
                     onRefreshData={loadAllData}
                   />

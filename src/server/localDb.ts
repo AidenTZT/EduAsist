@@ -29,6 +29,10 @@ import type {
   LapsoBreakdownStats,
   InstitutionalConfigSummary,
   MilestoneDispatchRecord,
+  DiaNoLaborable,
+  VerificarDiaNoLaborableResult,
+  PromocionMasivaPayload,
+  PromocionMasivaResult,
 } from '../types.ts';
 
 // ---------------------------------------------------------------------------
@@ -79,6 +83,7 @@ export interface DatabaseState {
   auditLogs: AuditLog[];
   pushSubscriptions: PushSubscriptionRecord[];
   milestoneDispatches: MilestoneDispatchRecord[];
+  diasNoLaborables: DiaNoLaborable[];
 }
 
 let cachedDb: DatabaseState | null = null;
@@ -178,13 +183,30 @@ async function normalizeAndEnsureIntegrity(raw: Partial<DatabaseState>): Promise
     materias: Array.isArray(raw.materias) ? raw.materias : [],
     docenteMaterias: Array.isArray(raw.docenteMaterias) ? raw.docenteMaterias : [],
     representantes: Array.isArray(raw.representantes) ? (raw.representantes as StoredRepresentante[]) : [],
-    estudiantes: Array.isArray(raw.estudiantes) ? raw.estudiantes : [],
+    estudiantes: Array.isArray(raw.estudiantes)
+      ? raw.estudiantes.map((e) => ({
+          ...e,
+          idAnoActual: e.idAnoActual != null ? Number(e.idAnoActual) : null,
+          idSeccion: e.idSeccion != null ? Number(e.idSeccion) : null,
+          estadoAcademico: e.estadoAcademico === 'EGRESADO' ? 'EGRESADO' : 'ACTIVO',
+        }))
+      : [],
     asistencia: Array.isArray(raw.asistencia) ? raw.asistencia : [],
     horarios: Array.isArray(raw.horarios) ? raw.horarios : [],
     users: Array.isArray(raw.users) ? (raw.users as StoredUser[]) : [],
     auditLogs: Array.isArray(raw.auditLogs) ? raw.auditLogs : [],
     pushSubscriptions: Array.isArray(raw.pushSubscriptions) ? raw.pushSubscriptions : [],
     milestoneDispatches: Array.isArray(raw.milestoneDispatches) ? raw.milestoneDispatches : [],
+    diasNoLaborables: Array.isArray(raw.diasNoLaborables)
+      ? raw.diasNoLaborables.map((d, idx) => ({
+          id: Number(d.id) || idx + 1,
+          fechaInicio: String(d.fechaInicio || '').trim(),
+          fechaFin: String(d.fechaFin || d.fechaInicio || '').trim(),
+          motivo: String(d.motivo || 'Día No Laborable').trim(),
+          lapsoId: d.lapsoId != null && Number(d.lapsoId) > 0 ? Number(d.lapsoId) : null,
+          createdAt: d.createdAt || new Date().toISOString(),
+        }))
+      : [],
   };
 
   // Garantizar hashes bcrypt y campos usuario/activo en personal institucional
@@ -1337,6 +1359,173 @@ export async function deleteLapso(id: number): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// 2.2 CALENDARIO DE DÍAS NO LABORABLES Y FERIADOS
+// ---------------------------------------------------------------------------
+function getWeekendDayLabel(fechaYmd: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fechaYmd)) return null;
+  const parsed = new Date(`${fechaYmd}T12:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return null;
+  const dow = parsed.getUTCDay();
+  if (dow === 6) return 'Sábado';
+  if (dow === 0) return 'Domingo';
+  return null;
+}
+
+export function evaluateDiaNoLaborable(
+  dias: DiaNoLaborable[],
+  fechaYmd: string,
+  lapsoMap?: Map<number, LapsoEscolar>
+): VerificarDiaNoLaborableResult {
+  const weekendDay = getWeekendDayLabel(fechaYmd);
+  const matched = dias.find((d) => d.fechaInicio <= fechaYmd && fechaYmd <= d.fechaFin) || null;
+  if (matched) {
+    return {
+      fecha: fechaYmd,
+      esNoLaborable: true,
+      esFinDeSemana: Boolean(weekendDay),
+      motivo: matched.motivo,
+      registro: {
+        ...matched,
+        lapsoNombre:
+          matched.lapsoId && lapsoMap ? lapsoMap.get(matched.lapsoId)?.nombre ?? null : null,
+      },
+    };
+  }
+  if (weekendDay) {
+    return {
+      fecha: fechaYmd,
+      esNoLaborable: true,
+      esFinDeSemana: true,
+      motivo: `Fin de semana (${weekendDay} sin actividad escolar)`,
+      registro: null,
+    };
+  }
+  return {
+    fecha: fechaYmd,
+    esNoLaborable: false,
+    esFinDeSemana: false,
+    motivo: null,
+    registro: null,
+  };
+}
+
+export function countBusinessDaysInRange(
+  startYmd: string,
+  endYmd: string,
+  diasNoLaborables: DiaNoLaborable[]
+): { diasHabiles: number; diasNoLaborablesExcluidos: number } {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startYmd) || !/^\d{4}-\d{2}-\d{2}$/.test(endYmd) || startYmd > endYmd) {
+    return { diasHabiles: 0, diasNoLaborablesExcluidos: 0 };
+  }
+  const start = new Date(`${startYmd}T12:00:00Z`);
+  const end = new Date(`${endYmd}T12:00:00Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return { diasHabiles: 0, diasNoLaborablesExcluidos: 0 };
+  }
+
+  let diasHabiles = 0;
+  let diasNoLaborablesExcluidos = 0;
+  const cursor = new Date(start.getTime());
+  let guard = 0;
+  while (cursor <= end && guard < 1500) {
+    guard++;
+    const dow = cursor.getUTCDay();
+    if (dow !== 0 && dow !== 6) {
+      const ymd = cursor.toISOString().slice(0, 10);
+      const isHoliday = diasNoLaborables.some(
+        (d) => d.fechaInicio <= ymd && ymd <= d.fechaFin
+      );
+      if (isHoliday) {
+        diasNoLaborablesExcluidos++;
+      } else {
+        diasHabiles++;
+      }
+    }
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return { diasHabiles, diasNoLaborablesExcluidos };
+}
+
+export async function verificarDiaNoLaborable(fecha: string): Promise<VerificarDiaNoLaborableResult> {
+  const db = await readDb();
+  const lapsoMap = new Map(db.lapsosEscolares.map((l) => [l.id, l]));
+  return evaluateDiaNoLaborable(db.diasNoLaborables, fecha, lapsoMap);
+}
+
+export async function getDiasNoLaborables(): Promise<DiaNoLaborable[]> {
+  const db = await readDb();
+  const lapsoMap = new Map(db.lapsosEscolares.map((l) => [l.id, l]));
+  return [...db.diasNoLaborables]
+    .sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio) || a.id - b.id)
+    .map((d) => ({
+      ...d,
+      lapsoNombre: d.lapsoId ? lapsoMap.get(d.lapsoId)?.nombre ?? null : null,
+    }));
+}
+
+export async function createDiaNoLaborable(data: {
+  fechaInicio: string;
+  fechaFin: string;
+  motivo: string;
+  lapsoId?: number | null;
+}): Promise<DiaNoLaborable> {
+  return withWriteLock((db) => {
+    const fechaInicio = data.fechaInicio.trim();
+    const fechaFin = data.fechaFin.trim();
+    if (fechaInicio > fechaFin) {
+      throw new Error('La fecha de inicio no puede ser posterior a la fecha final.');
+    }
+
+    const lapsoMap = new Map(db.lapsosEscolares.map((l) => [l.id, l]));
+    let resolvedLapsoId: number | null =
+      data.lapsoId != null && Number(data.lapsoId) > 0 ? Number(data.lapsoId) : null;
+
+    if (resolvedLapsoId && !lapsoMap.has(resolvedLapsoId)) {
+      throw new Error('El lapso escolar seleccionado no existe.');
+    }
+    if (!resolvedLapsoId) {
+      const autoLapso = findLapsoByDate(db.lapsosEscolares, fechaInicio);
+      resolvedLapsoId = autoLapso ? autoLapso.id : null;
+    }
+
+    const overlap = db.diasNoLaborables.find(
+      (d) => fechaInicio <= d.fechaFin && d.fechaInicio <= fechaFin
+    );
+    if (overlap) {
+      throw new Error(
+        `El rango seleccionado se solapa con el registro "${overlap.motivo}" (${overlap.fechaInicio} al ${overlap.fechaFin}).`
+      );
+    }
+
+    const created: DiaNoLaborable = {
+      id: nextNumericId(db.diasNoLaborables, (d) => d.id),
+      fechaInicio,
+      fechaFin,
+      motivo: data.motivo.trim(),
+      lapsoId: resolvedLapsoId,
+      createdAt: new Date().toISOString(),
+    };
+    db.diasNoLaborables.push(created);
+
+    return {
+      ...created,
+      lapsoNombre: created.lapsoId ? lapsoMap.get(created.lapsoId)?.nombre ?? null : null,
+    };
+  });
+}
+
+export async function deleteDiaNoLaborable(id: number): Promise<DiaNoLaborable> {
+  return withWriteLock((db) => {
+    const idx = db.diasNoLaborables.findIndex((d) => d.id === Number(id));
+    if (idx === -1) {
+      throw new Error('Registro de día no laborable no encontrado.');
+    }
+    const [removed] = db.diasNoLaborables.splice(idx, 1);
+    return removed;
+  });
+}
+
+// ---------------------------------------------------------------------------
 // 3. AÑOS ESCOLARES, SECCIONES, MATERIAS & ASIGNACIONES
 // ---------------------------------------------------------------------------
 export async function getAnosEscolares(): Promise<AnoEscolar[]> {
@@ -1765,10 +1954,20 @@ export async function getEstudiantes(
 
   let list = db.estudiantes.map((e) => {
     const rep = repMap.get(e.idRepresentante);
+    const isEgresado = e.estadoAcademico === 'EGRESADO';
     return {
       ...e,
-      nombreNivel: anoMap.get(e.idAnoActual),
-      nombreSeccion: e.idSeccion ? secMap.get(e.idSeccion) || null : null,
+      estadoAcademico: isEgresado ? ('EGRESADO' as const) : ('ACTIVO' as const),
+      nombreNivel: isEgresado
+        ? 'Egresado'
+        : e.idAnoActual != null
+        ? anoMap.get(e.idAnoActual) || 'Año Escolar'
+        : 'Sin Asignar',
+      nombreSeccion: isEgresado
+        ? null
+        : e.idSeccion
+        ? secMap.get(e.idSeccion) || null
+        : null,
       ...(includeRepContact && rep
         ? {
             representanteNombres: rep.nombres,
@@ -1786,7 +1985,9 @@ export async function getEstudiantes(
   if (filters?.idRepresentante) list = list.filter((e) => e.idRepresentante === Number(filters.idRepresentante));
 
   return list.sort(
-    (a, b) => a.idAnoActual - b.idAnoActual || numericCedulaValue(a.cedula) - numericCedulaValue(b.cedula)
+    (a, b) =>
+      (a.idAnoActual ?? 9999) - (b.idAnoActual ?? 9999) ||
+      numericCedulaValue(a.cedula) - numericCedulaValue(b.cedula)
   );
 }
 
@@ -1815,6 +2016,7 @@ export async function createEstudiante(data: {
       idAnoActual: Number(data.idAnoActual),
       idSeccion: data.idSeccion ? Number(data.idSeccion) : null,
       idRepresentante: Number(data.idRepresentante),
+      estadoAcademico: 'ACTIVO',
     };
     db.estudiantes.push(nuevo);
     return nuevo;
@@ -1831,14 +2033,32 @@ export async function updateEstudiante(
   return withWriteLock((db) => {
     const idx = db.estudiantes.findIndex((e) => e.idEstudiante === Number(idEstudiante));
     if (idx === -1) throw new Error('Estudiante no encontrado.');
+    const nextAnoActual =
+      data.idAnoActual !== undefined
+        ? data.idAnoActual === null
+          ? null
+          : Number(data.idAnoActual)
+        : db.estudiantes[idx].idAnoActual;
+    const nextEstado =
+      data.estadoAcademico !== undefined
+        ? data.estadoAcademico
+        : nextAnoActual === null
+        ? 'EGRESADO'
+        : 'ACTIVO';
+
     const updated: Estudiante = {
       ...db.estudiantes[idx],
       ...(data.cedula ? { cedula: data.cedula.trim() } : {}),
       ...(data.nombres ? { nombres: data.nombres.trim() } : {}),
       ...(data.apellidos ? { apellidos: data.apellidos.trim() } : {}),
-      ...(data.idAnoActual !== undefined ? { idAnoActual: Number(data.idAnoActual) } : {}),
-      ...(data.idSeccion !== undefined ? { idSeccion: data.idSeccion ? Number(data.idSeccion) : null } : {}),
+      idAnoActual: nextEstado === 'EGRESADO' ? null : nextAnoActual,
+      ...(data.idSeccion !== undefined
+        ? { idSeccion: nextEstado === 'EGRESADO' ? null : data.idSeccion ? Number(data.idSeccion) : null }
+        : nextEstado === 'EGRESADO'
+        ? { idSeccion: null }
+        : {}),
       ...(data.idRepresentante !== undefined ? { idRepresentante: Number(data.idRepresentante) } : {}),
+      estadoAcademico: nextEstado,
     };
     db.estudiantes[idx] = updated;
     return updated;
@@ -1849,6 +2069,116 @@ export async function deleteEstudiante(idEstudiante: number): Promise<void> {
   return withWriteLock((db) => {
     db.estudiantes = db.estudiantes.filter((e) => e.idEstudiante !== Number(idEstudiante));
     db.asistencia = db.asistencia.filter((a) => a.idEstudiante !== Number(idEstudiante));
+  });
+}
+
+export async function promoverEstudiantesMasivo(
+  payload: PromocionMasivaPayload
+): Promise<PromocionMasivaResult> {
+  return withWriteLock((db) => {
+    const origenAno = db.anosEscolares.find((a) => a.idAno === Number(payload.anioOrigenId));
+    if (!origenAno) {
+      throw new Error('El año escolar de origen especificado no existe.');
+    }
+
+    const origenSeccion = payload.seccionOrigenId
+      ? db.secciones.find(
+          (s) => s.idSeccion === Number(payload.seccionOrigenId) && s.idAno === origenAno.idAno
+        )
+      : null;
+    if (payload.seccionOrigenId && !origenSeccion) {
+      throw new Error('La sección de origen no pertenece al año escolar seleccionado.');
+    }
+
+    const isEgreso = payload.anioDestinoId === 'EGRESADO';
+    let destinoAno: AnoEscolar | null = null;
+    let destinoSeccion: Seccion | null = null;
+
+    if (!isEgreso) {
+      destinoAno = db.anosEscolares.find((a) => a.idAno === Number(payload.anioDestinoId)) || null;
+      if (!destinoAno) {
+        throw new Error('El año escolar de destino especificado no existe.');
+      }
+      destinoSeccion = payload.seccionDestinoId
+        ? db.secciones.find(
+            (s) => s.idSeccion === Number(payload.seccionDestinoId) && s.idAno === destinoAno!.idAno
+          ) || null
+        : null;
+      if (!destinoSeccion) {
+        throw new Error('Debe seleccionar una sección válida dentro del año escolar destino.');
+      }
+      if (
+        origenAno.idAno === destinoAno.idAno &&
+        origenSeccion &&
+        origenSeccion.idSeccion === destinoSeccion.idSeccion
+      ) {
+        throw new Error('El año y sección de destino deben ser diferentes al origen.');
+      }
+    }
+
+    const uniqueIds = Array.from(new Set(payload.estudiantesIds.map((id) => Number(id))));
+    const idSet = new Set(uniqueIds);
+
+    // Validación atómica previa: todos los estudiantes seleccionados deben pertenecer al origen y estar activos
+    const indicesToUpdate: number[] = [];
+    for (let i = 0; i < db.estudiantes.length; i++) {
+      const est = db.estudiantes[i];
+      if (!idSet.has(est.idEstudiante)) continue;
+      if (est.estadoAcademico === 'EGRESADO' || est.idAnoActual !== origenAno.idAno) {
+        throw new Error(
+          `El estudiante ${est.apellidos}, ${est.nombres} no pertenece al año escolar de origen seleccionado.`
+        );
+      }
+      if (origenSeccion && est.idSeccion !== origenSeccion.idSeccion) {
+        throw new Error(
+          `El estudiante ${est.apellidos}, ${est.nombres} no pertenece a la sección de origen "${origenSeccion.nombreSeccion}".`
+        );
+      }
+      indicesToUpdate.push(i);
+    }
+
+    if (indicesToUpdate.length !== uniqueIds.length) {
+      throw new Error('Uno o más estudiantes seleccionados no existen en el sistema.');
+    }
+    if (indicesToUpdate.length === 0) {
+      throw new Error('No hay estudiantes válidos para promover.');
+    }
+
+    const promotedIds: number[] = [];
+    for (const idx of indicesToUpdate) {
+      const current = db.estudiantes[idx];
+      if (isEgreso) {
+        db.estudiantes[idx] = {
+          ...current,
+          idAnoActual: null,
+          idSeccion: null,
+          estadoAcademico: 'EGRESADO',
+        };
+      } else {
+        db.estudiantes[idx] = {
+          ...current,
+          idAnoActual: destinoAno!.idAno,
+          idSeccion: destinoSeccion!.idSeccion,
+          estadoAcademico: 'ACTIVO',
+        };
+      }
+      promotedIds.push(current.idEstudiante);
+    }
+
+    const destinoLabel = isEgreso
+      ? 'EGRESADO (Culminación de Estudios)'
+      : `${destinoAno!.nombreNivel} — Sección "${destinoSeccion!.nombreSeccion}"`;
+
+    return {
+      success: true,
+      promovidosCount: promotedIds.length,
+      estadoDestino: isEgreso ? 'EGRESADO' : 'ACTIVO',
+      destinoLabel,
+      estudiantesPromovidos: promotedIds,
+      message: isEgreso
+        ? `${promotedIds.length} estudiante(s) promovido(s) a estado EGRESADO preservando su historial académico.`
+        : `${promotedIds.length} estudiante(s) promovido(s) exitosamente a ${destinoLabel}.`,
+    };
   });
 }
 
@@ -1905,7 +2235,7 @@ export async function getAsistencia(filter: {
         nombreNivel: anoMap.get(mat.idAno),
         nombreSeccion: est.idSeccion ? secMap.get(est.idSeccion) || null : null,
         idRepresentante: est.idRepresentante,
-        _estIdAno: est.idAnoActual,
+        _estIdAno: mat.idAno,
         _estIdSeccion: est.idSeccion,
       };
     })
@@ -2020,7 +2350,7 @@ export async function getAsistenciaPaginated(filter: {
     if (!est || !mat) continue;
 
     if (filter.idSeccion && est.idSeccion !== Number(filter.idSeccion)) continue;
-    if (filter.idAno && est.idAnoActual !== Number(filter.idAno)) continue;
+    if (filter.idAno && mat.idAno !== Number(filter.idAno)) continue;
 
     if (searchLower) {
       const fullName = `${est.nombres} ${est.apellidos}`.toLowerCase();
@@ -2108,22 +2438,70 @@ export async function getAsistenciaPaginated(filter: {
   });
 
   const lapsoBreakdown: LapsoBreakdownStats[] = Array.from(breakdownAcc.values()).map(
-    ({ lapso, total, presentes: p, tardes: t, ausentes: au, justificadosYReposos: jr }) => ({
-      lapsoId: lapso.id,
-      nombre: lapso.nombre,
-      numeroLapso: lapso.numeroLapso,
-      fechaInicio: lapso.fechaInicio,
-      fechaFin: lapso.fechaFin,
-      anioEscolar: lapso.anioEscolar,
-      activo: lapso.activo,
-      total,
-      presentes: p,
-      tardes: t,
-      ausentes: au,
-      justificadosYReposos: jr,
-      porcentajeAsistencia: total > 0 ? Math.round(((p + t + jr) / total) * 100) : 0,
-    })
+    ({ lapso, total, presentes: p, tardes: t, ausentes: au, justificadosYReposos: jr }) => {
+      const bizDays = countBusinessDaysInRange(
+        lapso.fechaInicio,
+        lapso.fechaFin,
+        db.diasNoLaborables
+      );
+      return {
+        lapsoId: lapso.id,
+        nombre: lapso.nombre,
+        numeroLapso: lapso.numeroLapso,
+        fechaInicio: lapso.fechaInicio,
+        fechaFin: lapso.fechaFin,
+        anioEscolar: lapso.anioEscolar,
+        activo: lapso.activo,
+        total,
+        presentes: p,
+        tardes: t,
+        ausentes: au,
+        justificadosYReposos: jr,
+        porcentajeAsistencia: total > 0 ? Math.round(((p + t + jr) / total) * 100) : 0,
+        diasHabiles: bizDays.diasHabiles,
+        diasNoLaborablesExcluidos: bizDays.diasNoLaborablesExcluidos,
+      };
+    }
   );
+
+  // Calcular días hábiles del periodo filtrado excluyendo fines de semana y días no laborables
+  let summaryRangeStart: string | null = null;
+  let summaryRangeEnd: string | null = null;
+  if (filter.fecha) {
+    summaryRangeStart = filter.fecha;
+    summaryRangeEnd = filter.fecha;
+  } else if (filter.mes) {
+    const [y, m] = filter.mes.split('-').map(Number);
+    if (y && m) {
+      const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+      summaryRangeStart = `${filter.mes}-01`;
+      summaryRangeEnd = `${filter.mes}-${String(lastDay).padStart(2, '0')}`;
+    }
+  } else if (filter.startDate && filter.endDate) {
+    summaryRangeStart = filter.startDate;
+    summaryRangeEnd = filter.endDate;
+  } else if (targetLapso) {
+    summaryRangeStart = targetLapso.fechaInicio;
+    summaryRangeEnd = targetLapso.fechaFin;
+  }
+
+  let summaryBizDays: { diasHabiles: number; diasNoLaborablesExcluidos: number };
+  if (summaryRangeStart && summaryRangeEnd) {
+    summaryBizDays = countBusinessDaysInRange(
+      summaryRangeStart,
+      summaryRangeEnd,
+      db.diasNoLaborables
+    );
+  } else {
+    summaryBizDays = lapsoBreakdown.reduce(
+      (acc, item) => ({
+        diasHabiles: acc.diasHabiles + (item.diasHabiles || 0),
+        diasNoLaborablesExcluidos:
+          acc.diasNoLaborablesExcluidos + (item.diasNoLaborablesExcluidos || 0),
+      }),
+      { diasHabiles: 0, diasNoLaborablesExcluidos: 0 }
+    );
+  }
 
   return {
     data: pageSlice,
@@ -2145,6 +2523,8 @@ export async function getAsistenciaPaginated(filter: {
         totalCount > 0
           ? Math.round(((presentes + tardes + justificadosYReposos) / totalCount) * 100)
           : 0,
+      diasHabiles: summaryBizDays.diasHabiles,
+      diasNoLaborablesExcluidos: summaryBizDays.diasNoLaborablesExcluidos,
     },
     lapsoBreakdown,
     lapsoFiltro: targetLapso,
@@ -2158,6 +2538,11 @@ export async function registrarAsistenciaBatch(
   options?: { actorId?: number; actorNombre?: string; actorRol?: RolUsuario }
 ): Promise<RegistroAsistencia[]> {
   return withWriteLock((db) => {
+    const holidayCheck = evaluateDiaNoLaborable(db.diasNoLaborables, fecha);
+    if (holidayCheck.esNoLaborable) {
+      throw new Error(`Sin actividades escolares: ${holidayCheck.motivo}`);
+    }
+
     const now = new Date();
     const serverTime = now.toTimeString().split(' ')[0];
     const nowIso = now.toISOString();
@@ -2791,16 +3176,22 @@ export async function getPortalRepresentanteData(
     getHorarios(),
   ]);
 
-  const studentAnoIds = new Set(misEstudiantes.map((e) => e.idAnoActual));
+  const studentAnoIds = new Set(
+    misEstudiantes
+      .filter((e) => e.estadoAcademico !== 'EGRESADO')
+      .map((e) => e.idAnoActual)
+      .filter((id): id is number => id != null)
+  );
   const salidas = salidasAll.filter((s) => !s.idAno || studentAnoIds.has(s.idAno));
 
   const asistenciasAll = await getAsistencia({ idRepresentante });
   const lapsoActivo = lapsos.find((l) => l.activo) || null;
 
   const estudiantesConDetalles = misEstudiantes.map((est) => {
-    const studentHorarios = est.idAnoActual && est.idSeccion
-      ? allHorarios.filter((h) => h.idAno === est.idAnoActual && h.idSeccion === est.idSeccion)
-      : [];
+    const studentHorarios =
+      est.estadoAcademico !== 'EGRESADO' && est.idAnoActual && est.idSeccion
+        ? allHorarios.filter((h) => h.idAno === est.idAnoActual && h.idSeccion === est.idSeccion)
+        : [];
     return {
       idEstudiante: est.idEstudiante,
       cedula: est.cedula,
@@ -2808,7 +3199,9 @@ export async function getPortalRepresentanteData(
       apellidos: est.apellidos,
       idAnoActual: est.idAnoActual,
       idSeccion: est.idSeccion,
-      nombreNivel: est.nombreNivel || 'Año Escolar',
+      estadoAcademico: est.estadoAcademico || 'ACTIVO',
+      nombreNivel:
+        est.estadoAcademico === 'EGRESADO' ? 'Egresado' : est.nombreNivel || 'Año Escolar',
       nombreSeccion: est.nombreSeccion,
       horarios: studentHorarios,
     };
@@ -2977,6 +3370,7 @@ export async function getDatabaseStats() {
     asistencias: db.asistencia.length,
     horarios: db.horarios.length,
     salidasInstitucionales: db.salidasInstitucionales.length,
+    diasNoLaborables: db.diasNoLaborables.length,
     usuariosPersonal: db.users.length,
     logsAuditoria: db.auditLogs.length,
   };
@@ -2995,6 +3389,7 @@ export async function createFullDatabaseBackup(authorInfo?: { id?: number; email
         recesos: db.recesosInstitucionales.length,
         salidas: db.salidasInstitucionales.length,
         lapsosEscolares: db.lapsosEscolares.length,
+        diasNoLaborables: db.diasNoLaborables.length,
         anosEscolares: db.anosEscolares.length,
         secciones: db.secciones.length,
         materias: db.materias.length,
@@ -3011,6 +3406,7 @@ export async function createFullDatabaseBackup(authorInfo?: { id?: number; email
       recesosInstitucionales: db.recesosInstitucionales,
       salidasInstitucionales: db.salidasInstitucionales,
       lapsosEscolares: db.lapsosEscolares,
+      diasNoLaborables: db.diasNoLaborables,
       anosEscolares: db.anosEscolares,
       secciones: db.secciones,
       materias: db.materias,
@@ -3221,7 +3617,10 @@ export async function getSalidasPushDispatchPayload(idSalida: number) {
   };
 
   const matchingEstudiantes = db.estudiantes.filter(
-    (est) => !salida.idAno || est.idAnoActual === salida.idAno
+    (est) =>
+      est.estadoAcademico !== 'EGRESADO' &&
+      est.idAnoActual != null &&
+      (!salida.idAno || est.idAnoActual === salida.idAno)
   );
 
   const groupedByRep = new Map<
@@ -3287,10 +3686,11 @@ export async function getMilestonePushTargets(): Promise<{
     db.representantes.filter((r) => r.activo !== false).map((r) => r.idRepresentante)
   );
 
-  // Representantes con al menos un estudiante en un año escolar activo (o cualquier año si ninguno tiene activo)
+  // Representantes con al menos un estudiante activo en un año escolar activo (excluye egresados)
   const eligibleRepIds = new Set<number>();
   for (const est of db.estudiantes) {
     if (!est.idRepresentante || !activeRepIds.has(est.idRepresentante)) continue;
+    if (est.estadoAcademico === 'EGRESADO' || est.idAnoActual == null) continue;
     if (activeAnoIds.size === 0 || activeAnoIds.has(est.idAnoActual)) {
       eligibleRepIds.add(est.idRepresentante);
     }

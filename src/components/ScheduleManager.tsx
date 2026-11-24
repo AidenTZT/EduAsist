@@ -645,9 +645,10 @@ export const ScheduleManager: React.FC<ScheduleManagerProps> = ({
       const res = await notifySalidaPush(idSalida);
       await loadData();
       const msg = res.mensaje || 'Notificación de hora de salida procesada.';
-      setSalidaPushToast({ type: res.sent > 0 || res.totalDispositivos === 0 ? 'success' : 'error', message: msg });
+      const isOk = Boolean(res.queued || res.sent > 0 || res.totalDispositivos === 0);
+      setSalidaPushToast({ type: isOk ? 'success' : 'error', message: msg });
       if (salidaModalOpen) {
-        setSalidaMsg({ type: res.sent > 0 || res.totalDispositivos === 0 ? 'success' : 'error', text: msg });
+        setSalidaMsg({ type: isOk ? 'success' : 'error', text: msg });
       }
     } catch (err: any) {
       const errMsg = err.message || 'Error al enviar notificación push de salida.';

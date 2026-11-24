@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "seed": "tsx src/db/seed.ts"
+    "seed": "tsx src/db/seed.ts",
+    "test:push-load": "tsx src/server/testPushLoadCli.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
