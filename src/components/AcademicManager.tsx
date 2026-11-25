@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   Building,
   Layers,
@@ -23,6 +23,8 @@ import {
   LogOut,
   Loader2,
   CalendarOff,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { LapsosManager } from './LapsosManager.tsx';
 import { SchoolScheduleStatusBanner } from './SchoolScheduleStatusBanner.tsx';
@@ -167,6 +169,82 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
 
   const [saving, setSaving] = useState<boolean>(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Estado y controles del carrusel horizontal de pestañas
+  const tabsCarouselRef = useRef<HTMLDivElement | null>(null);
+  const [carouselScroll, setCarouselScroll] = useState<{
+    canScrollLeft: boolean;
+    canScrollRight: boolean;
+    hasOverflow: boolean;
+  }>({ canScrollLeft: false, canScrollRight: false, hasOverflow: false });
+
+  const updateCarouselScroll = useCallback(() => {
+    const el = tabsCarouselRef.current;
+    if (!el) return;
+    const maxScroll = Math.max(0, el.scrollWidth - el.clientWidth);
+    const hasOverflow = maxScroll > 4;
+    setCarouselScroll({
+      hasOverflow,
+      canScrollLeft: el.scrollLeft > 4,
+      canScrollRight: el.scrollLeft < maxScroll - 4,
+    });
+  }, []);
+
+  useEffect(() => {
+    updateCarouselScroll();
+    const el = tabsCarouselRef.current;
+    let observer: ResizeObserver | null = null;
+    if (el && typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(() => updateCarouselScroll());
+      observer.observe(el);
+    }
+    window.addEventListener('resize', updateCarouselScroll);
+
+    const handleWheel = (e: WheelEvent) => {
+      if (!el) return;
+      const maxScroll = Math.max(0, el.scrollWidth - el.clientWidth);
+      if (maxScroll <= 4) return;
+      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+        el.scrollLeft += e.deltaY;
+        e.preventDefault();
+      }
+    };
+    el?.addEventListener('wheel', handleWheel, { passive: false });
+
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', updateCarouselScroll);
+      el?.removeEventListener('wheel', handleWheel);
+    };
+  }, [updateCarouselScroll, canManageHorariosConfig, secciones.length, materias.length, docenteMaterias.length, anos.length]);
+
+  const scrollTabsBy = (direction: 'left' | 'right') => {
+    const el = tabsCarouselRef.current;
+    if (!el) return;
+    const step = Math.max(200, Math.round(el.clientWidth * 0.65));
+    el.scrollBy({
+      left: direction === 'left' ? -step : step,
+      behavior: 'smooth',
+    });
+  };
+
+  const handleSelectCarouselTab = (
+    tabId:
+      | 'lapsos'
+      | 'calendario'
+      | 'promocion'
+      | 'secciones'
+      | 'materias'
+      | 'asignaciones'
+      | 'anos'
+      | 'configuracion',
+    targetEl?: HTMLButtonElement | null
+  ) => {
+    setActiveTab(tabId);
+    if (targetEl) {
+      targetEl.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    }
+  };
 
   const loadHorariosAndPushStatus = () => {
     fetchConfiguracion()
@@ -779,103 +857,176 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
           </div>
         </div>
 
-        {/* Tab Buttons with scroll fade */}
-        <div className="relative border-t border-slate-100 dark:border-[#27272A] mt-5 pt-3">
-          <div className="flex space-x-1 overflow-x-auto scrollbar-none pb-1">
-          <button
-            onClick={() => setActiveTab('lapsos')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors flex items-center space-x-1.5 cursor-pointer ${
-              activeTab === 'lapsos'
-                ? 'bg-purple-100 text-purple-900 shadow-2xs font-extrabold'
-                : 'text-slate-600 hover:bg-slate-100'
-            }`}
-          >
-            <CalendarRange className="w-3.5 h-3.5 text-purple-600" />
-            <span>Lapsos Escolares</span>
-          </button>
+        {/* Tab Carousel */}
+        <div className="border-t border-slate-100 dark:border-[#27272A] mt-5 pt-3.5">
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            {carouselScroll.hasOverflow && (
+              <button
+                type="button"
+                onClick={() => scrollTabsBy('left')}
+                disabled={!carouselScroll.canScrollLeft}
+                aria-label="Desplazar pestañas a la izquierda"
+                className="shrink-0 w-9 h-9 rounded-xl border border-slate-200 dark:border-[#27272A] bg-slate-50 dark:bg-[#181818] text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-[#222226] disabled:opacity-35 disabled:cursor-not-allowed flex items-center justify-center transition-colors cursor-pointer"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+            )}
 
-          {canManageHorariosConfig && (
-            <button
-              onClick={() => setActiveTab('calendario')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors flex items-center space-x-1.5 cursor-pointer ${
-                activeTab === 'calendario'
-                  ? 'bg-amber-100 text-amber-900 shadow-2xs font-extrabold'
-                  : 'text-slate-600 hover:bg-slate-100'
-              }`}
-            >
-              <CalendarOff className="w-3.5 h-3.5 text-amber-600" />
-              <span>Días No Laborables</span>
-            </button>
-          )}
+            <div className="relative flex-1 min-w-0">
+              {carouselScroll.canScrollLeft && (
+                <div className="pointer-events-none absolute left-0 top-0 bottom-0 w-5 z-10 bg-gradient-to-r from-white dark:from-[#121212] to-transparent" />
+              )}
 
-          {canManageHorariosConfig && (
-            <button
-              onClick={() => setActiveTab('promocion')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors flex items-center space-x-1.5 cursor-pointer ${
-                activeTab === 'promocion'
-                  ? 'bg-indigo-100 text-indigo-900 shadow-2xs font-extrabold'
-                  : 'text-slate-600 hover:bg-slate-100'
-              }`}
-            >
-              <GraduationCap className="w-3.5 h-3.5 text-indigo-600" />
-              <span>Promoción Masiva</span>
-            </button>
-          )}
+              <div
+                ref={tabsCarouselRef}
+                role="tablist"
+                aria-label="Módulos de Gestión Institucional y Académica"
+                onScroll={updateCarouselScroll}
+                className="flex items-center gap-1.5 overflow-x-auto scrollbar-none scroll-smooth snap-x snap-mandatory py-0.5 px-0.5"
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === 'lapsos'}
+                  onClick={(e) => handleSelectCarouselTab('lapsos', e.currentTarget)}
+                  className={`shrink-0 snap-start px-3.5 py-2 min-h-[38px] rounded-xl text-xs font-bold whitespace-nowrap transition-colors inline-flex items-center gap-1.5 cursor-pointer border ${
+                    activeTab === 'lapsos'
+                      ? 'bg-purple-100 dark:bg-purple-950/60 text-purple-900 dark:text-purple-200 border-purple-200 dark:border-purple-800/70 shadow-2xs font-extrabold'
+                      : 'text-slate-600 dark:text-zinc-400 border-transparent hover:bg-slate-100 dark:hover:bg-[#181818]'
+                  }`}
+                >
+                  <CalendarRange className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
+                  <span>Lapsos Escolares</span>
+                </button>
 
-          <button
-            onClick={() => setActiveTab('configuracion')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors flex items-center space-x-1.5 cursor-pointer ${
-              activeTab === 'configuracion'
-                ? 'bg-purple-100 text-purple-900 shadow-2xs font-extrabold'
-                : 'text-slate-600 hover:bg-slate-100'
-            }`}
-          >
-            <Settings className="w-3.5 h-3.5 text-purple-600" />
-            <span>Configuración del Plantel</span>
-          </button>
+                {canManageHorariosConfig && (
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === 'calendario'}
+                    onClick={(e) => handleSelectCarouselTab('calendario', e.currentTarget)}
+                    className={`shrink-0 snap-start px-3.5 py-2 min-h-[38px] rounded-xl text-xs font-bold whitespace-nowrap transition-colors inline-flex items-center gap-1.5 cursor-pointer border ${
+                      activeTab === 'calendario'
+                        ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-900 dark:text-amber-200 border-amber-200 dark:border-amber-800/70 shadow-2xs font-extrabold'
+                        : 'text-slate-600 dark:text-zinc-400 border-transparent hover:bg-slate-100 dark:hover:bg-[#181818]'
+                    }`}
+                  >
+                    <CalendarOff className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+                    <span>Días No Laborables</span>
+                  </button>
+                )}
 
-          <button
-            onClick={() => setActiveTab('secciones')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors flex items-center space-x-1.5 cursor-pointer ${
-              activeTab === 'secciones' ? 'bg-purple-100 text-purple-800' : 'text-slate-600 hover:bg-slate-100'
-            }`}
-          >
-            <Layers className="w-3.5 h-3.5" />
-            <span>Secciones ({secciones.length})</span>
-          </button>
+                {canManageHorariosConfig && (
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === 'promocion'}
+                    onClick={(e) => handleSelectCarouselTab('promocion', e.currentTarget)}
+                    className={`shrink-0 snap-start px-3.5 py-2 min-h-[38px] rounded-xl text-xs font-bold whitespace-nowrap transition-colors inline-flex items-center gap-1.5 cursor-pointer border ${
+                      activeTab === 'promocion'
+                        ? 'bg-indigo-100 dark:bg-indigo-950/60 text-indigo-900 dark:text-indigo-200 border-indigo-200 dark:border-indigo-800/70 shadow-2xs font-extrabold'
+                        : 'text-slate-600 dark:text-zinc-400 border-transparent hover:bg-slate-100 dark:hover:bg-[#181818]'
+                    }`}
+                  >
+                    <GraduationCap className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                    <span>Promoción Masiva</span>
+                  </button>
+                )}
 
-          <button
-            onClick={() => setActiveTab('materias')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors flex items-center space-x-1.5 cursor-pointer ${
-              activeTab === 'materias' ? 'bg-purple-100 text-purple-800' : 'text-slate-600 hover:bg-slate-100'
-            }`}
-          >
-            <BookOpen className="w-3.5 h-3.5" />
-            <span>Materias ({materias.length})</span>
-          </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === 'configuracion'}
+                  onClick={(e) => handleSelectCarouselTab('configuracion', e.currentTarget)}
+                  className={`shrink-0 snap-start px-3.5 py-2 min-h-[38px] rounded-xl text-xs font-bold whitespace-nowrap transition-colors inline-flex items-center gap-1.5 cursor-pointer border ${
+                    activeTab === 'configuracion'
+                      ? 'bg-purple-100 dark:bg-purple-950/60 text-purple-900 dark:text-purple-200 border-purple-200 dark:border-purple-800/70 shadow-2xs font-extrabold'
+                      : 'text-slate-600 dark:text-zinc-400 border-transparent hover:bg-slate-100 dark:hover:bg-[#181818]'
+                  }`}
+                >
+                  <Settings className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
+                  <span>Configuración del Plantel</span>
+                </button>
 
-          <button
-            onClick={() => setActiveTab('asignaciones')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors flex items-center space-x-1.5 cursor-pointer ${
-              activeTab === 'asignaciones' ? 'bg-purple-100 text-purple-800' : 'text-slate-600 hover:bg-slate-100'
-            }`}
-          >
-            <UserCheck className="w-3.5 h-3.5" />
-            <span>Asignación Docente-Materia ({docenteMaterias.length})</span>
-          </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === 'secciones'}
+                  onClick={(e) => handleSelectCarouselTab('secciones', e.currentTarget)}
+                  className={`shrink-0 snap-start px-3.5 py-2 min-h-[38px] rounded-xl text-xs font-bold whitespace-nowrap transition-colors inline-flex items-center gap-1.5 cursor-pointer border tabular-nums ${
+                    activeTab === 'secciones'
+                      ? 'bg-purple-100 dark:bg-purple-950/60 text-purple-900 dark:text-purple-200 border-purple-200 dark:border-purple-800/70 shadow-2xs font-extrabold'
+                      : 'text-slate-600 dark:text-zinc-400 border-transparent hover:bg-slate-100 dark:hover:bg-[#181818]'
+                  }`}
+                >
+                  <Layers className="w-3.5 h-3.5 shrink-0" />
+                  <span>Secciones ({secciones.length})</span>
+                </button>
 
-          <button
-            onClick={() => setActiveTab('anos')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors flex items-center space-x-1.5 cursor-pointer ${
-              activeTab === 'anos' ? 'bg-purple-100 text-purple-800' : 'text-slate-600 hover:bg-slate-100'
-            }`}
-          >
-            <Building className="w-3.5 h-3.5" />
-            <span>Años Escolares ({anos.length})</span>
-          </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === 'materias'}
+                  onClick={(e) => handleSelectCarouselTab('materias', e.currentTarget)}
+                  className={`shrink-0 snap-start px-3.5 py-2 min-h-[38px] rounded-xl text-xs font-bold whitespace-nowrap transition-colors inline-flex items-center gap-1.5 cursor-pointer border tabular-nums ${
+                    activeTab === 'materias'
+                      ? 'bg-purple-100 dark:bg-purple-950/60 text-purple-900 dark:text-purple-200 border-purple-200 dark:border-purple-800/70 shadow-2xs font-extrabold'
+                      : 'text-slate-600 dark:text-zinc-400 border-transparent hover:bg-slate-100 dark:hover:bg-[#181818]'
+                  }`}
+                >
+                  <BookOpen className="w-3.5 h-3.5 shrink-0" />
+                  <span>Materias ({materias.length})</span>
+                </button>
+
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === 'asignaciones'}
+                  onClick={(e) => handleSelectCarouselTab('asignaciones', e.currentTarget)}
+                  className={`shrink-0 snap-start px-3.5 py-2 min-h-[38px] rounded-xl text-xs font-bold whitespace-nowrap transition-colors inline-flex items-center gap-1.5 cursor-pointer border tabular-nums ${
+                    activeTab === 'asignaciones'
+                      ? 'bg-purple-100 dark:bg-purple-950/60 text-purple-900 dark:text-purple-200 border-purple-200 dark:border-purple-800/70 shadow-2xs font-extrabold'
+                      : 'text-slate-600 dark:text-zinc-400 border-transparent hover:bg-slate-100 dark:hover:bg-[#181818]'
+                  }`}
+                >
+                  <UserCheck className="w-3.5 h-3.5 shrink-0" />
+                  <span>Asignación Docente-Materia ({docenteMaterias.length})</span>
+                </button>
+
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === 'anos'}
+                  onClick={(e) => handleSelectCarouselTab('anos', e.currentTarget)}
+                  className={`shrink-0 snap-start px-3.5 py-2 min-h-[38px] rounded-xl text-xs font-bold whitespace-nowrap transition-colors inline-flex items-center gap-1.5 cursor-pointer border tabular-nums ${
+                    activeTab === 'anos'
+                      ? 'bg-purple-100 dark:bg-purple-950/60 text-purple-900 dark:text-purple-200 border-purple-200 dark:border-purple-800/70 shadow-2xs font-extrabold'
+                      : 'text-slate-600 dark:text-zinc-400 border-transparent hover:bg-slate-100 dark:hover:bg-[#181818]'
+                  }`}
+                >
+                  <Building className="w-3.5 h-3.5 shrink-0" />
+                  <span>Años Escolares ({anos.length})</span>
+                </button>
+              </div>
+
+              {carouselScroll.canScrollRight && (
+                <div className="pointer-events-none absolute right-0 top-0 bottom-0 w-5 z-10 bg-gradient-to-l from-white dark:from-[#121212] to-transparent" />
+              )}
+            </div>
+
+            {carouselScroll.hasOverflow && (
+              <button
+                type="button"
+                onClick={() => scrollTabsBy('right')}
+                disabled={!carouselScroll.canScrollRight}
+                aria-label="Desplazar pestañas a la derecha"
+                className="shrink-0 w-9 h-9 rounded-xl border border-slate-200 dark:border-[#27272A] bg-slate-50 dark:bg-[#181818] text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-[#222226] disabled:opacity-35 disabled:cursor-not-allowed flex items-center justify-center transition-colors cursor-pointer"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            )}
+          </div>
         </div>
-        <div className="pointer-events-none absolute right-0 top-3 bottom-1 w-8 bg-gradient-to-l from-white dark:from-[#121212] to-transparent rounded-r-lg" />
-      </div>
       </div>
 
       {/* Message feedback */}

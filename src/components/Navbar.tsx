@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   GraduationCap,
   Database,
@@ -16,6 +16,8 @@ import {
   Sun,
   Moon,
   DatabaseBackup,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { PWAInstallButton } from './PWAInstallButton.tsx';
 import { InstallPWAButton } from './InstallPWAButton.tsx';
@@ -50,6 +52,82 @@ export const Navbar: React.FC<NavbarProps> = ({
 }) => {
   const [serverTime, setServerTime] = useState<string>('');
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
+
+  const navCarouselRef = useRef<HTMLDivElement | null>(null);
+  const [navScrollState, setNavScrollState] = useState<{
+    canScrollLeft: boolean;
+    canScrollRight: boolean;
+    hasOverflow: boolean;
+  }>({ canScrollLeft: false, canScrollRight: false, hasOverflow: false });
+
+  const updateNavScrollState = useCallback(() => {
+    const el = navCarouselRef.current;
+    if (!el) return;
+    const maxScroll = Math.max(0, el.scrollWidth - el.clientWidth);
+    const hasOverflow = maxScroll > 4;
+    setNavScrollState({
+      hasOverflow,
+      canScrollLeft: el.scrollLeft > 4,
+      canScrollRight: el.scrollLeft < maxScroll - 4,
+    });
+  }, []);
+
+  useEffect(() => {
+    updateNavScrollState();
+    const el = navCarouselRef.current;
+    let observer: ResizeObserver | null = null;
+    if (el && typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(() => updateNavScrollState());
+      observer.observe(el);
+    }
+    window.addEventListener('resize', updateNavScrollState);
+
+    const handleWheel = (e: WheelEvent) => {
+      if (!el) return;
+      const maxScroll = Math.max(0, el.scrollWidth - el.clientWidth);
+      if (maxScroll <= 4) return;
+      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+        el.scrollLeft += e.deltaY;
+        e.preventDefault();
+      }
+    };
+    el?.addEventListener('wheel', handleWheel, { passive: false });
+
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', updateNavScrollState);
+      el?.removeEventListener('wheel', handleWheel);
+    };
+  }, [updateNavScrollState, currentView, activeUser?.rol, activeUser?.id]);
+
+  useEffect(() => {
+    const el = navCarouselRef.current;
+    if (!el) return;
+    const activeBtn = el.querySelector<HTMLButtonElement>('[aria-selected="true"]');
+    if (activeBtn) {
+      activeBtn.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    }
+  }, [activeDocenteTab]);
+
+  const scrollNavBy = (direction: 'left' | 'right') => {
+    const el = navCarouselRef.current;
+    if (!el) return;
+    const step = Math.max(220, Math.round(el.clientWidth * 0.65));
+    el.scrollBy({
+      left: direction === 'left' ? -step : step,
+      behavior: 'smooth',
+    });
+  };
+
+  const handleSelectNavTab = (
+    tab: 'asistencia' | 'estudiantes' | 'horarios' | 'auditoria' | 'academico' | 'usuarios' | 'restauracion',
+    targetEl?: HTMLButtonElement | null
+  ) => {
+    onDocenteTabChange(tab);
+    if (targetEl) {
+      targetEl.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    }
+  };
 
   useEffect(() => {
     const updateClock = () => {
@@ -243,105 +321,170 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
         </div>
 
-        {/* Sub-nav for Desktop Docente Tabs (ONLY shown when staff user is authenticated) */}
+        {/* Sub-nav Carousel for Desktop & Tablet Docente Tabs (ONLY shown when staff user is authenticated) */}
         {currentView === 'docente' && activeUser && (
-          <div className="hidden md:flex space-x-1 border-t border-slate-100 dark:border-[#27272A] py-2 overflow-x-auto relative">
-            {/* Primary Module: Horarios & En Clase Ahora */}
-            <button
-              onClick={() => onDocenteTabChange('horarios')}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors cursor-pointer ${
-                activeDocenteTab === 'horarios'
-                  ? 'bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-400 font-extrabold border border-indigo-200/60 dark:border-indigo-800'
-                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-[#181818]'
-              }`}
-            >
-              <Clock className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-              <span>Horarios & En Clase Ahora</span>
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></span>
-            </button>
+          <div className="hidden md:block border-t border-slate-100 dark:border-[#27272A] py-2">
+            <div className="flex items-center gap-1.5">
+              {navScrollState.hasOverflow && (
+                <button
+                  type="button"
+                  onClick={() => scrollNavBy('left')}
+                  disabled={!navScrollState.canScrollLeft}
+                  aria-label="Desplazar módulos a la izquierda"
+                  className="shrink-0 w-8 h-8 rounded-lg border border-slate-200 dark:border-[#27272A] bg-slate-50 dark:bg-[#181818] text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-[#222226] disabled:opacity-35 disabled:cursor-not-allowed flex items-center justify-center transition-colors cursor-pointer"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+              )}
 
-            <button
-              onClick={() => onDocenteTabChange('asistencia')}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors cursor-pointer ${
-                activeDocenteTab === 'asistencia'
-                  ? 'bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-400 font-extrabold border border-indigo-200/60 dark:border-indigo-800'
-                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-[#181818]'
-              }`}
-            >
-              <CalendarCheck className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-              <span>Pase de Asistencia</span>
-            </button>
+              <div className="relative flex-1 min-w-0">
+                {navScrollState.canScrollLeft && (
+                  <div className="pointer-events-none absolute left-0 top-0 bottom-0 w-5 z-10 bg-gradient-to-r from-white dark:from-[#000000] to-transparent" />
+                )}
 
-            <button
-              onClick={() => onDocenteTabChange('estudiantes')}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors cursor-pointer ${
-                activeDocenteTab === 'estudiantes'
-                  ? 'bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-400 font-extrabold border border-indigo-200/60 dark:border-indigo-800'
-                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-[#181818]'
-              }`}
-            >
-              <Users className="w-4 h-4 text-slate-600 dark:text-slate-400" />
-              <span>Estudiantes & Representantes</span>
-            </button>
+                <div
+                  ref={navCarouselRef}
+                  role="tablist"
+                  aria-label="Módulos del Panel Institucional"
+                  onScroll={updateNavScrollState}
+                  className="flex items-center space-x-1.5 overflow-x-auto scrollbar-none scroll-smooth snap-x snap-mandatory py-0.5 px-0.5"
+                >
+                  {/* Primary Module: Horarios & En Clase Ahora */}
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeDocenteTab === 'horarios'}
+                    onClick={(e) => handleSelectNavTab('horarios', e.currentTarget)}
+                    className={`shrink-0 snap-start flex items-center space-x-1.5 px-3 py-1.5 min-h-[34px] rounded-lg text-xs font-bold whitespace-nowrap transition-colors cursor-pointer ${
+                      activeDocenteTab === 'horarios'
+                        ? 'bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-400 font-extrabold border border-indigo-200/60 dark:border-indigo-800'
+                        : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-[#181818]'
+                    }`}
+                  >
+                    <Clock className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                    <span>Horarios & En Clase Ahora</span>
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></span>
+                  </button>
 
-            {/* Asistencia General & Auditoría (ROL EXCLUSIVO: DIRECTOR Y COORDINADOR) */}
-            {(activeUser?.rol === 'director' || activeUser?.rol === 'coordinador') && (
-              <button
-                onClick={() => onDocenteTabChange('auditoria')}
-                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors cursor-pointer ${
-                  activeDocenteTab === 'auditoria'
-                    ? 'bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-400 font-extrabold border border-indigo-200/60 dark:border-indigo-800'
-                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-[#181818]'
-                }`}
-              >
-                <Clock className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                <span>Asistencia General & Auditoría</span>
-              </button>
-            )}
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeDocenteTab === 'asistencia'}
+                    onClick={(e) => handleSelectNavTab('asistencia', e.currentTarget)}
+                    className={`shrink-0 snap-start flex items-center space-x-1.5 px-3 py-1.5 min-h-[34px] rounded-lg text-xs font-bold whitespace-nowrap transition-colors cursor-pointer ${
+                      activeDocenteTab === 'asistencia'
+                        ? 'bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-400 font-extrabold border border-indigo-200/60 dark:border-indigo-800'
+                        : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-[#181818]'
+                    }`}
+                  >
+                    <CalendarCheck className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                    <span>Pase de Asistencia</span>
+                  </button>
 
-            {/* Admin Tabs: Academic Structure (Director AND Coordinador) */}
-            {(activeUser?.rol === 'director' || activeUser?.rol === 'coordinador') && (
-              <button
-                onClick={() => onDocenteTabChange('academico')}
-                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors cursor-pointer ${
-                  activeDocenteTab === 'academico'
-                    ? 'bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 font-extrabold border border-purple-200/60 dark:border-purple-800'
-                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-[#181818]'
-                }`}
-              >
-                <Building className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                <span>Niveles, Secciones & Materias</span>
-              </button>
-            )}
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeDocenteTab === 'estudiantes'}
+                    onClick={(e) => handleSelectNavTab('estudiantes', e.currentTarget)}
+                    className={`shrink-0 snap-start flex items-center space-x-1.5 px-3 py-1.5 min-h-[34px] rounded-lg text-xs font-bold whitespace-nowrap transition-colors cursor-pointer ${
+                      activeDocenteTab === 'estudiantes'
+                        ? 'bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-400 font-extrabold border border-indigo-200/60 dark:border-indigo-800'
+                        : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-[#181818]'
+                    }`}
+                  >
+                    <Users className="w-4 h-4 text-slate-600 dark:text-slate-400 shrink-0" />
+                    <span>Estudiantes & Representantes</span>
+                  </button>
 
-            {/* Strict RBAC: Staff & User Management for Director and Coordinador */}
-            {(activeUser?.rol === 'director' || activeUser?.rol === 'coordinador') && (
-              <button
-                onClick={() => onDocenteTabChange('usuarios')}
-                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors cursor-pointer ${
-                  activeDocenteTab === 'usuarios'
-                    ? 'bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 font-extrabold border border-purple-200/60 dark:border-purple-800'
-                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-[#181818]'
-                }`}
-              >
-                <UserCog className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                <span>Gestión de Personal & Roles</span>
-              </button>
-            )}
+                  {/* Asistencia General & Auditoría (ROL EXCLUSIVO: DIRECTOR Y COORDINADOR) */}
+                  {(activeUser?.rol === 'director' || activeUser?.rol === 'coordinador') && (
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={activeDocenteTab === 'auditoria'}
+                      onClick={(e) => handleSelectNavTab('auditoria', e.currentTarget)}
+                      className={`shrink-0 snap-start flex items-center space-x-1.5 px-3 py-1.5 min-h-[34px] rounded-lg text-xs font-bold whitespace-nowrap transition-colors cursor-pointer ${
+                        activeDocenteTab === 'auditoria'
+                          ? 'bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-400 font-extrabold border border-indigo-200/60 dark:border-indigo-800'
+                          : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-[#181818]'
+                      }`}
+                    >
+                      <Clock className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                      <span>Asistencia General & Auditoría</span>
+                    </button>
+                  )}
 
-            {activeUser?.rol === 'director' && (
-              <button
-                onClick={() => onDocenteTabChange('restauracion')}
-                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors cursor-pointer ${
-                  activeDocenteTab === 'restauracion'
-                    ? 'bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 font-extrabold border border-purple-200/60 dark:border-purple-800'
-                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-[#181818]'
-                }`}
-              >
-                <DatabaseBackup className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                <span>Respaldo & Restauración</span>
-              </button>
-            )}
+                  {/* Admin Tabs: Academic Structure (Director AND Coordinador) */}
+                  {(activeUser?.rol === 'director' || activeUser?.rol === 'coordinador') && (
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={activeDocenteTab === 'academico'}
+                      onClick={(e) => handleSelectNavTab('academico', e.currentTarget)}
+                      className={`shrink-0 snap-start flex items-center space-x-1.5 px-3 py-1.5 min-h-[34px] rounded-lg text-xs font-bold whitespace-nowrap transition-colors cursor-pointer ${
+                        activeDocenteTab === 'academico'
+                          ? 'bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 font-extrabold border border-purple-200/60 dark:border-purple-800'
+                          : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-[#181818]'
+                      }`}
+                    >
+                      <Building className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0" />
+                      <span>Niveles, Secciones & Materias</span>
+                    </button>
+                  )}
+
+                  {/* Strict RBAC: Staff & User Management for Director and Coordinador */}
+                  {(activeUser?.rol === 'director' || activeUser?.rol === 'coordinador') && (
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={activeDocenteTab === 'usuarios'}
+                      onClick={(e) => handleSelectNavTab('usuarios', e.currentTarget)}
+                      className={`shrink-0 snap-start flex items-center space-x-1.5 px-3 py-1.5 min-h-[34px] rounded-lg text-xs font-bold whitespace-nowrap transition-colors cursor-pointer ${
+                        activeDocenteTab === 'usuarios'
+                          ? 'bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 font-extrabold border border-purple-200/60 dark:border-purple-800'
+                          : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-[#181818]'
+                      }`}
+                    >
+                      <UserCog className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0" />
+                      <span>Gestión de Personal & Roles</span>
+                    </button>
+                  )}
+
+                  {activeUser?.rol === 'director' && (
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={activeDocenteTab === 'restauracion'}
+                      onClick={(e) => handleSelectNavTab('restauracion', e.currentTarget)}
+                      className={`shrink-0 snap-start flex items-center space-x-1.5 px-3 py-1.5 min-h-[34px] rounded-lg text-xs font-bold whitespace-nowrap transition-colors cursor-pointer ${
+                        activeDocenteTab === 'restauracion'
+                          ? 'bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 font-extrabold border border-purple-200/60 dark:border-purple-800'
+                          : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-[#181818]'
+                      }`}
+                    >
+                      <DatabaseBackup className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0" />
+                      <span>Respaldo & Restauración</span>
+                    </button>
+                  )}
+                </div>
+
+                {navScrollState.canScrollRight && (
+                  <div className="pointer-events-none absolute right-0 top-0 bottom-0 w-5 z-10 bg-gradient-to-l from-white dark:from-[#000000] to-transparent" />
+                )}
+              </div>
+
+              {navScrollState.hasOverflow && (
+                <button
+                  type="button"
+                  onClick={() => scrollNavBy('right')}
+                  disabled={!navScrollState.canScrollRight}
+                  aria-label="Desplazar módulos a la derecha"
+                  className="shrink-0 w-8 h-8 rounded-lg border border-slate-200 dark:border-[#27272A] bg-slate-50 dark:bg-[#181818] text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-[#222226] disabled:opacity-35 disabled:cursor-not-allowed flex items-center justify-center transition-colors cursor-pointer"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
