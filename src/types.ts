@@ -175,7 +175,7 @@ export interface Representante {
   activo?: boolean;
 }
 
-export type EstadoAcademicoEstudiante = 'ACTIVO' | 'EGRESADO';
+export type EstadoAcademicoEstudiante = 'ACTIVO' | 'EGRESADO' | 'RETIRADO';
 
 export interface Estudiante {
   idEstudiante: number;
@@ -417,3 +417,114 @@ export interface PaginatedResponse<T> {
   lapsoBreakdown?: LapsoBreakdownStats[];
   lapsoFiltro?: LapsoEscolar | null;
 }
+
+export interface ResumenAsistenciaConsolidado {
+  idResumen: number;
+  estudianteId: number;
+  estudianteCedula?: string;
+  estudianteNombre?: string;
+  estadoAcademico?: EstadoAcademicoEstudiante;
+  anioEscolarId: number | null;
+  nombreNivel?: string;
+  anioLectivo: string;
+  lapsoId: number | null;
+  lapsoNombre?: string | null;
+  totalRegistros: number;
+  presentes: number;
+  ausentes: number;
+  tardes: number;
+  justificados: number;
+  reposoMedico: number;
+  porcentajeAsistencia: number;
+  fechaCompactacion: string;
+}
+
+export interface CierreAnioEscolarRequest {
+  anioLectivo?: string;
+  lapsoIds?: number[];
+  incluirInactivosAniosAnteriores?: boolean;
+  incluirLapsosCerrados?: boolean;
+  nuevoAnoLectivo?: string;
+  dryRun?: boolean;
+  confirmado?: boolean;
+}
+
+export interface CierreAnioEscolarMetricas {
+  anoLectivoActivoActual: string;
+  anoLectivoActivoDespues: string;
+  totalAsistenciasAntes: number;
+  asistenciasACompactar: number;
+  asistenciasADepurar: number;
+  asistenciasConservadas: number;
+  resumenesGeneradosCount: number;
+  resumenesNuevosCount: number;
+  resumenesActualizadosCount: number;
+  estudiantesAfectadosCount: number;
+  estudiantesInactivosAfectadosCount: number;
+  lapsosAfectadosCount: number;
+}
+
+export interface CierreAnioEscolarSnapshot {
+  metadata: {
+    sistema: string;
+    tipo: 'CIERRE_ANIO_LECTIVO_Y_COMPACTACION';
+    fechaGeneracion: string;
+    generadoPor: { id?: number; email?: string; rol?: string };
+    parametros: {
+      anioLectivoObjetivo?: string | null;
+      lapsoIds?: number[];
+      incluirInactivosAniosAnteriores: boolean;
+      incluirLapsosCerrados: boolean;
+      nuevoAnoLectivo?: string | null;
+    };
+    anoLectivoActivoAntes: string;
+    anoLectivoActivoDespues: string;
+    conteos: {
+      estudiantesInvolucrados: number;
+      lapsosInvolucrados: number;
+      resumenesGenerados: number;
+      asistenciasRespaldadas: number;
+    };
+  };
+  data: {
+    estudiantesInvolucrados: Estudiante[];
+    lapsosInvolucrados: LapsoEscolar[];
+    resumenesGenerados: ResumenAsistenciaConsolidado[];
+    asistenciasRespaldadas: RegistroAsistencia[];
+  };
+}
+
+export interface CierreAnioEscolarResponse {
+  success: boolean;
+  dryRun: boolean;
+  mensaje: string;
+  metricas: CierreAnioEscolarMetricas;
+  anosDisponibles: string[];
+  lapsosDisponibles: LapsoEscolar[];
+  resumenesGenerados: ResumenAsistenciaConsolidado[];
+  respaldoSnapshot?: CierreAnioEscolarSnapshot | null;
+}
+
+export interface LimpiezaAntiguosRequest {
+  diasRetencionPush?: number;
+  diasRetencionLogs?: number;
+  limpiarPush?: boolean;
+  limpiarLogs?: boolean;
+  dryRun?: boolean;
+}
+
+export interface LimpiezaAntiguosResponse {
+  success: boolean;
+  dryRun: boolean;
+  diasRetencionPush: number;
+  diasRetencionLogs: number;
+  pushTotalAntes: number;
+  pushEliminadas: number;
+  pushConservadas: number;
+  logsTotalAntes: number;
+  logsEliminados: number;
+  logsConservados: number;
+  desgloseLogsPorAccion: Record<string, number>;
+  mensaje: string;
+}
+

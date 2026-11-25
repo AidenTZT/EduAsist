@@ -115,7 +115,7 @@ export const StudentPromotionManager: React.FC<StudentPromotionManagerProps> = (
   // Alumnos activos en el Año/Sección origen
   const originStudents = useMemo(() => {
     const filtered = estudiantes.filter((e) => {
-      if (e.estadoAcademico === 'EGRESADO') return false;
+      if (e.estadoAcademico === 'EGRESADO' || e.estadoAcademico === 'RETIRADO') return false;
       if (e.idAnoActual !== anioOrigenId) return false;
       if (seccionOrigenId !== 0 && e.idSeccion !== seccionOrigenId) return false;
       return true;

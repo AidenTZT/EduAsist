@@ -222,8 +222,9 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
     }
   }, [selectedAnoId, filteredMaterias]);
 
-  // Filter students by selected year AND section, sorted strictly by numeric Cédula
+  // Filter active students by selected year AND section, sorted strictly by numeric Cédula
   const filteredStudents = estudiantes.filter((e) => {
+    if (e.estadoAcademico === 'EGRESADO' || e.estadoAcademico === 'RETIRADO') return false;
     const matchesAno = e.idAnoActual === selectedAnoId;
     const matchesSeccion = selectedSeccionId === 0 || e.idSeccion === selectedSeccionId;
     return matchesAno && matchesSeccion;

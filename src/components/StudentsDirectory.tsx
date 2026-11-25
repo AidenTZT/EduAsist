@@ -29,6 +29,7 @@ import type {
   Representante,
   Estudiante,
   Usuario,
+  EstadoAcademicoEstudiante,
 } from '../types.ts';
 import {
   createEstudiante,
@@ -76,13 +77,22 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
   const [editingRep, setEditingRep] = useState<Representante | null>(null);
 
   // Form states with validation
-  const [studentForm, setStudentForm] = useState({
+  const [studentForm, setStudentForm] = useState<{
+    cedula: string;
+    nombres: string;
+    apellidos: string;
+    idAnoActual: number;
+    idSeccion: number;
+    idRepresentante: number;
+    estadoAcademico: EstadoAcademicoEstudiante;
+  }>({
     cedula: '',
     nombres: '',
     apellidos: '',
     idAnoActual: anos[0]?.idAno || 1,
     idSeccion: secciones[0]?.idSeccion || 1,
     idRepresentante: representantes[0]?.idRepresentante || 1,
+    estadoAcademico: 'ACTIVO',
   });
 
   const [repForm, setRepForm] = useState({
@@ -140,10 +150,17 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
         nombreAno:
           st.estadoAcademico === 'EGRESADO'
             ? 'Egresado'
+            : st.estadoAcademico === 'RETIRADO'
+            ? 'Retirado'
             : ano
             ? ano.nombreNivel
             : st.nombreNivel || 'Año Escolar',
-        nombreSeccion: st.estadoAcademico === 'EGRESADO' ? '--' : sec ? sec.nombreSeccion : st.nombreSeccion || 'A',
+        nombreSeccion:
+          st.estadoAcademico === 'EGRESADO' || st.estadoAcademico === 'RETIRADO'
+            ? '--'
+            : sec
+            ? sec.nombreSeccion
+            : st.nombreSeccion || 'A',
         registros: records,
         config: {
           nombrePlantel: cfg.nombreInstitucion,
@@ -240,6 +257,7 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
         idAnoActual: student.idAnoActual ?? (anos[0]?.idAno || 1),
         idSeccion: student.idSeccion || secciones[0]?.idSeccion || 1,
         idRepresentante: student.idRepresentante,
+        estadoAcademico: student.estadoAcademico || 'ACTIVO',
       });
     } else {
       setEditingStudent(null);
@@ -250,6 +268,7 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
         idAnoActual: anos[0]?.idAno || 1,
         idSeccion: secciones.find((s) => s.idAno === (anos[0]?.idAno || 1))?.idSeccion || 1,
         idRepresentante: representantes[0]?.idRepresentante || 1,
+        estadoAcademico: 'ACTIVO',
       });
     }
     setStudentModalOpen(true);
@@ -304,10 +323,25 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
     setFeedback(null);
     try {
       if (editingStudent) {
-        await updateEstudiante(editingStudent.idEstudiante, studentForm);
+        await updateEstudiante(editingStudent.idEstudiante, {
+          cedula: studentForm.cedula,
+          nombres: studentForm.nombres,
+          apellidos: studentForm.apellidos,
+          idAnoActual: studentForm.idAnoActual,
+          idSeccion: studentForm.idSeccion,
+          idRepresentante: studentForm.idRepresentante,
+          estadoAcademico: studentForm.estadoAcademico,
+        });
         setFeedback({ type: 'success', text: 'Datos del estudiante actualizados correctamente' });
       } else {
-        await createEstudiante(studentForm);
+        await createEstudiante({
+          cedula: studentForm.cedula,
+          nombres: studentForm.nombres,
+          apellidos: studentForm.apellidos,
+          idAnoActual: studentForm.idAnoActual,
+          idSeccion: studentForm.idSeccion,
+          idRepresentante: studentForm.idRepresentante,
+        });
         setFeedback({ type: 'success', text: 'Estudiante inscrito exitosamente' });
       }
       setStudentModalOpen(false);
@@ -439,7 +473,11 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
         ? true
         : filterAnoId === -1
         ? st.estadoAcademico === 'EGRESADO'
-        : st.estadoAcademico !== 'EGRESADO' && st.idAnoActual === filterAnoId;
+        : filterAnoId === -2
+        ? st.estadoAcademico === 'RETIRADO'
+        : st.estadoAcademico !== 'EGRESADO' &&
+          st.estadoAcademico !== 'RETIRADO' &&
+          st.idAnoActual === filterAnoId;
     const matchesSec = filterSeccionId === 0 || st.idSeccion === filterSeccionId;
     const term = searchTerm.toLowerCase();
     const fullName = `${st.nombres} ${st.apellidos}`.toLowerCase();
@@ -570,6 +608,7 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
                     </option>
                   ))}
                   <option value={-1}>Egresados</option>
+                  <option value={-2}>Retirados</option>
                 </select>
               </div>
 
@@ -669,6 +708,10 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
                     {st.estadoAcademico === 'EGRESADO' ? (
                       <span className="px-2.5 py-1 rounded-lg font-bold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
                         Egresado
+                      </span>
+                    ) : st.estadoAcademico === 'RETIRADO' ? (
+                      <span className="px-2.5 py-1 rounded-lg font-bold bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                        Retirado
                       </span>
                     ) : (
                       <>
@@ -811,13 +854,17 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
                             <span className="inline-block px-2.5 py-0.5 rounded-md font-bold text-xs bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
                               Egresado
                             </span>
+                          ) : st.estadoAcademico === 'RETIRADO' ? (
+                            <span className="inline-block px-2.5 py-0.5 rounded-md font-bold text-xs bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                              Retirado
+                            </span>
                           ) : (
                             st.nombreNivel
                           )}
                         </td>
                         <td className="py-3 px-4 text-center">
                           <span className="inline-block px-2.5 py-0.5 rounded-md font-mono font-bold text-xs bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-100 dark:border-indigo-900/60">
-                            {st.estadoAcademico === 'EGRESADO'
+                            {st.estadoAcademico === 'EGRESADO' || st.estadoAcademico === 'RETIRADO'
                               ? '--'
                               : st.nombreSeccion
                               ? `Sec. ${st.nombreSeccion}`
@@ -1371,6 +1418,28 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
                   ))}
                 </select>
               </div>
+
+              {editingStudent && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Estado Académico
+                  </label>
+                  <select
+                    value={studentForm.estadoAcademico}
+                    onChange={(e) =>
+                      setStudentForm({
+                        ...studentForm,
+                        estadoAcademico: e.target.value as EstadoAcademicoEstudiante,
+                      })
+                    }
+                    className="w-full bg-slate-50 dark:bg-[#181818] border border-slate-200 dark:border-[#27272A] text-slate-900 dark:text-[#F4F4F5] rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    <option value="ACTIVO">Activo (Cursando)</option>
+                    <option value="EGRESADO">Egresado</option>
+                    <option value="RETIRADO">Retirado</option>
+                  </select>
+                </div>
+              )}
 
               <div className="flex justify-end space-x-2 pt-2 border-t border-slate-100 dark:border-[#27272A]">
                 <button

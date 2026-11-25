@@ -369,7 +369,7 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
       if (document.visibilityState === 'visible') {
         void syncExistingPushSubscription(false);
         if (authedRep) {
-          void fetchRepresentanteNotificaciones(authedRep.idRepresentante, { limit: 60 })
+          void fetchRepresentanteNotificaciones(authedRep.idRepresentante, { limit: 10 })
             .then((res) => {
               if (active) {
                 setNotifications(res.notificaciones);
@@ -383,7 +383,7 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
 
     const handleSwMessage = (event: MessageEvent) => {
       if (event.data?.type === 'EDUASIST_PUSH_RECEIVED' && authedRep) {
-        void fetchRepresentanteNotificaciones(authedRep.idRepresentante, { limit: 60 })
+        void fetchRepresentanteNotificaciones(authedRep.idRepresentante, { limit: 10 })
           .then((res) => {
             if (active) {
               setNotifications(res.notificaciones);
@@ -2033,7 +2033,7 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
                     Bandeja de Notificaciones
                   </h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    Alertas guardadas incluso cuando el dispositivo estuvo apagado o sin conexión
+                    Últimas 10 alertas guardadas incluso cuando el dispositivo estuvo apagado o sin conexión
                   </p>
                 </div>
               </div>

@@ -16,6 +16,7 @@ import {
   Layers,
   Clock,
   Key,
+  Archive,
 } from 'lucide-react';
 import type { Usuario } from '../types.ts';
 import {
@@ -24,6 +25,7 @@ import {
   restoreDatabaseBackup,
   resetDatabaseToMaster,
 } from '../lib/api.ts';
+import { DataLifecycleManager } from './DataLifecycleManager.tsx';
 
 interface BackupRestoreManagerProps {
   currentUser: Usuario | null;
@@ -35,6 +37,7 @@ export const BackupRestoreManager: React.FC<BackupRestoreManagerProps> = ({
   onRefreshData,
 }) => {
   const isDirector = currentUser?.rol === 'director';
+  const [activeSubTab, setActiveSubTab] = useState<'respaldos' | 'mantenimiento'>('respaldos');
 
   const [stats, setStats] = useState<{
     anosEscolares: number;
@@ -43,7 +46,9 @@ export const BackupRestoreManager: React.FC<BackupRestoreManagerProps> = ({
     estudiantes: number;
     representantes: number;
     asistencias: number;
+    resumenesAsistencia?: number;
     horarios: number;
+    suscripcionesPush?: number;
     usuariosPersonal: number;
     logsAuditoria: number;
   } | null>(null);
@@ -279,6 +284,34 @@ export const BackupRestoreManager: React.FC<BackupRestoreManagerProps> = ({
         </button>
       </div>
 
+      {/* Sub-tab Switcher (Respaldos vs Cierre de Año & Retención) */}
+      <div className="bg-white dark:bg-[#121212] p-1.5 rounded-2xl border border-slate-200 dark:border-[#27272A] inline-flex flex-wrap gap-1.5">
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('respaldos')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer ${
+            activeSubTab === 'respaldos'
+              ? 'bg-rose-600 text-white shadow-xs'
+              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-[#181818]'
+          }`}
+        >
+          <Database className="w-4 h-4" />
+          <span>Respaldo & Restauración JSON</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('mantenimiento')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer ${
+            activeSubTab === 'mantenimiento'
+              ? 'bg-indigo-600 text-white shadow-xs'
+              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-[#181818]'
+          }`}
+        >
+          <Archive className="w-4 h-4" />
+          <span>Cierre de Año, Compactación & Retención</span>
+        </button>
+      </div>
+
       {/* Status Alert Banner */}
       {statusMessage && (
         <div
@@ -369,12 +402,34 @@ export const BackupRestoreManager: React.FC<BackupRestoreManagerProps> = ({
                 {stats.logsAuditoria}
               </p>
             </div>
+            <div className="bg-slate-50 dark:bg-[#181818] p-3 rounded-xl border border-slate-200/80 dark:border-[#27272A]">
+              <span className="text-[10px] font-bold uppercase text-slate-400">Resúmenes Históricos</span>
+              <p className="font-mono text-lg font-black text-indigo-600 dark:text-indigo-400 mt-0.5">
+                {stats.resumenesAsistencia ?? 0}
+              </p>
+            </div>
+            <div className="bg-slate-50 dark:bg-[#181818] p-3 rounded-xl border border-slate-200/80 dark:border-[#27272A]">
+              <span className="text-[10px] font-bold uppercase text-slate-400">Suscripciones Push</span>
+              <p className="font-mono text-lg font-black text-amber-600 dark:text-amber-400 mt-0.5">
+                {stats.suscripcionesPush ?? 0}
+              </p>
+            </div>
           </div>
         ) : (
           <div className="p-4 text-center text-xs text-slate-500">Cargando conteos relacionales...</div>
         )}
       </div>
 
+      {activeSubTab === 'mantenimiento' ? (
+        <DataLifecycleManager
+          currentUser={currentUser}
+          onDataChanged={() => {
+            loadStats();
+            if (onRefreshData) onRefreshData();
+          }}
+        />
+      ) : (
+        <>
       {/* Main Operations Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Card 1: Generar Copia de Seguridad */}
@@ -475,6 +530,8 @@ export const BackupRestoreManager: React.FC<BackupRestoreManagerProps> = ({
           </button>
         </div>
       </div>
+        </>
+      )}
 
       {/* Modal de Confirmación de Restauración */}
       {showRestoreModal && fileContent && (

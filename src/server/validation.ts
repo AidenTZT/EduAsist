@@ -640,6 +640,93 @@ export const testPushLoadSchema = z
   .optional()
   .default({});
 
+export const updateEstudianteSchema = z.object({
+  cedula: z.string().trim().min(4, 'La cédula debe tener al menos 4 caracteres.').optional(),
+  nombres: z
+    .string()
+    .trim()
+    .min(2, 'Los nombres deben tener al menos 2 caracteres.')
+    .regex(NAME_REGEX, 'Los nombres no pueden contener números ni caracteres especiales.')
+    .optional(),
+  apellidos: z
+    .string()
+    .trim()
+    .min(2, 'Los apellidos deben tener al menos 2 caracteres.')
+    .regex(NAME_REGEX, 'Los apellidos no pueden contener números ni caracteres especiales.')
+    .optional(),
+  idAnoActual: z.coerce.number().int().positive().nullable().optional(),
+  idSeccion: z.coerce.number().int().positive().nullable().optional(),
+  idRepresentante: z.coerce.number().int().positive().optional(),
+  estadoAcademico: z.enum(['ACTIVO', 'EGRESADO', 'RETIRADO']).optional(),
+});
+
+export const cierreAnioEscolarSchema = z
+  .object({
+    anioLectivo: z.preprocess(
+      (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
+      z.string().trim().min(4, 'El año lectivo debe tener al menos 4 caracteres.').max(40).optional()
+    ),
+    lapsoIds: z
+      .array(z.coerce.number().int().positive('ID de lapso inválido.'))
+      .max(50, 'Demasiados lapsos seleccionados.')
+      .optional(),
+    incluirInactivosAniosAnteriores: z.boolean().optional().default(true),
+    incluirLapsosCerrados: z.boolean().optional().default(true),
+    nuevoAnoLectivo: z.preprocess(
+      (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
+      z
+        .string()
+        .trim()
+        .min(4, 'El nuevo año lectivo debe tener al menos 4 caracteres (ej. 2026 - 2027).')
+        .max(40)
+        .optional()
+    ),
+    dryRun: z.boolean().optional().default(false),
+    confirmado: z.boolean().optional().default(false),
+  })
+  .refine((data) => data.dryRun || data.confirmado === true, {
+    message:
+      'Debe confirmar explícitamente el cierre/compactación (confirmado: true) antes de ejecutar.',
+    path: ['confirmado'],
+  });
+
+export const limpiarAntiguosSchema = z
+  .object({
+    diasRetencionPush: z.coerce
+      .number()
+      .int('Los días de retención push deben ser un número entero.')
+      .min(7, 'El umbral mínimo para suscripciones push es de 7 días.')
+      .max(3650, 'El umbral máximo permitido es de 3650 días.')
+      .optional()
+      .default(90),
+    diasRetencionLogs: z.coerce
+      .number()
+      .int('Los días de retención de logs deben ser un número entero.')
+      .min(30, 'El umbral mínimo para logs de rutina es de 30 días.')
+      .max(3650, 'El umbral máximo permitido es de 3650 días.')
+      .optional()
+      .default(180),
+    limpiarPush: z.boolean().optional().default(true),
+    limpiarLogs: z.boolean().optional().default(true),
+    dryRun: z.boolean().optional().default(false),
+  })
+  .optional()
+  .default({
+    diasRetencionPush: 90,
+    diasRetencionLogs: 180,
+    limpiarPush: true,
+    limpiarLogs: true,
+    dryRun: false,
+  });
+
+export const resumenesAsistenciaQuerySchema = z.object({
+  anioLectivo: z.preprocess(emptyToUndefined, z.string().trim().max(40).optional()),
+  estudianteId: z.preprocess(
+    emptyToUndefined,
+    z.coerce.number().int().positive('ID de estudiante inválido.').optional()
+  ),
+});
+
 /**
  * Middleware de validación con Zod para req.body
  * Si el cuerpo no cumple con el esquema, devuelve 400 Bad Request estructurado

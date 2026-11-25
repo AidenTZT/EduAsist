@@ -29,6 +29,11 @@ import type {
   PromocionMasivaPayload,
   PromocionMasivaResult,
   NotificacionRepresentante,
+  ResumenAsistenciaConsolidado,
+  CierreAnioEscolarRequest,
+  CierreAnioEscolarResponse,
+  LimpiezaAntiguosRequest,
+  LimpiezaAntiguosResponse,
 } from '../types.ts';
 
 export type { InstitutionalConfigSummary, MilestonePushStatusResponse };
@@ -809,8 +814,10 @@ export async function fetchBackupStats() {
     estudiantes: number;
     representantes: number;
     asistencias: number;
+    resumenesAsistencia?: number;
     horarios: number;
     lapsosEscolares?: number;
+    suscripcionesPush?: number;
     usuariosPersonal: number;
     logsAuditoria: number;
   }>('/backup/stats');
@@ -982,5 +989,40 @@ export async function markTodasNotificacionesLeidas(
 ): Promise<{ success: boolean; updatedCount: number }> {
   return apiFetch(`/portal/representante/${idRepresentante}/notificaciones/leer-todas`, {
     method: 'PATCH',
+  });
+}
+
+// -------------------------------------------------------------
+// 12. CIERRE DE AÑO LECTIVO, COMPACTACIÓN Y RETENCIÓN DE DATOS
+// -------------------------------------------------------------
+export async function fetchResumenesAsistencia(filters?: {
+  estudianteId?: number;
+  anioLectivo?: string;
+  lapsoId?: number;
+}): Promise<ResumenAsistenciaConsolidado[]> {
+  return apiFetch<ResumenAsistenciaConsolidado[]>(
+    `/mantenimiento/resumenes-asistencia${buildQuery({
+      estudianteId: filters?.estudianteId,
+      anioLectivo: filters?.anioLectivo,
+      lapsoId: filters?.lapsoId,
+    })}`
+  );
+}
+
+export async function ejecutarCierreAnioEscolar(
+  payload: CierreAnioEscolarRequest
+): Promise<CierreAnioEscolarResponse> {
+  return apiFetch<CierreAnioEscolarResponse>('/mantenimiento/cierre-anio-escolar', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function limpiarDatosAntiguos(
+  payload: LimpiezaAntiguosRequest
+): Promise<LimpiezaAntiguosResponse> {
+  return apiFetch<LimpiezaAntiguosResponse>('/mantenimiento/limpiar-antiguos', {
+    method: 'POST',
+    body: JSON.stringify(payload),
   });
 }

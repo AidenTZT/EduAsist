@@ -41,6 +41,10 @@ import {
   createDiaNoLaborableSchema,
   verificarFechaQuerySchema,
   testPushLoadSchema,
+  updateEstudianteSchema,
+  cierreAnioEscolarSchema,
+  limpiarAntiguosSchema,
+  resumenesAsistenciaQuerySchema,
 } from './validation.ts';
 import type { EstadoAsistencia } from '../types.ts';
 import {
@@ -1570,6 +1574,7 @@ apiRouter.put(
   '/estudiantes/:id',
   requireAuth,
   requireRole('director', 'coordinador'),
+  validateBody(updateEstudianteSchema),
   async (req: Request, res: Response) => {
     try {
       const id = Number(req.params.id);
@@ -2423,6 +2428,105 @@ apiRouter.post(
       res.json(result);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// 7.1 MANTENIMIENTO, CIERRE DE AÑO LECTIVO & POLÍTICAS DE RETENCIÓN (DIRECTOR)
+// ---------------------------------------------------------------------------
+apiRouter.get(
+  '/mantenimiento/resumenes-asistencia',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  validateQuery(resumenesAsistenciaQuerySchema),
+  async (_req: Request, res: Response) => {
+    try {
+      const query = res.locals.validatedQuery as {
+        anioLectivo?: string;
+        estudianteId?: number;
+      };
+      res.json(await db.getResumenesAsistencia(query));
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || 'Error al consultar resúmenes consolidados.' });
+    }
+  }
+);
+
+apiRouter.post(
+  '/mantenimiento/cierre-anio-escolar',
+  requireAuth,
+  requireRole('director'),
+  validateBody(cierreAnioEscolarSchema),
+  async (req: Request, res: Response) => {
+    try {
+      const authorInfo = req.user
+        ? { id: req.user.id, email: req.user.email, rol: req.user.rol }
+        : undefined;
+      const result = await db.ejecutarCierreAnioEscolar(req.body, authorInfo);
+
+      if (!result.dryRun) {
+        await db.logAuditEvent({
+          ...getAuditAuthorFromReq(req),
+          accion: 'CIERRE_ANIO_ESCOLAR_COMPACTACION',
+          entidad: 'resumenes_asistencia',
+          idEntidad: result.metricas.anoLectivoActivoDespues,
+          detalles: {
+            anoLectivoAntes: result.metricas.anoLectivoActivoActual,
+            anoLectivoDespues: result.metricas.anoLectivoActivoDespues,
+            respaldoGenerado: Boolean(result.respaldoSnapshot),
+            asistenciasCompactadas: result.metricas.asistenciasACompactar,
+            asistenciasDepuradas: result.metricas.asistenciasADepurar,
+            asistenciasConservadas: result.metricas.asistenciasConservadas,
+            resumenesGenerados: result.metricas.resumenesGeneradosCount,
+            resumenesNuevos: result.metricas.resumenesNuevosCount,
+            resumenesActualizados: result.metricas.resumenesActualizadosCount,
+            estudiantesAfectados: result.metricas.estudiantesAfectadosCount,
+          },
+        });
+      }
+
+      res.json(result);
+    } catch (e: any) {
+      res.status(400).json({
+        error: e.message || 'Error al procesar el cierre de año escolar y compactación.',
+      });
+    }
+  }
+);
+
+apiRouter.post(
+  '/mantenimiento/limpiar-antiguos',
+  requireAuth,
+  requireRole('director'),
+  validateBody(limpiarAntiguosSchema),
+  async (req: Request, res: Response) => {
+    try {
+      const result = await db.limpiarDatosAntiguos(req.body);
+
+      if (!result.dryRun) {
+        await db.logAuditEvent({
+          ...getAuditAuthorFromReq(req),
+          accion: 'LIMPIEZA_RETENCION_DATOS',
+          entidad: 'DATABASE',
+          idEntidad: 'retention_cleanup',
+          detalles: {
+            diasRetencionPush: result.diasRetencionPush,
+            diasRetencionLogs: result.diasRetencionLogs,
+            pushEliminadas: result.pushEliminadas,
+            pushConservadas: result.pushConservadas,
+            logsEliminados: result.logsEliminados,
+            logsConservados: result.logsConservados,
+            desgloseLogsPorAccion: result.desgloseLogsPorAccion,
+          },
+        });
+      }
+
+      res.json(result);
+    } catch (e: any) {
+      res.status(400).json({
+        error: e.message || 'Error al ejecutar la limpieza de registros antiguos.',
+      });
     }
   }
 );

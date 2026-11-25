@@ -36,6 +36,13 @@ import type {
   PromocionMasivaResult,
   NotificacionRepresentante,
   TipoNotificacionRepresentante,
+  EstadoAcademicoEstudiante,
+  ResumenAsistenciaConsolidado,
+  CierreAnioEscolarRequest,
+  CierreAnioEscolarResponse,
+  CierreAnioEscolarSnapshot,
+  LimpiezaAntiguosRequest,
+  LimpiezaAntiguosResponse,
 } from '../types.ts';
 
 // ---------------------------------------------------------------------------
@@ -88,6 +95,7 @@ export interface DatabaseState {
   milestoneDispatches: MilestoneDispatchRecord[];
   diasNoLaborables: DiaNoLaborable[];
   notificacionesRepresentante: NotificacionRepresentante[];
+  resumenesAsistencia: ResumenAsistenciaConsolidado[];
 }
 
 let cachedDb: DatabaseState | null = null;
@@ -188,12 +196,20 @@ async function normalizeAndEnsureIntegrity(raw: Partial<DatabaseState>): Promise
     docenteMaterias: Array.isArray(raw.docenteMaterias) ? raw.docenteMaterias : [],
     representantes: Array.isArray(raw.representantes) ? (raw.representantes as StoredRepresentante[]) : [],
     estudiantes: Array.isArray(raw.estudiantes)
-      ? raw.estudiantes.map((e) => ({
-          ...e,
-          idAnoActual: e.idAnoActual != null ? Number(e.idAnoActual) : null,
-          idSeccion: e.idSeccion != null ? Number(e.idSeccion) : null,
-          estadoAcademico: e.estadoAcademico === 'EGRESADO' ? 'EGRESADO' : 'ACTIVO',
-        }))
+      ? raw.estudiantes.map((e) => {
+          const estadoNorm: EstadoAcademicoEstudiante =
+            e.estadoAcademico === 'EGRESADO'
+              ? 'EGRESADO'
+              : e.estadoAcademico === 'RETIRADO'
+              ? 'RETIRADO'
+              : 'ACTIVO';
+          return {
+            ...e,
+            idAnoActual: estadoNorm === 'ACTIVO' && e.idAnoActual != null ? Number(e.idAnoActual) : null,
+            idSeccion: estadoNorm === 'ACTIVO' && e.idSeccion != null ? Number(e.idSeccion) : null,
+            estadoAcademico: estadoNorm,
+          };
+        })
       : [],
     asistencia: Array.isArray(raw.asistencia) ? raw.asistencia : [],
     horarios: Array.isArray(raw.horarios) ? raw.horarios : [],
@@ -226,6 +242,28 @@ async function normalizeAndEnsureIntegrity(raw: Partial<DatabaseState>): Promise
           leidaAt: n.leidaAt ?? null,
           createdAt: n.createdAt || new Date().toISOString(),
           metadata: n.metadata,
+        }))
+      : [],
+    resumenesAsistencia: Array.isArray(raw.resumenesAsistencia)
+      ? raw.resumenesAsistencia.map((r, idx) => ({
+          idResumen: Number(r.idResumen) || idx + 1,
+          estudianteId: Number(r.estudianteId),
+          ...(r.estudianteCedula ? { estudianteCedula: String(r.estudianteCedula) } : {}),
+          ...(r.estudianteNombre ? { estudianteNombre: String(r.estudianteNombre) } : {}),
+          ...(r.estadoAcademico ? { estadoAcademico: r.estadoAcademico } : {}),
+          anioEscolarId: r.anioEscolarId != null && Number(r.anioEscolarId) > 0 ? Number(r.anioEscolarId) : null,
+          ...(r.nombreNivel ? { nombreNivel: String(r.nombreNivel) } : {}),
+          anioLectivo: String(r.anioLectivo || '').trim(),
+          lapsoId: r.lapsoId != null && Number(r.lapsoId) > 0 ? Number(r.lapsoId) : null,
+          lapsoNombre: r.lapsoNombre ?? null,
+          totalRegistros: Math.max(0, Number(r.totalRegistros) || 0),
+          presentes: Math.max(0, Number(r.presentes) || 0),
+          ausentes: Math.max(0, Number(r.ausentes) || 0),
+          tardes: Math.max(0, Number(r.tardes) || 0),
+          justificados: Math.max(0, Number(r.justificados) || 0),
+          reposoMedico: Math.max(0, Number(r.reposoMedico) || 0),
+          porcentajeAsistencia: Math.min(100, Math.max(0, Number(r.porcentajeAsistencia) || 0)),
+          fechaCompactacion: String(r.fechaCompactacion || new Date().toISOString()),
         }))
       : [],
   };
@@ -1978,16 +2016,25 @@ export async function getEstudiantes(
 
   let list = db.estudiantes.map((e) => {
     const rep = repMap.get(e.idRepresentante);
-    const isEgresado = e.estadoAcademico === 'EGRESADO';
+    const estadoNorm: EstadoAcademicoEstudiante =
+      e.estadoAcademico === 'EGRESADO'
+        ? 'EGRESADO'
+        : e.estadoAcademico === 'RETIRADO'
+        ? 'RETIRADO'
+        : 'ACTIVO';
+    const isInactive = estadoNorm !== 'ACTIVO';
     return {
       ...e,
-      estadoAcademico: isEgresado ? ('EGRESADO' as const) : ('ACTIVO' as const),
-      nombreNivel: isEgresado
-        ? 'Egresado'
-        : e.idAnoActual != null
-        ? anoMap.get(e.idAnoActual) || 'Año Escolar'
-        : 'Sin Asignar',
-      nombreSeccion: isEgresado
+      estadoAcademico: estadoNorm,
+      nombreNivel:
+        estadoNorm === 'EGRESADO'
+          ? 'Egresado'
+          : estadoNorm === 'RETIRADO'
+          ? 'Retirado'
+          : e.idAnoActual != null
+          ? anoMap.get(e.idAnoActual) || 'Año Escolar'
+          : 'Sin Asignar',
+      nombreSeccion: isInactive
         ? null
         : e.idSeccion
         ? secMap.get(e.idSeccion) || null
@@ -2063,22 +2110,23 @@ export async function updateEstudiante(
           ? null
           : Number(data.idAnoActual)
         : db.estudiantes[idx].idAnoActual;
-    const nextEstado =
+    const nextEstado: EstadoAcademicoEstudiante =
       data.estadoAcademico !== undefined
         ? data.estadoAcademico
         : nextAnoActual === null
         ? 'EGRESADO'
         : 'ACTIVO';
+    const isInactive = nextEstado === 'EGRESADO' || nextEstado === 'RETIRADO';
 
     const updated: Estudiante = {
       ...db.estudiantes[idx],
       ...(data.cedula ? { cedula: data.cedula.trim() } : {}),
       ...(data.nombres ? { nombres: data.nombres.trim() } : {}),
       ...(data.apellidos ? { apellidos: data.apellidos.trim() } : {}),
-      idAnoActual: nextEstado === 'EGRESADO' ? null : nextAnoActual,
+      idAnoActual: isInactive ? null : nextAnoActual,
       ...(data.idSeccion !== undefined
-        ? { idSeccion: nextEstado === 'EGRESADO' ? null : data.idSeccion ? Number(data.idSeccion) : null }
-        : nextEstado === 'EGRESADO'
+        ? { idSeccion: isInactive ? null : data.idSeccion ? Number(data.idSeccion) : null }
+        : isInactive
         ? { idSeccion: null }
         : {}),
       ...(data.idRepresentante !== undefined ? { idRepresentante: Number(data.idRepresentante) } : {}),
@@ -2093,6 +2141,9 @@ export async function deleteEstudiante(idEstudiante: number): Promise<void> {
   return withWriteLock((db) => {
     db.estudiantes = db.estudiantes.filter((e) => e.idEstudiante !== Number(idEstudiante));
     db.asistencia = db.asistencia.filter((a) => a.idEstudiante !== Number(idEstudiante));
+    db.resumenesAsistencia = db.resumenesAsistencia.filter(
+      (r) => r.estudianteId !== Number(idEstudiante)
+    );
   });
 }
 
@@ -2148,7 +2199,7 @@ export async function promoverEstudiantesMasivo(
     for (let i = 0; i < db.estudiantes.length; i++) {
       const est = db.estudiantes[i];
       if (!idSet.has(est.idEstudiante)) continue;
-      if (est.estadoAcademico === 'EGRESADO' || est.idAnoActual !== origenAno.idAno) {
+      if (est.estadoAcademico === 'EGRESADO' || est.estadoAcademico === 'RETIRADO' || est.idAnoActual !== origenAno.idAno) {
         throw new Error(
           `El estudiante ${est.apellidos}, ${est.nombres} no pertenece al año escolar de origen seleccionado.`
         );
@@ -3202,7 +3253,7 @@ export async function getPortalRepresentanteData(
 
   const studentAnoIds = new Set(
     misEstudiantes
-      .filter((e) => e.estadoAcademico !== 'EGRESADO')
+      .filter((e) => e.estadoAcademico !== 'EGRESADO' && e.estadoAcademico !== 'RETIRADO')
       .map((e) => e.idAnoActual)
       .filter((id): id is number => id != null)
   );
@@ -3212,8 +3263,9 @@ export async function getPortalRepresentanteData(
   const lapsoActivo = lapsos.find((l) => l.activo) || null;
 
   const estudiantesConDetalles = misEstudiantes.map((est) => {
+    const isInactive = est.estadoAcademico === 'EGRESADO' || est.estadoAcademico === 'RETIRADO';
     const studentHorarios =
-      est.estadoAcademico !== 'EGRESADO' && est.idAnoActual && est.idSeccion
+      !isInactive && est.idAnoActual && est.idSeccion
         ? allHorarios.filter((h) => h.idAno === est.idAnoActual && h.idSeccion === est.idSeccion)
         : [];
     return {
@@ -3225,7 +3277,11 @@ export async function getPortalRepresentanteData(
       idSeccion: est.idSeccion,
       estadoAcademico: est.estadoAcademico || 'ACTIVO',
       nombreNivel:
-        est.estadoAcademico === 'EGRESADO' ? 'Egresado' : est.nombreNivel || 'Año Escolar',
+        est.estadoAcademico === 'EGRESADO'
+          ? 'Egresado'
+          : est.estadoAcademico === 'RETIRADO'
+          ? 'Retirado'
+          : est.nombreNivel || 'Año Escolar',
       nombreSeccion: est.nombreSeccion,
       horarios: studentHorarios,
     };
@@ -3396,10 +3452,12 @@ export async function getDatabaseStats() {
     estudiantes: db.estudiantes.length,
     representantes: db.representantes.length,
     asistencias: db.asistencia.length,
+    resumenesAsistencia: db.resumenesAsistencia.length,
     horarios: db.horarios.length,
     salidasInstitucionales: db.salidasInstitucionales.length,
     diasNoLaborables: db.diasNoLaborables.length,
     usuariosPersonal: db.users.length,
+    suscripcionesPush: db.pushSubscriptions.length,
     logsAuditoria: db.auditLogs.length,
   };
 }
@@ -3425,6 +3483,7 @@ export async function createFullDatabaseBackup(authorInfo?: { id?: number; email
         representantes: db.representantes.length,
         estudiantes: db.estudiantes.length,
         asistencias: db.asistencia.length,
+        resumenesAsistencia: db.resumenesAsistencia.length,
         horarios: db.horarios.length,
         usuariosPersonal: db.users.length,
         notificacionesRepresentante: db.notificacionesRepresentante.length,
@@ -3443,6 +3502,7 @@ export async function createFullDatabaseBackup(authorInfo?: { id?: number; email
       representantes: db.representantes,
       estudiantes: db.estudiantes,
       asistencia: db.asistencia,
+      resumenesAsistencia: db.resumenesAsistencia,
       horarios: db.horarios,
       users: db.users,
       notificacionesRepresentante: db.notificacionesRepresentante,
@@ -3463,6 +3523,8 @@ export async function restoreFullDatabaseBackup(backupPayload: any) {
       milestoneDispatches: db.milestoneDispatches,
       notificacionesRepresentante:
         backupPayload.data.notificacionesRepresentante ?? db.notificacionesRepresentante,
+      resumenesAsistencia:
+        backupPayload.data.resumenesAsistencia ?? db.resumenesAsistencia,
     });
 
     Object.assign(db, normalized);
@@ -3479,6 +3541,7 @@ export async function resetDatabaseToMasterSeed() {
   return withWriteLock(async (db) => {
     const adminHash = await bcrypt.hash('admin1234', 10);
     db.asistencia = [];
+    db.resumenesAsistencia = [];
     db.horarios = [];
     db.docenteMaterias = [];
     db.estudiantes = [];
@@ -3753,6 +3816,7 @@ export async function getSalidasPushDispatchPayload(idSalida: number) {
   const matchingEstudiantes = db.estudiantes.filter(
     (est) =>
       est.estadoAcademico !== 'EGRESADO' &&
+      est.estadoAcademico !== 'RETIRADO' &&
       est.idAnoActual != null &&
       activeRepIds.has(est.idRepresentante) &&
       (!salida.idAno || est.idAnoActual === salida.idAno)
@@ -3821,7 +3885,7 @@ export async function getEligibleRepresentantesForMilestones(): Promise<number[]
   const eligibleRepIds = new Set<number>();
   for (const est of db.estudiantes) {
     if (!est.idRepresentante || !activeRepIds.has(est.idRepresentante)) continue;
-    if (est.estadoAcademico === 'EGRESADO' || est.idAnoActual == null) continue;
+    if (est.estadoAcademico === 'EGRESADO' || est.estadoAcademico === 'RETIRADO' || est.idAnoActual == null) continue;
     if (activeAnoIds.size === 0 || activeAnoIds.has(est.idAnoActual)) {
       eligibleRepIds.add(est.idRepresentante);
     }
@@ -4028,3 +4092,541 @@ export async function markTodasNotificacionesLeidas(
     return { updatedCount };
   });
 }
+
+// ---------------------------------------------------------------------------
+// 11. COMPACTACIÓN, CIERRE DE AÑO LECTIVO Y POLÍTICAS DE RETENCIÓN
+// ---------------------------------------------------------------------------
+function normalizeAnioLabel(val: string): string {
+  return String(val || '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function inferAnioLectivoFromDate(
+  fechaYmd: string,
+  lapsos: LapsoEscolar[],
+  fallbackAnio: string
+): { anioLectivo: string; lapso: LapsoEscolar | null } {
+  const matched = findLapsoByDate(lapsos, fechaYmd);
+  if (matched) {
+    return { anioLectivo: matched.anioEscolar, lapso: matched };
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(fechaYmd)) {
+    const year = Number(fechaYmd.slice(0, 4));
+    const month = Number(fechaYmd.slice(5, 7));
+    if (year > 2000 && month >= 1 && month <= 12) {
+      const startYear = month >= 8 ? year : year - 1;
+      return { anioLectivo: `${startYear} - ${startYear + 1}`, lapso: null };
+    }
+  }
+  return { anioLectivo: fallbackAnio, lapso: null };
+}
+
+function isStudentInactive(est: Estudiante | undefined): boolean {
+  return est?.estadoAcademico === 'EGRESADO' || est?.estadoAcademico === 'RETIRADO';
+}
+
+export async function getResumenesAsistencia(filters?: {
+  anioLectivo?: string;
+  estudianteId?: number;
+}): Promise<ResumenAsistenciaConsolidado[]> {
+  const db = await readDb();
+  const estMap = new Map(db.estudiantes.map((e) => [e.idEstudiante, e]));
+  const anoMap = new Map(db.anosEscolares.map((a) => [a.idAno, a.nombreNivel]));
+  const lapsoMap = new Map(db.lapsosEscolares.map((l) => [l.id, l]));
+
+  let list = db.resumenesAsistencia.map((r) => {
+    const est = estMap.get(r.estudianteId);
+    const lapso = r.lapsoId ? lapsoMap.get(r.lapsoId) : undefined;
+    const nivel =
+      r.nombreNivel ||
+      (r.anioEscolarId ? anoMap.get(r.anioEscolarId) : undefined) ||
+      (est?.estadoAcademico === 'EGRESADO'
+        ? 'Egresado'
+        : est?.estadoAcademico === 'RETIRADO'
+        ? 'Retirado'
+        : 'Histórico');
+    return {
+      ...r,
+      estudianteCedula: r.estudianteCedula || est?.cedula,
+      estudianteNombre:
+        r.estudianteNombre || (est ? `${est.apellidos}, ${est.nombres}` : `Estudiante #${r.estudianteId}`),
+      estadoAcademico: r.estadoAcademico || est?.estadoAcademico || 'EGRESADO',
+      nombreNivel: nivel,
+      lapsoNombre: r.lapsoNombre ?? lapso?.nombre ?? null,
+    };
+  });
+
+  if (filters?.anioLectivo) {
+    const target = normalizeAnioLabel(filters.anioLectivo);
+    list = list.filter((r) => normalizeAnioLabel(r.anioLectivo) === target);
+  }
+  if (filters?.estudianteId) {
+    list = list.filter((r) => r.estudianteId === Number(filters.estudianteId));
+  }
+
+  return list.sort(
+    (a, b) =>
+      b.anioLectivo.localeCompare(a.anioLectivo) ||
+      (a.lapsoId ?? 0) - (b.lapsoId ?? 0) ||
+      (a.estudianteNombre || '').localeCompare(b.estudianteNombre || '')
+  );
+}
+
+export async function ejecutarCierreAnioEscolar(
+  params: CierreAnioEscolarRequest,
+  authorInfo?: { id?: number; email?: string; rol?: string }
+): Promise<CierreAnioEscolarResponse> {
+  const runComputation = (db: DatabaseState, mutate: boolean): CierreAnioEscolarResponse => {
+    const nowIso = new Date().toISOString();
+    const anoLectivoActual =
+      db.configuracionInstitucional.find((c) => c.clave === 'ano_lectivo')?.valor || '2025 - 2026';
+    const nuevoAnoLectivo = params.nuevoAnoLectivo?.trim() || undefined;
+    const isClosingActiveYear = Boolean(
+      nuevoAnoLectivo && normalizeAnioLabel(nuevoAnoLectivo) !== normalizeAnioLabel(anoLectivoActual)
+    );
+    const anoLectivoDespues = isClosingActiveYear ? nuevoAnoLectivo! : anoLectivoActual;
+
+    const incluirInactivos = params.incluirInactivosAniosAnteriores !== false;
+    const incluirLapsosCerrados = params.incluirLapsosCerrados !== false;
+    const selectedLapsoIds = new Set(
+      (params.lapsoIds || []).map((id) => Number(id)).filter((id) => id > 0)
+    );
+    const targetAnioNorm = params.anioLectivo ? normalizeAnioLabel(params.anioLectivo) : null;
+
+    const estMap = new Map(db.estudiantes.map((e) => [e.idEstudiante, e]));
+    const matMap = new Map(db.materias.map((m) => [m.idMateria, m]));
+    const anoMap = new Map(db.anosEscolares.map((a) => [a.idAno, a.nombreNivel]));
+    const lapsoMap = new Map(db.lapsosEscolares.map((l) => [l.id, l]));
+
+    const anosDisponiblesSet = new Set<string>([anoLectivoActual]);
+    for (const l of db.lapsosEscolares) {
+      if (l.anioEscolar) anosDisponiblesSet.add(l.anioEscolar);
+    }
+    for (const r of db.resumenesAsistencia) {
+      if (r.anioLectivo) anosDisponiblesSet.add(r.anioLectivo);
+    }
+
+    const candidates: Array<{
+      rec: RegistroAsistencia;
+      est: Estudiante | undefined;
+      anioLectivo: string;
+      lapso: LapsoEscolar | null;
+      anioEscolarId: number | null;
+    }> = [];
+
+    for (const rec of db.asistencia) {
+      const est = estMap.get(rec.idEstudiante);
+      const mat = matMap.get(rec.idMateria);
+      const lapsoById = rec.lapsoId != null ? lapsoMap.get(rec.lapsoId) || null : null;
+      const inferred = inferAnioLectivoFromDate(rec.fecha, db.lapsosEscolares, anoLectivoActual);
+      const lapso = lapsoById || inferred.lapso;
+      const recAnioLectivo = lapso?.anioEscolar || inferred.anioLectivo;
+      if (recAnioLectivo) anosDisponiblesSet.add(recAnioLectivo);
+
+      const recAnioNorm = normalizeAnioLabel(recAnioLectivo);
+      const isCurrentActiveYear = recAnioNorm === normalizeAnioLabel(anoLectivoActual);
+      const isClosingTargetYear =
+        isClosingActiveYear &&
+        isCurrentActiveYear &&
+        (!targetAnioNorm || recAnioNorm === targetAnioNorm);
+
+      // Guardián estricto: nunca tocar registros del año lectivo activo si no se está cerrando hacia un nuevo año lectivo
+      if (isCurrentActiveYear && !isClosingTargetYear) {
+        continue;
+      }
+
+      // Tampoco depurar registros de un lapso marcado como activo salvo que se esté cerrando ese año hacia uno nuevo
+      if (lapso?.activo && !isClosingTargetYear) {
+        continue;
+      }
+
+      if (targetAnioNorm && recAnioNorm !== targetAnioNorm) {
+        continue;
+      }
+
+      if (selectedLapsoIds.size > 0 && (!lapso || !selectedLapsoIds.has(lapso.id))) {
+        continue;
+      }
+
+      const inactiveEst = isStudentInactive(est);
+      const isClosedLapso = lapso ? !lapso.activo || isClosingTargetYear : !isCurrentActiveYear;
+
+      const qualifiesByInactive = incluirInactivos && inactiveEst;
+      const qualifiesByClosedPeriod =
+        incluirLapsosCerrados &&
+        isClosedLapso &&
+        (selectedLapsoIds.size > 0 || !isCurrentActiveYear || isClosingTargetYear);
+
+      if (!qualifiesByInactive && !qualifiesByClosedPeriod) {
+        continue;
+      }
+
+      candidates.push({
+        rec,
+        est,
+        anioLectivo: recAnioLectivo,
+        lapso,
+        anioEscolarId: mat?.idAno ?? est?.idAnoActual ?? null,
+      });
+    }
+
+    // Agrupar candidatos para generar resúmenes consolidados por (estudianteId, anioLectivo, lapsoId)
+    interface Bucket {
+      estudianteId: number;
+      est?: Estudiante;
+      anioEscolarId: number | null;
+      anioLectivo: string;
+      lapsoId: number | null;
+      lapsoNombre: string | null;
+      presentes: number;
+      ausentes: number;
+      tardes: number;
+      justificados: number;
+      reposoMedico: number;
+      totalRegistros: number;
+    }
+
+    const buckets = new Map<string, Bucket>();
+    const studentIdsInvolved = new Set<number>();
+    const inactiveStudentIdsInvolved = new Set<number>();
+    const lapsoIdsInvolved = new Set<number>();
+    const purgedIds = new Set<number>();
+
+    for (const item of candidates) {
+      const { rec, est, anioLectivo, lapso, anioEscolarId } = item;
+      const lapsoId = lapso?.id ?? rec.lapsoId ?? null;
+      const key = `${rec.idEstudiante}::${normalizeAnioLabel(anioLectivo)}::${lapsoId ?? 'null'}`;
+
+      let bucket = buckets.get(key);
+      if (!bucket) {
+        bucket = {
+          estudianteId: rec.idEstudiante,
+          est,
+          anioEscolarId,
+          anioLectivo,
+          lapsoId,
+          lapsoNombre: lapso?.nombre ?? null,
+          presentes: 0,
+          ausentes: 0,
+          tardes: 0,
+          justificados: 0,
+          reposoMedico: 0,
+          totalRegistros: 0,
+        };
+        buckets.set(key, bucket);
+      }
+
+      bucket.totalRegistros++;
+      if (rec.estado === 'Presente') bucket.presentes++;
+      else if (rec.estado === 'Ausente') bucket.ausentes++;
+      else if (rec.estado === 'Tarde') bucket.tardes++;
+      else if (rec.estado === 'Justificado') bucket.justificados++;
+      else if (rec.estado === 'Reposo Médico') bucket.reposoMedico++;
+
+      studentIdsInvolved.add(rec.idEstudiante);
+      if (isStudentInactive(est)) {
+        inactiveStudentIdsInvolved.add(rec.idEstudiante);
+      }
+      if (lapsoId != null) {
+        lapsoIdsInvolved.add(lapsoId);
+      }
+      purgedIds.add(rec.idAsistencia);
+    }
+
+    let nextResumenId = nextNumericId(db.resumenesAsistencia, (r) => r.idResumen);
+    let resumenesNuevosCount = 0;
+    let resumenesActualizadosCount = 0;
+    const generatedSummaries: ResumenAsistenciaConsolidado[] = [];
+    const existingIndexByKey = new Map<string, number>();
+
+    db.resumenesAsistencia.forEach((r, idx) => {
+      const k = `${r.estudianteId}::${normalizeAnioLabel(r.anioLectivo)}::${r.lapsoId ?? 'null'}`;
+      existingIndexByKey.set(k, idx);
+    });
+
+    for (const [key, b] of buckets.entries()) {
+      const existingIdx = existingIndexByKey.get(key);
+      const prev = existingIdx !== undefined ? db.resumenesAsistencia[existingIdx] : null;
+      const totalRegistros = (prev?.totalRegistros || 0) + b.totalRegistros;
+      const presentes = (prev?.presentes || 0) + b.presentes;
+      const ausentes = (prev?.ausentes || 0) + b.ausentes;
+      const tardes = (prev?.tardes || 0) + b.tardes;
+      const justificados = (prev?.justificados || 0) + b.justificados;
+      const reposoMedico = (prev?.reposoMedico || 0) + b.reposoMedico;
+      const porcentajeAsistencia =
+        totalRegistros > 0
+          ? Math.round(((presentes + tardes + justificados + reposoMedico) / totalRegistros) * 100)
+          : 0;
+
+      const summaryRecord: ResumenAsistenciaConsolidado = {
+        idResumen: prev ? prev.idResumen : nextResumenId++,
+        estudianteId: b.estudianteId,
+        estudianteCedula: b.est?.cedula,
+        estudianteNombre: b.est
+          ? `${b.est.apellidos}, ${b.est.nombres}`
+          : prev?.estudianteNombre || `Estudiante #${b.estudianteId}`,
+        estadoAcademico: b.est?.estadoAcademico || prev?.estadoAcademico || 'EGRESADO',
+        anioEscolarId: b.anioEscolarId ?? prev?.anioEscolarId ?? null,
+        nombreNivel:
+          (b.anioEscolarId ? anoMap.get(b.anioEscolarId) : undefined) ||
+          (b.est?.estadoAcademico === 'EGRESADO'
+            ? 'Egresado'
+            : b.est?.estadoAcademico === 'RETIRADO'
+            ? 'Retirado'
+            : prev?.nombreNivel || 'Histórico'),
+        anioLectivo: b.anioLectivo,
+        lapsoId: b.lapsoId,
+        lapsoNombre: b.lapsoNombre ?? prev?.lapsoNombre ?? null,
+        totalRegistros,
+        presentes,
+        ausentes,
+        tardes,
+        justificados,
+        reposoMedico,
+        porcentajeAsistencia,
+        fechaCompactacion: nowIso,
+      };
+
+      if (prev) {
+        resumenesActualizadosCount++;
+        if (mutate && existingIdx !== undefined) {
+          db.resumenesAsistencia[existingIdx] = summaryRecord;
+        }
+      } else {
+        resumenesNuevosCount++;
+        if (mutate) {
+          db.resumenesAsistencia.push(summaryRecord);
+        }
+      }
+
+      generatedSummaries.push(summaryRecord);
+    }
+
+    const totalAsistenciasAntes = db.asistencia.length;
+    const asistenciasADepurar = purgedIds.size;
+    const asistenciasConservadas = totalAsistenciasAntes - asistenciasADepurar;
+
+    let respaldoSnapshot: CierreAnioEscolarSnapshot | null = null;
+    if (mutate) {
+      // 1. Generar paquete de respaldo JSON estructurado ANTES de depurar filas detalladas
+      const estudiantesInvolucrados = Array.from(studentIdsInvolved)
+        .map((id) => estMap.get(id))
+        .filter((e): e is Estudiante => Boolean(e));
+      const lapsosInvolucrados = Array.from(lapsoIdsInvolved)
+        .map((id) => lapsoMap.get(id))
+        .filter((l): l is LapsoEscolar => Boolean(l));
+      const asistenciasRespaldadas = candidates.map((c) => c.rec);
+
+      respaldoSnapshot = {
+        metadata: {
+          sistema: 'EduAsist - Cierre de Año Lectivo y Compactación Histórica',
+          tipo: 'CIERRE_ANIO_LECTIVO_Y_COMPACTACION',
+          fechaGeneracion: nowIso,
+          generadoPor: authorInfo || { email: 'director@eduasist.edu', rol: 'director' },
+          parametros: {
+            anioLectivoObjetivo: params.anioLectivo || null,
+            lapsoIds: params.lapsoIds || [],
+            incluirInactivosAniosAnteriores: incluirInactivos,
+            incluirLapsosCerrados,
+            nuevoAnoLectivo: isClosingActiveYear ? nuevoAnoLectivo! : null,
+          },
+          anoLectivoActivoAntes: anoLectivoActual,
+          anoLectivoActivoDespues: anoLectivoDespues,
+          conteos: {
+            estudiantesInvolucrados: estudiantesInvolucrados.length,
+            lapsosInvolucrados: lapsosInvolucrados.length,
+            resumenesGenerados: generatedSummaries.length,
+            asistenciasRespaldadas: asistenciasRespaldadas.length,
+          },
+        },
+        data: {
+          estudiantesInvolucrados,
+          lapsosInvolucrados,
+          resumenesGenerados: generatedSummaries,
+          asistenciasRespaldadas,
+        },
+      };
+
+      // 2. Depurar únicamente las filas detalladas compactadas (conservando el año lectivo activo)
+      if (purgedIds.size > 0) {
+        db.asistencia = db.asistencia.filter((a) => !purgedIds.has(a.idAsistencia));
+      }
+
+      // 3. Si se especificó un nuevo año lectivo, cerrar lapsos del año saliente y actualizar configuración
+      if (isClosingActiveYear && nuevoAnoLectivo) {
+        const closingNorm = normalizeAnioLabel(anoLectivoActual);
+        db.lapsosEscolares = db.lapsosEscolares.map((l) =>
+          normalizeAnioLabel(l.anioEscolar) === closingNorm
+            ? { ...l, activo: false, updatedAt: nowIso }
+            : l
+        );
+        upsertConfigEntry(
+          db,
+          'ano_lectivo',
+          nuevoAnoLectivo,
+          'Año lectivo escolar vigente'
+        );
+      }
+    }
+
+    const lapsosDisponibles = [...db.lapsosEscolares].sort(
+      (a, b) => b.anioEscolar.localeCompare(a.anioEscolar) || a.numeroLapso - b.numeroLapso
+    );
+
+    const mensaje = !mutate
+      ? asistenciasADepurar > 0
+        ? `Vista previa lista: se compactarán ${asistenciasADepurar} registro(s) en ${generatedSummaries.length} resumen(es) consolidado(s), conservando ${asistenciasConservadas} registro(s) activos.`
+        : isClosingActiveYear
+        ? `Vista previa: se cerrará el año lectivo ${anoLectivoActual} y se activará ${anoLectivoDespues} (sin registros históricos elegibles para depurar).`
+        : 'No se encontraron registros históricos elegibles para compactar con los filtros actuales. Los registros del año lectivo activo permanecen protegidos.'
+      : `Cierre y compactación completados: ${asistenciasADepurar} asistencia(s) respaldadas y depuradas en ${generatedSummaries.length} resumen(es) consolidado(s). Se conservaron ${asistenciasConservadas} registro(s) vigentes.`;
+
+    return {
+      success: true,
+      dryRun: !mutate,
+      mensaje,
+      metricas: {
+        anoLectivoActivoActual: anoLectivoActual,
+        anoLectivoActivoDespues: anoLectivoDespues,
+        totalAsistenciasAntes,
+        asistenciasACompactar: asistenciasADepurar,
+        asistenciasADepurar,
+        asistenciasConservadas,
+        resumenesGeneradosCount: generatedSummaries.length,
+        resumenesNuevosCount,
+        resumenesActualizadosCount,
+        estudiantesAfectadosCount: studentIdsInvolved.size,
+        estudiantesInactivosAfectadosCount: inactiveStudentIdsInvolved.size,
+        lapsosAfectadosCount: lapsoIdsInvolved.size,
+      },
+      anosDisponibles: Array.from(anosDisponiblesSet).sort((a, b) => b.localeCompare(a)),
+      lapsosDisponibles,
+      resumenesGenerados: generatedSummaries,
+      respaldoSnapshot,
+    };
+  };
+
+  if (params.dryRun) {
+    const db = await readDb();
+    return runComputation(db, false);
+  }
+
+  if (!params.confirmado) {
+    throw new Error('Debe confirmar explícitamente la operación antes de ejecutar la compactación.');
+  }
+
+  return withWriteLock((db) => runComputation(db, true));
+}
+
+// Acciones operativas de rutina elegibles para limpieza por antigüedad.
+// Todo evento crítico (cierres, respaldos, restauraciones, promociones, justificaciones, bajas) queda fuera y protegido.
+const ROUTINE_AUDIT_ACTIONS = new Set([
+  'PUSH_LOTE_DESPACHADO',
+  'PUSH_HITO_MANUAL',
+  'PUSH_HITO_AUTO',
+  'PUSH_PRUEBA_ENVIADA',
+  'PUSH_SUSCRIPCION_REGISTRADA',
+  'PUSH_SUSCRIPCION_ROTADA',
+  'SALIDA_NOTIFICADA_PUSH',
+  'LOGIN_EXITOSO',
+  'LOGOUT_SESION',
+]);
+
+export async function limpiarDatosAntiguos(
+  params: LimpiezaAntiguosRequest = {}
+): Promise<LimpiezaAntiguosResponse> {
+  const diasRetencionPush = Math.min(3650, Math.max(7, Number(params.diasRetencionPush ?? 90)));
+  const diasRetencionLogs = Math.min(3650, Math.max(30, Number(params.diasRetencionLogs ?? 180)));
+  const limpiarPush = params.limpiarPush !== false;
+  const limpiarLogs = params.limpiarLogs !== false;
+  const dryRun = Boolean(params.dryRun);
+
+  const evaluateCleanup = (db: DatabaseState, mutate: boolean): LimpiezaAntiguosResponse => {
+    const nowMs = Date.now();
+    const pushCutoffMs = nowMs - diasRetencionPush * 86_400_000;
+    const logsCutoffMs = nowMs - diasRetencionLogs * 86_400_000;
+
+    const pushTotalAntes = db.pushSubscriptions.length;
+    const logsTotalAntes = db.auditLogs.length;
+
+    const pushToKeep: PushSubscriptionRecord[] = [];
+    let pushEliminadas = 0;
+
+    for (const sub of db.pushSubscriptions) {
+      if (!limpiarPush) {
+        pushToKeep.push(sub);
+        continue;
+      }
+      const refDateStr = sub.lastUsed || sub.createdAt;
+      const refMs = refDateStr ? Date.parse(refDateStr) : NaN;
+      const isInactive = sub.activa === false;
+      const isStale = !Number.isNaN(refMs) && refMs < pushCutoffMs;
+
+      if (isInactive || isStale) {
+        pushEliminadas++;
+      } else {
+        pushToKeep.push(sub);
+      }
+    }
+
+    const logsToKeep: AuditLog[] = [];
+    let logsEliminados = 0;
+    const desgloseLogsPorAccion: Record<string, number> = {};
+
+    for (const log of db.auditLogs) {
+      if (!limpiarLogs) {
+        logsToKeep.push(log);
+        continue;
+      }
+      const actionKey = String(log.accion || '').trim().toUpperCase();
+      const createdMs = log.createdAt ? Date.parse(log.createdAt) : NaN;
+      const isRoutine = ROUTINE_AUDIT_ACTIONS.has(actionKey);
+      const isOlderThanThreshold = !Number.isNaN(createdMs) && createdMs < logsCutoffMs;
+
+      if (isRoutine && isOlderThanThreshold) {
+        logsEliminados++;
+        desgloseLogsPorAccion[actionKey] = (desgloseLogsPorAccion[actionKey] || 0) + 1;
+      } else {
+        logsToKeep.push(log);
+      }
+    }
+
+    if (mutate) {
+      if (limpiarPush) {
+        db.pushSubscriptions = pushToKeep;
+      }
+      if (limpiarLogs) {
+        db.auditLogs = logsToKeep;
+      }
+    }
+
+    const pushConservadas = pushTotalAntes - pushEliminadas;
+    const logsConservados = logsTotalAntes - logsEliminados;
+
+    const mensaje = dryRun
+      ? `Vista previa de retención: se detectaron ${pushEliminadas} suscripción(es) push obsoleta(s) (>${diasRetencionPush} días) y ${logsEliminados} log(s) de rutina antiguo(s) (>${diasRetencionLogs} días) listos para depurar.`
+      : `Limpieza ejecutada: ${pushEliminadas} suscripción(es) push obsoleta(s) y ${logsEliminados} registro(s) de auditoría de rutina depurados. Eventos críticos y registros vigentes conservados.`;
+
+    return {
+      success: true,
+      dryRun,
+      diasRetencionPush,
+      diasRetencionLogs,
+      pushTotalAntes,
+      pushEliminadas,
+      pushConservadas,
+      logsTotalAntes,
+      logsEliminados,
+      logsConservados,
+      desgloseLogsPorAccion,
+      mensaje,
+    };
+  };
+
+  if (dryRun) {
+    const db = await readDb();
+    return evaluateCleanup(db, false);
+  }
+
+  return withWriteLock((db) => evaluateCleanup(db, true));
+}
+
