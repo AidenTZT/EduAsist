@@ -33,6 +33,7 @@ import {
   updateLapsoSchema,
   activateLapsoSchema,
   pushSubscriptionSchema,
+  pushRotateSchema,
   pushUnsubscribeSchema,
   updateHorariosConfigSchema,
   triggerMilestonePushSchema,
@@ -46,6 +47,8 @@ import {
   getVapidPublicKey,
   dispatchAttendancePushNotificationsDirect,
   dispatchDeparturePushNotificationsDirect,
+  buildAttendanceNotificationDetails,
+  buildDepartureNotificationDetails,
   sendTestPushToSubscriptions,
   testPushLoad,
   type PushAuditAuthor,
@@ -113,6 +116,32 @@ const loginRateLimiter = rateLimit({
   handler: (_req, res) => {
     res.status(429).json({
       error: 'Demasiados intentos de inicio de sesión. Por seguridad, espere unos minutos antes de reintentar.',
+      code: 'RATE_LIMITED',
+    });
+  },
+});
+
+const pushRotateRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) => {
+    res.status(429).json({
+      error: 'Demasiadas solicitudes de rotación de suscripción push.',
+      code: 'RATE_LIMITED',
+    });
+  },
+});
+
+const loadTestRateLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) => {
+    res.status(429).json({
+      error: 'Límite de pruebas de carga alcanzado. Espere unos minutos antes de reintentar.',
       code: 'RATE_LIMITED',
     });
   },
@@ -543,15 +572,55 @@ function hhmmToMinutes(hhmm: string): number {
   return (h || 0) * 60 + (m || 0);
 }
 
+async function recordSalidaInboxNotifications(
+  payload: Awaited<ReturnType<typeof db.getSalidasPushDispatchPayload>>,
+  clock: { todayYmd: string; currentHhmm: string }
+): Promise<void> {
+  if (!payload.targets.length) return;
+  try {
+    await db.createNotificacionesRepresentanteBatch(
+      payload.targets.map((target) => {
+        const { title, body } = buildDepartureNotificationDetails({
+          nombreSalida: payload.salida.nombre,
+          horaSalida: payload.salida.horaSalida,
+          alcanceNombre: payload.salida.nombreNivel || 'Toda la institución',
+          nombreInstitucion: payload.nombreInstitucion,
+          studentNames: target.estudiantes.map((e) => e.nombre),
+        });
+        return {
+          idRepresentante: target.idRepresentante,
+          tipo: 'salida' as const,
+          titulo: title,
+          mensaje: body,
+          fechaEvento: clock.todayYmd,
+          horaEvento: clock.currentHhmm,
+          metadata: {
+            idSalida: payload.salida.idSalida,
+            nombreSalida: payload.salida.nombre,
+            alcance: payload.salida.nombreNivel || 'Toda la institución',
+          },
+        };
+      })
+    );
+  } catch (inboxErr) {
+    console.warn('[WebPush] Error guardando salida en bandeja de notificaciones:', inboxErr);
+  }
+}
+
 async function executeSalidaPushNotification(
   idSalida: number,
   motivo: 'auto' | 'manual',
   clockOverride?: { todayYmd: string; currentHhmm: string },
   author?: PushAuditAuthor,
-  preloadedPayload?: Awaited<ReturnType<typeof db.getSalidasPushDispatchPayload>>
+  preloadedPayload?: Awaited<ReturnType<typeof db.getSalidasPushDispatchPayload>>,
+  skipInboxPersist: boolean = false
 ) {
   const clock = clockOverride || getSchoolZonedClock();
   const payload = preloadedPayload || (await db.getSalidasPushDispatchPayload(idSalida));
+
+  if (!skipInboxPersist) {
+    await recordSalidaInboxNotifications(payload, clock);
+  }
 
   let sent = 0;
   let failed = 0;
@@ -772,7 +841,7 @@ apiRouter.delete(
 apiRouter.post(
   '/salidas/:id/notificar',
   requireAuth,
-  requireRole('director', 'coordinador', 'docente'),
+  requireRole('director', 'coordinador'),
   async (req: Request, res: Response) => {
     try {
       const idSalida = Number(req.params.id);
@@ -783,6 +852,8 @@ apiRouter.post(
       const clock = getSchoolZonedClock();
       const author = getAuditAuthorFromReq(req);
       const payload = await db.getSalidasPushDispatchPayload(idSalida);
+
+      await recordSalidaInboxNotifications(payload, clock);
 
       if (payload.subscriptions.length === 0 || payload.targets.length === 0) {
         await db.markSalidaNotified(payload.salida.idSalida, clock.todayYmd, clock.currentHhmm);
@@ -799,7 +870,7 @@ apiRouter.post(
           totalDispositivos: 0,
           totalRepresentantes: payload.targets.length,
           expiredRemoved: 0,
-          mensaje: `Hora de salida (${payload.salida.horaSalida}) registrada. No hay dispositivos de representantes suscritos a alertas push para este alcance.`,
+          mensaje: `Hora de salida (${payload.salida.horaSalida}) registrada en el portal de representantes. No hay dispositivos suscritos a push para este alcance.`,
         });
       }
 
@@ -811,7 +882,8 @@ apiRouter.post(
           'manual',
           clock,
           author,
-          payload
+          payload,
+          true
         );
         await db.logAuditEvent({
           ...author,
@@ -1805,17 +1877,54 @@ const handleRegistrarAsistenciaBatch = async (req: Request, res: Response) => {
       },
     });
 
-    // Despacho asíncrono desacoplado de notificaciones Web Push en lotes controlados
+    // Persistir en la bandeja de notificaciones de cada representante activo y luego despachar Web Push desacoplado
+    const pushPayload = await db.getPushDispatchPayloadForBatch(Number(idMateria), saved);
+    if (pushPayload.records.length > 0) {
+      try {
+        await db.createNotificacionesRepresentanteBatch(
+          pushPayload.records.map((rec) => {
+            const { title, body } = buildAttendanceNotificationDetails({
+              estudianteNombreCompleto: rec.estudianteNombre,
+              nombreMateria: pushPayload.nombreMateria,
+              estado: rec.estado,
+              fecha,
+              horaEntrada: rec.horaEntrada || '',
+              motivoJustificacion: rec.motivoJustificacion,
+            });
+            return {
+              idRepresentante: rec.idRepresentante,
+              tipo:
+                rec.estado === 'Justificado' || rec.estado === 'Reposo Médico'
+                  ? ('justificacion' as const)
+                  : ('asistencia' as const),
+              titulo: title,
+              mensaje: body,
+              fechaEvento: fecha,
+              horaEvento: (rec.horaEntrada || '').slice(0, 5),
+              metadata: {
+                idEstudiante: rec.idEstudiante,
+                estudianteNombre: rec.estudianteNombre,
+                idMateria: pushPayload.idMateria,
+                nombreMateria: pushPayload.nombreMateria,
+                estado: rec.estado as EstadoAsistencia,
+              },
+            };
+          })
+        );
+      } catch (inboxErr) {
+        console.warn('[WebPush] Error guardando asistencia en bandeja de notificaciones:', inboxErr);
+      }
+    }
+
     const author = getAuditAuthorFromReq(req);
     enqueueDetachedPushJob(`asistencia_batch_${idMateria}`, async () => {
-      const payload = await db.getPushDispatchPayloadForBatch(Number(idMateria), saved);
-      if (payload.subscriptions.length > 0 && payload.records.length > 0) {
+      if (pushPayload.subscriptions.length > 0 && pushPayload.records.length > 0) {
         await dispatchAttendancePushNotificationsDirect({
-          idMateria: payload.idMateria,
-          nombreMateria: payload.nombreMateria,
+          idMateria: pushPayload.idMateria,
+          nombreMateria: pushPayload.nombreMateria,
           fecha,
-          records: payload.records,
-          subscriptions: payload.subscriptions,
+          records: pushPayload.records,
+          subscriptions: pushPayload.subscriptions,
           author,
           context: 'asistencia_batch',
         });
@@ -1898,19 +2007,53 @@ const handleUpdateAsistenciaJustificacion = async (req: Request, res: Response) 
       },
     });
 
-    // Notificar al representante de forma asíncrona desacoplada
+    // Persistir en bandeja de notificaciones y notificar al representante de forma asíncrona desacoplada
+    const pushPayload = await db.getPushDispatchPayloadForBatch(updated.registro.idMateria, [
+      updated.registro,
+    ]);
+    if (pushPayload.records.length > 0) {
+      try {
+        await db.createNotificacionesRepresentanteBatch(
+          pushPayload.records.map((rec) => {
+            const { title, body } = buildAttendanceNotificationDetails({
+              estudianteNombreCompleto: rec.estudianteNombre,
+              nombreMateria: pushPayload.nombreMateria,
+              estado: rec.estado,
+              fecha: updated.registro.fecha,
+              horaEntrada: rec.horaEntrada || '',
+              motivoJustificacion: rec.motivoJustificacion,
+            });
+            return {
+              idRepresentante: rec.idRepresentante,
+              tipo: 'justificacion' as const,
+              titulo: title,
+              mensaje: body,
+              fechaEvento: updated.registro.fecha,
+              horaEvento: (rec.horaEntrada || '').slice(0, 5),
+              metadata: {
+                idEstudiante: rec.idEstudiante,
+                estudianteNombre: rec.estudianteNombre,
+                idMateria: pushPayload.idMateria,
+                nombreMateria: pushPayload.nombreMateria,
+                estado: rec.estado as EstadoAsistencia,
+              },
+            };
+          })
+        );
+      } catch (inboxErr) {
+        console.warn('[WebPush] Error guardando justificación en bandeja:', inboxErr);
+      }
+    }
+
     const author = getAuditAuthorFromReq(req);
     enqueueDetachedPushJob(`asistencia_justificacion_${idAsistencia}`, async () => {
-      const payload = await db.getPushDispatchPayloadForBatch(updated.registro.idMateria, [
-        updated.registro,
-      ]);
-      if (payload.subscriptions.length > 0 && payload.records.length > 0) {
+      if (pushPayload.subscriptions.length > 0 && pushPayload.records.length > 0) {
         await dispatchAttendancePushNotificationsDirect({
-          idMateria: payload.idMateria,
-          nombreMateria: payload.nombreMateria,
+          idMateria: pushPayload.idMateria,
+          nombreMateria: pushPayload.nombreMateria,
           fecha: updated.registro.fecha,
-          records: payload.records,
-          subscriptions: payload.subscriptions,
+          records: pushPayload.records,
+          subscriptions: pushPayload.subscriptions,
           author,
           context: 'asistencia_justificacion',
         });
@@ -1965,6 +2108,81 @@ apiRouter.get('/portal/representante/:id', requireAuth, async (req: Request, res
     res.status(500).json({ error: e.message });
   }
 });
+
+apiRouter.get(
+  '/portal/representante/:id/notificaciones',
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const idRep = Number(req.params.id);
+      if (req.authType === 'representante') {
+        if (!req.representante || req.representante.idRepresentante !== idRep) {
+          return res.status(403).json({ error: 'Acceso denegado a notificaciones de otro representante.' });
+        }
+      } else if (!req.user || !['director', 'coordinador'].includes(req.user.rol)) {
+        return res.status(403).json({ error: 'Acceso denegado.' });
+      }
+      const onlyUnread = req.query.unread === 'true';
+      const limit = req.query.limit ? Number(req.query.limit) : 60;
+      res.json(await db.getNotificacionesRepresentante(idRep, { onlyUnread, limit }));
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.patch(
+  '/portal/representante/:id/notificaciones/leer-todas',
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const idRep = Number(req.params.id);
+      if (
+        req.authType !== 'representante' ||
+        !req.representante ||
+        req.representante.idRepresentante !== idRep
+      ) {
+        return res.status(403).json({
+          error: 'Solo el representante titular puede marcar sus notificaciones como leídas.',
+        });
+      }
+      const result = await db.markTodasNotificacionesLeidas(idRep);
+      res.json({ success: true, ...result });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.patch(
+  '/portal/representante/:id/notificaciones/:idNotif/leer',
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const idRep = Number(req.params.id);
+      const idNotif = Number(req.params.idNotif);
+      if (!Number.isInteger(idNotif) || idNotif <= 0) {
+        return res.status(400).json({ error: 'ID de notificación inválido.' });
+      }
+      if (
+        req.authType !== 'representante' ||
+        !req.representante ||
+        req.representante.idRepresentante !== idRep
+      ) {
+        return res.status(403).json({
+          error: 'Solo el representante titular puede marcar su notificación como leída.',
+        });
+      }
+      const updated = await db.markNotificacionLeida(idRep, idNotif);
+      if (!updated) {
+        return res.status(404).json({ error: 'Notificación no encontrada.' });
+      }
+      res.json({ success: true, notificacion: updated });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  }
+);
 
 // ---------------------------------------------------------------------------
 // 6. HORARIOS ESCOLARES & ANTICONFLICTOS
@@ -2264,6 +2482,58 @@ apiRouter.post(
 );
 
 apiRouter.post(
+  '/push/rotate',
+  pushRotateRateLimiter,
+  validateBody(pushRotateSchema),
+  async (req: Request, res: Response) => {
+    try {
+      // Si hay cookie/token vigente, restringir rotación al representante autenticado
+      let expectedRepId: number | undefined;
+      const token = extractToken(req);
+      if (token) {
+        const decoded = verifyToken(token);
+        if (decoded?.type === 'representante') {
+          expectedRepId = decoded.userId;
+        }
+      }
+
+      const { oldEndpoint, oldKeys, newSubscription } = req.body;
+      const result = await db.rotatePushSubscriptionByPreviousKeys({
+        oldEndpoint,
+        oldP256dh: oldKeys.p256dh,
+        oldAuth: oldKeys.auth,
+        newEndpoint: newSubscription.endpoint,
+        newP256dh: newSubscription.keys.p256dh,
+        newAuth: newSubscription.keys.auth,
+        userAgent: req.headers['user-agent'] || null,
+        expectedRepId,
+      });
+
+      if (!result.rotated) {
+        return res.status(401).json({
+          error: 'No se pudo validar la suscripción previa para rotación silenciosa.',
+          code: 'ROTATION_UNAUTHORIZED',
+        });
+      }
+
+      await db.logAuditEvent({
+        idUsuario: result.idRepresentante ?? null,
+        rol: 'representante',
+        accion: 'PUSH_SUSCRIPCION_ROTADA',
+        entidad: 'push_subscriptions',
+        idEntidad: result.idSubscription,
+        ipOrigen: req.ip || req.socket.remoteAddress || null,
+        userAgent: req.headers['user-agent'] || null,
+      });
+
+      return res.json({ success: true, idSubscription: result.idSubscription });
+    } catch (e: any) {
+      return res.status(400).json({ error: e.message || 'Error rotando suscripción push.' });
+    }
+  }
+);
+
+apiRouter.post(
   '/push/unsubscribe',
   requireAuth,
   validateBody(pushUnsubscribeSchema),
@@ -2363,6 +2633,7 @@ apiRouter.post(
   '/push/test-load',
   requireAuth,
   requireRole('director'),
+  loadTestRateLimiter,
   validateBody(testPushLoadSchema),
   async (req: Request, res: Response) => {
     try {
@@ -2392,7 +2663,8 @@ apiRouter.post(
 
       res.json(report);
     } catch (e: any) {
-      res.status(500).json({ error: e.message || 'Error ejecutando prueba de carga simulada.' });
+      const status = String(e?.message || '').includes('en ejecución') ? 409 : 500;
+      res.status(status).json({ error: e.message || 'Error ejecutando prueba de carga simulada.' });
     }
   }
 );

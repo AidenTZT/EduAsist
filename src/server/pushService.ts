@@ -5,6 +5,7 @@ import { performance } from 'perf_hooks';
 import * as webPushModule from 'web-push';
 import type { PushSubscription as WebPushSubscription } from 'web-push';
 import * as db from './localDb.ts';
+import { isSafePushEndpointUrl } from './validation.ts';
 
 const webPush = ((webPushModule as any).default || webPushModule) as typeof webPushModule;
 
@@ -257,6 +258,13 @@ async function sendSingleTaskIsolated(
   attempt: number,
   customSender?: (task: ResilientPushTask, timeoutMs: number, attempt: number) => Promise<unknown>
 ): Promise<SingleSendOutcome> {
+  if (!customSender && !isSafePushEndpointUrl(task.endpoint)) {
+    return {
+      ok: false,
+      statusCode: 400,
+      errorMessage: 'Endpoint Web Push bloqueado por política de seguridad HTTPS.',
+    };
+  }
   let guardTimer: NodeJS.Timeout | null = null;
   try {
     const sendPromise = customSender
@@ -354,6 +362,7 @@ export async function dispatchPushTasksResilient(
   let lastError: string | undefined;
 
   const expiredEndpointsSet = new Set<string>();
+  const succeededEndpointsSet = new Set<string>();
   const retry429Queue: ResilientPushTask[] = [];
 
   const handleOutcome = (
@@ -363,6 +372,7 @@ export async function dispatchPushTasksResilient(
   ) => {
     if (outcome.ok) {
       enviadosExitosos += 1;
+      succeededEndpointsSet.add(task.endpoint);
       if (!allowRetry429) {
         reintentosExitosos429 += 1;
       }
@@ -463,6 +473,15 @@ export async function dispatchPushTasksResilient(
     }
   }
 
+  // Registrar marca temporal lastUsed en suscripciones entregadas exitosamente
+  if (!dryRun && succeededEndpointsSet.size > 0) {
+    try {
+      await db.markPushSubscriptionsUsed(Array.from(succeededEndpointsSet));
+    } catch (lastUsedErr) {
+      console.warn('[WebPush] Error actualizando lastUsed de suscripciones:', lastUsedErr);
+    }
+  }
+
   const duracionMs = Math.max(1, Math.round(performance.now() - startedAt));
   const metrics: PushDispatchMetrics = {
     totalObjetivos: tasks.length,
@@ -510,24 +529,20 @@ export async function dispatchPushTasksResilient(
 // ---------------------------------------------------------------------------
 // Constructores y Despachadores Específicos de Dominio Escolar
 // ---------------------------------------------------------------------------
-function buildAttendanceNotificationPayload(params: {
+export function buildAttendanceNotificationDetails(params: {
   estudianteNombreCompleto: string;
   nombreMateria: string;
   estado: string;
   fecha: string;
   horaEntrada: string;
-  idEstudiante: number;
-  idMateria: number;
   motivoJustificacion?: string | null;
-}) {
+}): { title: string; body: string } {
   const {
     estudianteNombreCompleto,
     nombreMateria,
     estado,
     fecha,
     horaEntrada,
-    idEstudiante,
-    idMateria,
     motivoJustificacion,
   } = params;
 
@@ -562,20 +577,35 @@ function buildAttendanceNotificationPayload(params: {
       break;
   }
 
+  return { title, body };
+}
+
+function buildAttendanceNotificationPayload(params: {
+  estudianteNombreCompleto: string;
+  nombreMateria: string;
+  estado: string;
+  fecha: string;
+  horaEntrada: string;
+  idEstudiante: number;
+  idMateria: number;
+  motivoJustificacion?: string | null;
+}) {
+  const { title, body } = buildAttendanceNotificationDetails(params);
+
   return JSON.stringify({
     title,
     body,
     icon: '/pwa-192x192.png',
     badge: '/pwa-192x192.png',
-    tag: `asistencia-${idEstudiante}-${idMateria}-${fecha}`,
+    tag: `asistencia-${params.idEstudiante}-${params.idMateria}-${params.fecha}`,
     renotify: true,
-    requireInteraction: estado === 'Ausente',
+    requireInteraction: params.estado === 'Ausente',
     data: {
       url: '/#portal-representante',
-      idEstudiante,
-      idMateria,
-      fecha,
-      estado,
+      idEstudiante: params.idEstudiante,
+      idMateria: params.idMateria,
+      fecha: params.fecha,
+      estado: params.estado,
     },
   });
 }
@@ -670,8 +700,8 @@ export async function dispatchAttendancePushNotificationsDirect(
           },
         },
         payload,
-        TTL: 3600,
-        urgency: record.estado === 'Ausente' ? 'high' : 'normal',
+        TTL: 86400, // 24 horas para garantizar entrega en móviles apagados o en ahorro de batería
+        urgency: record.estado === 'Ausente' || record.estado === 'Tarde' ? 'high' : 'normal',
       });
     }
   }
@@ -775,6 +805,27 @@ function formatStudentListForNotification(nombres: string[]): string {
   return `${nombres.slice(0, -1).join(', ')} y ${nombres[nombres.length - 1]}`;
 }
 
+export function buildDepartureNotificationDetails(params: {
+  nombreSalida: string;
+  horaSalida: string;
+  alcanceNombre: string;
+  nombreInstitucion?: string;
+  studentNames: string[];
+}): { title: string; body: string } {
+  const horaCorta = params.horaSalida ? params.horaSalida.slice(0, 5) : '';
+  const studentNamesText = formatStudentListForNotification(params.studentNames);
+  const scopeSuffix =
+    params.alcanceNombre && params.alcanceNombre !== 'Toda la institución'
+      ? ` (${params.alcanceNombre})`
+      : '';
+  return {
+    title: `Hora de Salida Escolar • ${params.nombreSalida}${scopeSuffix}`,
+    body: `La jornada escolar de ${studentNamesText} ha finalizado (${horaCorta}). Hora oficial de salida en ${
+      params.nombreInstitucion || 'la institución'
+    }.`,
+  };
+}
+
 export async function dispatchDeparturePushNotificationsDirect(
   params: DirectSalidaPushDispatchParams
 ): Promise<ResilientPushDispatchResult> {
@@ -813,19 +864,17 @@ export async function dispatchDeparturePushNotificationsDirect(
     const matchingSubs = subsByRep.get(target.idRepresentante);
     if (!matchingSubs?.length) continue;
 
-    const studentNamesText = formatStudentListForNotification(
-      target.estudiantes.map((e) => e.nombre)
-    );
-    const scopeSuffix =
-      params.alcanceNombre && params.alcanceNombre !== 'Toda la institución'
-        ? ` (${params.alcanceNombre})`
-        : '';
+    const { title, body } = buildDepartureNotificationDetails({
+      nombreSalida: params.nombreSalida,
+      horaSalida: params.horaSalida,
+      alcanceNombre: params.alcanceNombre,
+      nombreInstitucion: params.nombreInstitucion,
+      studentNames: target.estudiantes.map((e) => e.nombre),
+    });
 
     const payload = JSON.stringify({
-      title: `Hora de Salida Escolar • ${params.nombreSalida}${scopeSuffix}`,
-      body: `La jornada escolar de ${studentNamesText} ha finalizado (${horaCorta}). Hora oficial de salida en ${
-        params.nombreInstitucion || 'la institución'
-      }.`,
+      title,
+      body,
       icon: '/pwa-192x192.png',
       badge: '/pwa-192x192.png',
       tag: `salida-${params.idSalida}-${target.idRepresentante}-${params.fecha}`,
@@ -852,7 +901,7 @@ export async function dispatchDeparturePushNotificationsDirect(
           },
         },
         payload,
-        TTL: 3600,
+        TTL: 43200, // 12 horas para avisos de salida
         urgency: 'high',
       });
     }
@@ -889,6 +938,37 @@ export interface MilestonePushDispatchParams {
   author?: PushAuditAuthor;
 }
 
+export function buildMilestoneNotificationDetails(params: {
+  tipo: 'receso' | 'salida';
+  nombreInstitucion?: string;
+  horaRecesoInicio: string;
+  horaRecesoFin: string;
+  horaSalida: string;
+  mensajePersonalizado?: string;
+}): { title: string; body: string; recInicio: string; recFin: string; salidaHora: string } {
+  const institucion = params.nombreInstitucion?.trim() || 'la institución';
+  const recInicio = (params.horaRecesoInicio || '09:15').slice(0, 5);
+  const recFin = (params.horaRecesoFin || '09:45').slice(0, 5);
+  const salidaHora = (params.horaSalida || '13:00').slice(0, 5);
+  const customMsg = params.mensajePersonalizado?.trim();
+
+  const isReceso = params.tipo === 'receso';
+  const title = isReceso
+    ? `Receso Escolar • ${institucion}`
+    : `Hora de Salida Escolar • ${institucion}`;
+  const defaultBody = isReceso
+    ? `Inicia el receso escolar (${recInicio} - ${recFin}) en ${institucion}.`
+    : `Ha culminado la jornada escolar (${salidaHora}) en ${institucion}. Los estudiantes se encuentran en hora de salida.`;
+
+  return {
+    title,
+    body: customMsg || defaultBody,
+    recInicio,
+    recFin,
+    salidaHora,
+  };
+}
+
 export async function dispatchMilestonePushNotifications(
   params: MilestonePushDispatchParams
 ): Promise<ResilientPushDispatchResult> {
@@ -915,23 +995,12 @@ export async function dispatchMilestonePushNotifications(
   // Deduplicar por endpoint para evitar envíos duplicados al mismo dispositivo
   const uniqueSubs = Array.from(new Map(validSubs.map((s) => [s.endpoint, s])).values());
 
-  const institucion = params.nombreInstitucion?.trim() || 'la institución';
-  const recInicio = (params.horaRecesoInicio || '09:15').slice(0, 5);
-  const recFin = (params.horaRecesoFin || '09:45').slice(0, 5);
-  const salidaHora = (params.horaSalida || '13:00').slice(0, 5);
-  const customMsg = params.mensajePersonalizado?.trim();
-
-  const isReceso = params.tipo === 'receso';
-  const title = isReceso
-    ? `Receso Escolar • ${institucion}`
-    : `Hora de Salida Escolar • ${institucion}`;
-  const defaultBody = isReceso
-    ? `Inicia el receso escolar (${recInicio} - ${recFin}) en ${institucion}.`
-    : `Ha culminado la jornada escolar (${salidaHora}) en ${institucion}. Los estudiantes se encuentran en hora de salida.`;
+  const { title, body, recInicio, recFin, salidaHora } =
+    buildMilestoneNotificationDetails(params);
 
   const payload = JSON.stringify({
     title,
-    body: customMsg || defaultBody,
+    body,
     icon: '/pwa-192x192.png',
     badge: '/pwa-192x192.png',
     tag: `milestone-${params.tipo}-${Date.now()}`,
@@ -946,6 +1015,8 @@ export async function dispatchMilestonePushNotifications(
     },
   });
 
+  const ttlSeconds = params.tipo === 'salida' ? 43200 : 1800;
+
   const tasks: ResilientPushTask[] = uniqueSubs.map((sub) => ({
     endpoint: sub.endpoint,
     subscription: {
@@ -953,7 +1024,7 @@ export async function dispatchMilestonePushNotifications(
       keys: { p256dh: sub.p256dh, auth: sub.auth },
     },
     payload,
-    TTL: 3600,
+    TTL: ttlSeconds,
     urgency: 'high',
   }));
 
@@ -1012,10 +1083,17 @@ export interface PushLoadTestReport {
   };
 }
 
+let isLoadTestRunning = false;
+
 export async function testPushLoad(
   options: PushLoadTestOptions = {}
 ): Promise<PushLoadTestReport> {
-  const totalObjetivos = Math.min(10_000, Math.max(100, Math.floor(options.totalObjetivos ?? 3000)));
+  if (isLoadTestRunning) {
+    throw new Error('Ya hay una prueba de carga simulada en ejecución. Espere unos segundos.');
+  }
+  isLoadTestRunning = true;
+  try {
+    const totalObjetivos = Math.min(10_000, Math.max(100, Math.floor(options.totalObjetivos ?? 3000)));
   const chunkSize = clampChunkSize(options.chunkSize ?? DEFAULT_CHUNK_SIZE);
   const chunkDelayMs = clampChunkDelay(options.chunkDelayMs ?? DEFAULT_CHUNK_DELAY_MS);
   const simulatedLatencyMs = Math.max(0, Math.min(20, Number(options.simulatedLatencyMs ?? 2)));
@@ -1180,4 +1258,7 @@ export async function testPushLoad(
 
   console.log('[WebPush:testPushLoad] Reporte de prueba de carga simulada:', JSON.stringify(report, null, 2));
   return report;
+  } finally {
+    isLoadTestRunning = false;
+  }
 }

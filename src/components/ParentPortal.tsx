@@ -35,6 +35,8 @@ import {
   CalendarRange,
   RefreshCw,
   DoorOpen,
+  Inbox,
+  CheckCheck,
 } from 'lucide-react';
 import type {
   Representante,
@@ -46,6 +48,7 @@ import type {
   LoginResponse,
   LapsoEscolar,
   LapsoBreakdownStats,
+  NotificacionRepresentante,
 } from '../types.ts';
 import {
   loginWithCredentials,
@@ -56,6 +59,9 @@ import {
   subscribeToPushNotifications,
   unsubscribeFromPushNotifications,
   sendTestPushNotification,
+  fetchRepresentanteNotificaciones,
+  markNotificacionLeida,
+  markTodasNotificacionesLeidas,
 } from '../lib/api.ts';
 import { formatCedula, formatDateEs, formatTime } from '../lib/utils.ts';
 import { generateStudentAttendancePDF } from '../lib/pdfGenerator.ts';
@@ -159,6 +165,13 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
   // Active student tab
   const [selectedStudentId, setSelectedStudentId] = useState<number | null>(null);
 
+  // Persistent Notification Inbox state
+  const [notifications, setNotifications] = useState<NotificacionRepresentante[]>([]);
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState<number>(0);
+  const [inboxOpen, setInboxOpen] = useState<boolean>(false);
+  const [inboxFilter, setInboxFilter] = useState<'all' | 'unread'>('all');
+  const [markingAllRead, setMarkingAllRead] = useState<boolean>(false);
+
   // Sub-tabs: 'asistencias' | 'horario' & Lapso filter
   const [activeTab, setActiveTab] = useState<'asistencias' | 'horario'>('asistencias');
   const [selectedLapsoId, setSelectedLapsoId] = useState<number>(0);
@@ -253,7 +266,9 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
 
   useEffect(() => {
     let active = true;
-    async function syncExistingPushSubscription() {
+    let lastSyncAt = 0;
+
+    async function syncExistingPushSubscription(force: boolean = false) {
       if (!authedRep) {
         if (active) setPushSubscribed(false);
         return;
@@ -262,6 +277,12 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
         if (active) setPushSubscribed(false);
         return;
       }
+      const now = Date.now();
+      if (!force && now - lastSyncAt < 25_000) {
+        return;
+      }
+      lastSyncAt = now;
+
       try {
         // Pre-registrar Service Worker y precargar VAPID key para conservar el gesto de usuario en iOS Safari
         let registration = await navigator.serviceWorker.getRegistration('/');
@@ -341,11 +362,70 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
         if (active) setPushSubscribed(false);
       }
     }
-    syncExistingPushSubscription();
+
+    syncExistingPushSubscription(true);
+
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        void syncExistingPushSubscription(false);
+        if (authedRep) {
+          void fetchRepresentanteNotificaciones(authedRep.idRepresentante, { limit: 60 })
+            .then((res) => {
+              if (active) {
+                setNotifications(res.notificaciones);
+                setUnreadNotificationsCount(res.unreadCount);
+              }
+            })
+            .catch(() => {});
+        }
+      }
+    };
+
+    const handleSwMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'EDUASIST_PUSH_RECEIVED' && authedRep) {
+        void fetchRepresentanteNotificaciones(authedRep.idRepresentante, { limit: 60 })
+          .then((res) => {
+            if (active) {
+              setNotifications(res.notificaciones);
+              setUnreadNotificationsCount(res.unreadCount);
+            }
+          })
+          .catch(() => {});
+      }
+    };
+
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', handleSwMessage);
+    }
+
     return () => {
       active = false;
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.removeEventListener('message', handleSwMessage);
+      }
     };
   }, [authedRep, pushSupported]);
+
+  // Sincronizar App Badge PWA con el contador de notificaciones no leídas
+  useEffect(() => {
+    try {
+      const navAny = navigator as unknown as {
+        setAppBadge?: (count?: number) => Promise<void>;
+        clearAppBadge?: () => Promise<void>;
+      };
+      if (unreadNotificationsCount > 0 && typeof navAny.setAppBadge === 'function') {
+        void navAny.setAppBadge(unreadNotificationsCount).catch(() => {});
+      } else if (unreadNotificationsCount === 0 && typeof navAny.clearAppBadge === 'function') {
+        void navAny.clearAppBadge().catch(() => {});
+      }
+    } catch {
+      // Ignorar si el navegador no soporta Badging API
+    }
+  }, [unreadNotificationsCount]);
 
   const handleTogglePushNotifications = async () => {
     if (!pushSupported) {
@@ -501,6 +581,8 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
     try {
       const data = await fetchPortalRepresentante(idRep);
       setPortalData(data);
+      setNotifications(data.notificaciones || []);
+      setUnreadNotificationsCount(Number(data.notificacionesNoLeidas || 0));
       if (data.estudiantes && data.estudiantes.length > 0) {
         setSelectedStudentId((prev) => {
           if (preserveSelection && prev && data.estudiantes.some((s) => s.idEstudiante === prev)) {
@@ -528,6 +610,38 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
   const handleRefreshPortal = async () => {
     if (!authedRep || loadingPortal) return;
     await loadPortal(authedRep.idRepresentante, true);
+  };
+
+  const handleMarkNotificationRead = async (notif: NotificacionRepresentante) => {
+    if (!authedRep || notif.leida) return;
+    setNotifications((prev) =>
+      prev.map((item) =>
+        item.idNotificacion === notif.idNotificacion
+          ? { ...item, leida: true, leidaAt: new Date().toISOString() }
+          : item
+      )
+    );
+    setUnreadNotificationsCount((prev) => Math.max(0, prev - 1));
+    try {
+      await markNotificacionLeida(authedRep.idRepresentante, notif.idNotificacion);
+    } catch {
+      // Ignorar error transitorio; el próximo refresco sincronizará
+    }
+  };
+
+  const handleMarkAllNotificationsRead = async () => {
+    if (!authedRep || unreadNotificationsCount === 0 || markingAllRead) return;
+    setMarkingAllRead(true);
+    try {
+      await markTodasNotificacionesLeidas(authedRep.idRepresentante);
+      const nowIso = new Date().toISOString();
+      setNotifications((prev) => prev.map((n) => ({ ...n, leida: true, leidaAt: n.leidaAt || nowIso })));
+      setUnreadNotificationsCount(0);
+    } catch {
+      // Silenciar fallo transitorio
+    } finally {
+      setMarkingAllRead(false);
+    }
   };
 
   const handleCredentialLogin = async (e: React.FormEvent) => {
@@ -1066,6 +1180,26 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
 
             <button
               type="button"
+              onClick={() => setInboxOpen(true)}
+              className={`relative px-3.5 py-2 rounded-xl text-xs font-bold transition-colors flex items-center space-x-1.5 cursor-pointer shadow-2xs border ${
+                unreadNotificationsCount > 0
+                  ? 'text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/50 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 border-indigo-200 dark:border-indigo-800'
+                  : 'text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-[#181818] hover:bg-slate-200 dark:hover:bg-[#27272A] border-slate-200 dark:border-[#27272A]'
+              }`}
+              title="Abrir bandeja de notificaciones y alertas recibidas"
+              aria-label="Abrir bandeja de notificaciones"
+            >
+              <Inbox className="w-3.5 h-3.5" />
+              <span>Bandeja</span>
+              {unreadNotificationsCount > 0 && (
+                <span className="ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] font-black bg-rose-600 text-white leading-tight">
+                  {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
               onClick={handleRefreshPortal}
               disabled={loadingPortal}
               className="px-3.5 py-2 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-[#181818] hover:bg-slate-200 dark:hover:bg-[#27272A] border border-slate-200 dark:border-[#27272A] transition-colors flex items-center space-x-1.5 cursor-pointer shadow-2xs disabled:opacity-60"
@@ -1160,6 +1294,29 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
                 <strong>&ldquo;Activar Alertas Push&rdquo;</strong>.
               </li>
             </ol>
+          </div>
+        )}
+
+        {unreadNotificationsCount > 0 && (
+          <div className="mt-4 p-3 rounded-2xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/80 flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div className="flex items-center gap-2 text-indigo-900 dark:text-indigo-200 font-semibold">
+              <BellRing className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+              <span>
+                Tienes <strong>{unreadNotificationsCount}</strong>{' '}
+                {unreadNotificationsCount === 1 ? 'alerta nueva sin leer' : 'alertas nuevas sin leer'}{' '}
+                (asistencia, receso o salida).
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setInboxFilter('unread');
+                setInboxOpen(true);
+              }}
+              className="px-3 py-1 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold cursor-pointer transition-colors shrink-0"
+            >
+              Ver Alertas
+            </button>
           </div>
         )}
 
@@ -1859,6 +2016,185 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {/* Notification Inbox Modal */}
+      {inboxOpen && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-[#121212] rounded-3xl max-w-2xl w-full max-h-[88vh] flex flex-col border border-slate-200 dark:border-[#27272A] shadow-2xl overflow-hidden">
+            <div className="p-5 border-b border-slate-200 dark:border-[#27272A] bg-slate-50/90 dark:bg-[#181818] flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center border border-indigo-200 dark:border-indigo-800 shrink-0">
+                  <Inbox className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-slate-900 dark:text-[#F4F4F5]">
+                    Bandeja de Notificaciones
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Alertas guardadas incluso cuando el dispositivo estuvo apagado o sin conexión
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setInboxOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-[#27272A] cursor-pointer"
+                aria-label="Cerrar bandeja"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="px-5 py-3 border-b border-slate-200 dark:border-[#27272A] flex flex-wrap items-center justify-between gap-2 bg-white dark:bg-[#121212]">
+              <div className="inline-flex rounded-xl bg-slate-100 dark:bg-[#181818] p-1 border border-slate-200 dark:border-[#27272A]">
+                <button
+                  type="button"
+                  onClick={() => setInboxFilter('all')}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
+                    inboxFilter === 'all'
+                      ? 'bg-white dark:bg-[#27272A] text-slate-900 dark:text-[#F4F4F5] shadow-2xs'
+                      : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                  }`}
+                >
+                  Todas ({notifications.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInboxFilter('unread')}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
+                    inboxFilter === 'unread'
+                      ? 'bg-white dark:bg-[#27272A] text-indigo-700 dark:text-indigo-300 shadow-2xs'
+                      : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                  }`}
+                >
+                  No leídas ({unreadNotificationsCount})
+                </button>
+              </div>
+
+              {unreadNotificationsCount > 0 && (
+                <button
+                  type="button"
+                  onClick={handleMarkAllNotificationsRead}
+                  disabled={markingAllRead}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 border border-emerald-200 dark:border-emerald-800 cursor-pointer disabled:opacity-50"
+                >
+                  <CheckCheck className="w-3.5 h-3.5" />
+                  <span>{markingAllRead ? 'Marcando...' : 'Marcar todas como leídas'}</span>
+                </button>
+              )}
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
+              {(() => {
+                const visibleNotifications =
+                  inboxFilter === 'unread'
+                    ? notifications.filter((n) => !n.leida)
+                    : notifications;
+
+                if (visibleNotifications.length === 0) {
+                  return (
+                    <div className="py-12 text-center text-slate-500 dark:text-slate-400">
+                      <Bell className="w-9 h-9 mx-auto mb-2 opacity-40" />
+                      <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                        {inboxFilter === 'unread'
+                          ? 'No tienes notificaciones pendientes por leer'
+                          : 'Aún no hay notificaciones registradas'}
+                      </p>
+                      <p className="text-xs mt-1">
+                        Aquí aparecerán los registros de asistencia, justificaciones, recesos y horas de salida.
+                      </p>
+                    </div>
+                  );
+                }
+
+                return visibleNotifications.map((notif) => {
+                  let iconBox =
+                    'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800';
+                  let IconComp = CheckCircle2;
+
+                  if (notif.tipo === 'receso') {
+                    iconBox =
+                      'bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-800';
+                    IconComp = Coffee;
+                  } else if (notif.tipo === 'salida') {
+                    iconBox =
+                      'bg-sky-50 dark:bg-sky-950/50 text-sky-600 dark:text-sky-400 border-sky-200 dark:border-sky-800';
+                    IconComp = DoorOpen;
+                  } else if (notif.tipo === 'justificacion') {
+                    iconBox =
+                      'bg-violet-50 dark:bg-violet-950/50 text-violet-600 dark:text-violet-400 border-violet-200 dark:border-violet-800';
+                    IconComp = HelpCircle;
+                  } else if (notif.metadata?.estado === 'Ausente') {
+                    iconBox =
+                      'bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-800';
+                    IconComp = XCircle;
+                  } else if (notif.metadata?.estado === 'Tarde') {
+                    iconBox =
+                      'bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-800';
+                    IconComp = Clock;
+                  }
+
+                  return (
+                    <div
+                      key={notif.idNotificacion}
+                      onClick={() => void handleMarkNotificationRead(notif)}
+                      className={`p-3.5 rounded-2xl border transition-all flex items-start gap-3 ${
+                        notif.leida
+                          ? 'bg-white dark:bg-[#181818]/70 border-slate-200 dark:border-[#27272A]'
+                          : 'bg-indigo-50/50 dark:bg-indigo-950/25 border-indigo-200 dark:border-indigo-800/70 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-950/40'
+                      }`}
+                    >
+                      <div
+                        className={`w-9 h-9 rounded-xl border flex items-center justify-center shrink-0 mt-0.5 ${iconBox}`}
+                      >
+                        <IconComp className="w-4 h-4" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-2">
+                          <h4 className="text-xs font-bold text-slate-900 dark:text-[#F4F4F5] leading-snug">
+                            {notif.titulo}
+                          </h4>
+                          {!notif.leida && (
+                            <span
+                              className="w-2.5 h-2.5 rounded-full bg-indigo-600 dark:bg-indigo-400 shrink-0 mt-1"
+                              title="Sin leer (clic para marcar como leída)"
+                            />
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-600 dark:text-slate-300 mt-1 leading-relaxed">
+                          {notif.mensaje}
+                        </p>
+                        <div className="flex flex-wrap items-center gap-2 mt-2 text-[11px] text-slate-500 dark:text-slate-400">
+                          {notif.fechaEvento && (
+                            <span className="inline-flex items-center gap-1">
+                              <Calendar className="w-3 h-3" />
+                              {formatDateEs(notif.fechaEvento)}
+                            </span>
+                          )}
+                          {notif.horaEvento && (
+                            <span className="font-mono font-semibold text-slate-600 dark:text-slate-300">
+                              • {formatTime(notif.horaEvento)}
+                            </span>
+                          )}
+                          {notif.metadata?.alcance && (
+                            <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-[#27272A] text-[10px] font-semibold">
+                              {notif.metadata.alcance}
+                            </span>
+                          )}
+                          {!notif.leida && (
+                            <span className="ml-auto text-[10px] font-bold text-indigo-600 dark:text-indigo-400">
+                              Toca para marcar leída
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
           </div>
         </div>
       )}

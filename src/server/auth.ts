@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import crypto from 'crypto';
 import type { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import {
@@ -14,17 +15,20 @@ import type { RolUsuario, Usuario, Representante, AuthTokenPayload } from '../ty
 // -------------------------------------------------------------
 // BLINDAJE DE SECRETOS CRIPTOGRÁFICOS Y TOLERANCIA A ENTORNO
 // -------------------------------------------------------------
-const FALLBACK_DEFAULT_SECRET = 'c8f5e13d9a7b240183e921d78a94cb2f57a3e8104d6b9c8e1a7428fb053d269e';
 const rawJwtSecret = process.env.JWT_SECRET?.trim();
+const isProdEnv = process.env.NODE_ENV === 'production';
 
 if (!rawJwtSecret || rawJwtSecret.length < 32) {
-  console.warn(
-    '[SECURITY NOTICE]: JWT_SECRET no está definida en las variables de entorno o tiene menos de 32 caracteres. Usando clave de respaldo segura de 256 bits para desarrollo/build.'
-  );
+  const levelMsg = isProdEnv
+    ? '[SECURITY WARNING]: JWT_SECRET no está definida o tiene menos de 32 caracteres en producción. Se generó una clave aleatoria en memoria; defina JWT_SECRET en las variables de entorno para persistir sesiones entre reinicios.'
+    : '[SECURITY NOTICE]: JWT_SECRET no está definida en el entorno o tiene menos de 32 caracteres. Usando clave aleatoria efímera en memoria para desarrollo.';
+  console.warn(levelMsg);
 }
 
 export const JWT_SECRET =
-  rawJwtSecret && rawJwtSecret.length >= 32 ? rawJwtSecret : FALLBACK_DEFAULT_SECRET;
+  rawJwtSecret && rawJwtSecret.length >= 32
+    ? rawJwtSecret
+    : crypto.randomBytes(32).toString('hex');
 
 export const AUTH_COOKIE_NAME = 'eduasist_token';
 const LEGACY_AUTH_COOKIE_NAME = 'educontrol_token';

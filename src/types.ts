@@ -256,6 +256,31 @@ export interface RegistroAsistencia {
   idRepresentante?: number;
 }
 
+export type TipoNotificacionRepresentante = 'asistencia' | 'justificacion' | 'receso' | 'salida';
+
+export interface NotificacionRepresentante {
+  idNotificacion: number;
+  idRepresentante: number;
+  tipo: TipoNotificacionRepresentante;
+  titulo: string;
+  mensaje: string;
+  fechaEvento: string;
+  horaEvento: string;
+  leida: boolean;
+  leidaAt?: string | null;
+  createdAt: string;
+  metadata?: {
+    idEstudiante?: number;
+    estudianteNombre?: string;
+    idMateria?: number;
+    nombreMateria?: string;
+    estado?: EstadoAsistencia;
+    idSalida?: number;
+    nombreSalida?: string;
+    alcance?: string;
+  };
+}
+
 export interface PortalRepresentanteData {
   representante: Representante;
   configuracion: {
@@ -266,6 +291,8 @@ export interface PortalRepresentanteData {
   lapsoActivo?: LapsoEscolar | null;
   recesos: RecesoInstitucional[];
   salidas?: SalidaInstitucional[];
+  notificaciones?: NotificacionRepresentante[];
+  notificacionesNoLeidas?: number;
   estudiantes: Array<{
     idEstudiante: number;
     cedula: string;

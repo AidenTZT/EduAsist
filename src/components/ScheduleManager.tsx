@@ -1146,7 +1146,7 @@ export const ScheduleManager: React.FC<ScheduleManagerProps> = ({
                       Push Auto
                     </span>
                   )}
-                  {sal.activo !== false && (
+                  {canManage && sal.activo !== false && (
                     <button
                       type="button"
                       onClick={() => handleNotifySalida(sal.idSalida)}

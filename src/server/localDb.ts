@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { assertNoNumbersInName } from '../lib/validation.ts';
 import { getLocalTodayDateString } from '../lib/utils.ts';
@@ -33,6 +34,8 @@ import type {
   VerificarDiaNoLaborableResult,
   PromocionMasivaPayload,
   PromocionMasivaResult,
+  NotificacionRepresentante,
+  TipoNotificacionRepresentante,
 } from '../types.ts';
 
 // ---------------------------------------------------------------------------
@@ -84,6 +87,7 @@ export interface DatabaseState {
   pushSubscriptions: PushSubscriptionRecord[];
   milestoneDispatches: MilestoneDispatchRecord[];
   diasNoLaborables: DiaNoLaborable[];
+  notificacionesRepresentante: NotificacionRepresentante[];
 }
 
 let cachedDb: DatabaseState | null = null;
@@ -205,6 +209,23 @@ async function normalizeAndEnsureIntegrity(raw: Partial<DatabaseState>): Promise
           motivo: String(d.motivo || 'Día No Laborable').trim(),
           lapsoId: d.lapsoId != null && Number(d.lapsoId) > 0 ? Number(d.lapsoId) : null,
           createdAt: d.createdAt || new Date().toISOString(),
+        }))
+      : [],
+    notificacionesRepresentante: Array.isArray(raw.notificacionesRepresentante)
+      ? raw.notificacionesRepresentante.map((n, idx) => ({
+          idNotificacion: Number(n.idNotificacion) || idx + 1,
+          idRepresentante: Number(n.idRepresentante),
+          tipo: (['asistencia', 'justificacion', 'receso', 'salida'].includes(String(n.tipo))
+            ? n.tipo
+            : 'asistencia') as TipoNotificacionRepresentante,
+          titulo: String(n.titulo || 'Notificación Escolar'),
+          mensaje: String(n.mensaje || ''),
+          fechaEvento: String(n.fechaEvento || ''),
+          horaEvento: String(n.horaEvento || ''),
+          leida: Boolean(n.leida),
+          leidaAt: n.leidaAt ?? null,
+          createdAt: n.createdAt || new Date().toISOString(),
+          metadata: n.metadata,
         }))
       : [],
   };
@@ -1940,6 +1961,9 @@ export async function deleteRepresentante(id: number): Promise<void> {
     }
     db.representantes = db.representantes.filter((r) => r.idRepresentante !== Number(id));
     db.pushSubscriptions = db.pushSubscriptions.filter((p) => p.idRepresentante !== Number(id));
+    db.notificacionesRepresentante = db.notificacionesRepresentante.filter(
+      (n) => n.idRepresentante !== Number(id)
+    );
   });
 }
 
@@ -3207,6 +3231,8 @@ export async function getPortalRepresentanteData(
     };
   });
 
+  const inboxResult = await getNotificacionesRepresentante(idRepresentante, { limit: 60 });
+
   return {
     representante: rep,
     configuracion: {
@@ -3217,6 +3243,8 @@ export async function getPortalRepresentanteData(
     lapsoActivo,
     recesos,
     salidas,
+    notificaciones: inboxResult.notificaciones,
+    notificacionesNoLeidas: inboxResult.unreadCount,
     estudiantes: estudiantesConDetalles,
     asistencias: asistenciasAll
       .sort((a, b) => b.fecha.localeCompare(a.fecha) || b.horaEntrada.localeCompare(a.horaEntrada))
@@ -3399,6 +3427,7 @@ export async function createFullDatabaseBackup(authorInfo?: { id?: number; email
         asistencias: db.asistencia.length,
         horarios: db.horarios.length,
         usuariosPersonal: db.users.length,
+        notificacionesRepresentante: db.notificacionesRepresentante.length,
       },
     },
     data: {
@@ -3416,6 +3445,7 @@ export async function createFullDatabaseBackup(authorInfo?: { id?: number; email
       asistencia: db.asistencia,
       horarios: db.horarios,
       users: db.users,
+      notificacionesRepresentante: db.notificacionesRepresentante,
     },
   };
 }
@@ -3431,6 +3461,8 @@ export async function restoreFullDatabaseBackup(backupPayload: any) {
       auditLogs: db.auditLogs,
       pushSubscriptions: db.pushSubscriptions,
       milestoneDispatches: db.milestoneDispatches,
+      notificacionesRepresentante:
+        backupPayload.data.notificacionesRepresentante ?? db.notificacionesRepresentante,
     });
 
     Object.assign(db, normalized);
@@ -3452,6 +3484,7 @@ export async function resetDatabaseToMasterSeed() {
     db.estudiantes = [];
     db.representantes = [];
     db.pushSubscriptions = [];
+    db.notificacionesRepresentante = [];
     db.users = [
       {
         id: 1,
@@ -3536,6 +3569,95 @@ export async function deletePushSubscriptionsByEndpoints(endpoints: string[]): P
   });
 }
 
+function timingSafeEqualStr(a: string, b: string): boolean {
+  const hashA = crypto.createHash('sha256').update(String(a || ''), 'utf8').digest();
+  const hashB = crypto.createHash('sha256').update(String(b || ''), 'utf8').digest();
+  return crypto.timingSafeEqual(hashA, hashB);
+}
+
+export async function rotatePushSubscriptionByPreviousKeys(params: {
+  oldEndpoint: string;
+  oldP256dh: string;
+  oldAuth: string;
+  newEndpoint: string;
+  newP256dh: string;
+  newAuth: string;
+  userAgent?: string | null;
+  expectedRepId?: number;
+}): Promise<{ rotated: boolean; idRepresentante?: number; idSubscription?: number }> {
+  return withWriteLock((db) => {
+    const existingIdx = db.pushSubscriptions.findIndex(
+      (s) => s.endpoint === params.oldEndpoint && s.activa
+    );
+    if (existingIdx === -1) {
+      return { rotated: false };
+    }
+    const existing = db.pushSubscriptions[existingIdx];
+    if (
+      params.expectedRepId !== undefined &&
+      existing.idRepresentante !== Number(params.expectedRepId)
+    ) {
+      return { rotated: false };
+    }
+
+    if (
+      !timingSafeEqualStr(existing.p256dh, params.oldP256dh) ||
+      !timingSafeEqualStr(existing.auth, params.oldAuth)
+    ) {
+      return { rotated: false };
+    }
+
+    const rep = db.representantes.find((r) => r.idRepresentante === existing.idRepresentante);
+    if (!rep || rep.activo === false) {
+      return { rotated: false };
+    }
+
+    const nowIso = new Date().toISOString();
+    // Si ya existía otra entrada con el nuevo endpoint, limpiarla antes de actualizar
+    db.pushSubscriptions = db.pushSubscriptions.filter(
+      (s, idx) => idx === existingIdx || s.endpoint !== params.newEndpoint
+    );
+    const updatedIdx = db.pushSubscriptions.findIndex(
+      (s) => s.idSubscription === existing.idSubscription
+    );
+    if (updatedIdx === -1) {
+      return { rotated: false };
+    }
+
+    db.pushSubscriptions[updatedIdx] = {
+      ...db.pushSubscriptions[updatedIdx],
+      endpoint: params.newEndpoint,
+      p256dh: params.newP256dh,
+      auth: params.newAuth,
+      userAgent: params.userAgent || db.pushSubscriptions[updatedIdx].userAgent || null,
+      activa: true,
+      lastUsed: nowIso,
+    };
+
+    return {
+      rotated: true,
+      idRepresentante: existing.idRepresentante,
+      idSubscription: existing.idSubscription,
+    };
+  });
+}
+
+export async function markPushSubscriptionsUsed(endpoints: string[]): Promise<void> {
+  if (!endpoints.length) return;
+  const set = new Set(endpoints);
+  const nowIso = new Date().toISOString();
+  await withWriteLock((db) => {
+    for (let i = 0; i < db.pushSubscriptions.length; i++) {
+      if (set.has(db.pushSubscriptions[i].endpoint)) {
+        db.pushSubscriptions[i] = {
+          ...db.pushSubscriptions[i],
+          lastUsed: nowIso,
+        };
+      }
+    }
+  });
+}
+
 export async function getPushSubscriptionsCountForRep(idRepresentante: number): Promise<number> {
   const db = await readDb();
   return db.pushSubscriptions.filter(
@@ -3564,31 +3686,40 @@ export async function getPushDispatchPayloadForBatch(
   const db = await readDb();
   const mat = db.materias.find((m) => m.idMateria === Number(idMateria));
   const estMap = new Map(db.estudiantes.map((e) => [e.idEstudiante, e]));
+  const activeRepIds = new Set(
+    db.representantes.filter((r) => r.activo !== false).map((r) => r.idRepresentante)
+  );
 
   const resolvedRecords = records
     .map((r) => {
       const est = estMap.get(Number(r.idEstudiante));
-      if (!est) return null;
+      if (!est || !activeRepIds.has(est.idRepresentante)) return null;
       return {
         idEstudiante: est.idEstudiante,
         estado: r.estado,
         horaEntrada: r.horaEntrada,
         motivoJustificacion: r.motivoJustificacion ?? null,
         idRepresentante: est.idRepresentante,
-        estudianteNombre: `${est.nombres} ${est.apellidos}`,
+        estudianteNombre: `${est.nombres} ${est.apellidos}`.trim(),
       };
     })
     .filter((x): x is NonNullable<typeof x> => x !== null);
 
   const repIds = new Set(resolvedRecords.map((r) => r.idRepresentante));
-  const subscriptions = db.pushSubscriptions
-    .filter((s) => s.activa && repIds.has(s.idRepresentante))
-    .map((s) => ({
-      idRepresentante: s.idRepresentante,
-      endpoint: s.endpoint,
-      p256dh: s.p256dh,
-      auth: s.auth,
-    }));
+  const rawSubs = db.pushSubscriptions.filter((s) => s.activa && repIds.has(s.idRepresentante));
+  const subscriptions = Array.from(
+    new Map(
+      rawSubs.map((s) => [
+        s.endpoint,
+        {
+          idRepresentante: s.idRepresentante,
+          endpoint: s.endpoint,
+          p256dh: s.p256dh,
+          auth: s.auth,
+        },
+      ])
+    ).values()
+  );
 
   return {
     idMateria: Number(idMateria),
@@ -3606,6 +3737,9 @@ export async function getSalidasPushDispatchPayload(idSalida: number) {
   }
 
   const anoMap = new Map(db.anosEscolares.map((a) => [a.idAno, a.nombreNivel]));
+  const activeRepIds = new Set(
+    db.representantes.filter((r) => r.activo !== false).map((r) => r.idRepresentante)
+  );
   const nombreNivel = salidaRaw.idAno
     ? anoMap.get(Number(salidaRaw.idAno)) || 'Año Escolar'
     : 'Toda la institución';
@@ -3620,6 +3754,7 @@ export async function getSalidasPushDispatchPayload(idSalida: number) {
     (est) =>
       est.estadoAcademico !== 'EGRESADO' &&
       est.idAnoActual != null &&
+      activeRepIds.has(est.idRepresentante) &&
       (!salida.idAno || est.idAnoActual === salida.idAno)
   );
 
@@ -3647,14 +3782,20 @@ export async function getSalidasPushDispatchPayload(idSalida: number) {
   const targets = Array.from(groupedByRep.values());
   const repIds = new Set(targets.map((t) => t.idRepresentante));
 
-  const subscriptions = db.pushSubscriptions
-    .filter((s) => s.activa && repIds.has(s.idRepresentante))
-    .map((s) => ({
-      idRepresentante: s.idRepresentante,
-      endpoint: s.endpoint,
-      p256dh: s.p256dh,
-      auth: s.auth,
-    }));
+  const rawSubs = db.pushSubscriptions.filter((s) => s.activa && repIds.has(s.idRepresentante));
+  const subscriptions = Array.from(
+    new Map(
+      rawSubs.map((s) => [
+        s.endpoint,
+        {
+          idRepresentante: s.idRepresentante,
+          endpoint: s.endpoint,
+          p256dh: s.p256dh,
+          auth: s.auth,
+        },
+      ])
+    ).values()
+  );
 
   const nombreInstitucion =
     db.configuracionInstitucional.find((c) => c.clave === 'nombre_institucion')?.valor ||
@@ -3668,16 +3809,7 @@ export async function getSalidasPushDispatchPayload(idSalida: number) {
   };
 }
 
-export async function getMilestonePushTargets(): Promise<{
-  targetRepresentantes: number;
-  targetDevices: number;
-  subscriptions: Array<{
-    idRepresentante: number;
-    endpoint: string;
-    p256dh: string;
-    auth: string;
-  }>;
-}> {
+export async function getEligibleRepresentantesForMilestones(): Promise<number[]> {
   const db = await readDb();
   const activeAnoIds = new Set(
     db.anosEscolares.filter((a) => a.activo !== false).map((a) => a.idAno)
@@ -3686,7 +3818,6 @@ export async function getMilestonePushTargets(): Promise<{
     db.representantes.filter((r) => r.activo !== false).map((r) => r.idRepresentante)
   );
 
-  // Representantes con al menos un estudiante activo en un año escolar activo (excluye egresados)
   const eligibleRepIds = new Set<number>();
   for (const est of db.estudiantes) {
     if (!est.idRepresentante || !activeRepIds.has(est.idRepresentante)) continue;
@@ -3695,6 +3826,23 @@ export async function getMilestonePushTargets(): Promise<{
       eligibleRepIds.add(est.idRepresentante);
     }
   }
+  return Array.from(eligibleRepIds);
+}
+
+export async function getMilestonePushTargets(): Promise<{
+  targetRepresentantes: number;
+  targetDevices: number;
+  eligibleRepresentanteIds: number[];
+  subscriptions: Array<{
+    idRepresentante: number;
+    endpoint: string;
+    p256dh: string;
+    auth: string;
+  }>;
+}> {
+  const db = await readDb();
+  const eligibleRepIdsList = await getEligibleRepresentantesForMilestones();
+  const eligibleRepIds = new Set(eligibleRepIdsList);
 
   const rawSubs = db.pushSubscriptions.filter(
     (s) => s.activa && eligibleRepIds.has(s.idRepresentante)
@@ -3718,6 +3866,7 @@ export async function getMilestonePushTargets(): Promise<{
   return {
     targetRepresentantes: uniqueSubscribedReps.size,
     targetDevices: uniqueSubs.length,
+    eligibleRepresentanteIds: eligibleRepIdsList,
     subscriptions: uniqueSubs,
   };
 }
@@ -3747,4 +3896,135 @@ export async function getMilestoneDispatches(
 ): Promise<MilestoneDispatchRecord[]> {
   const db = await readDb();
   return db.milestoneDispatches.slice(0, Math.max(1, limit));
+}
+
+// ---------------------------------------------------------------------------
+// 10. BANDEJA DE NOTIFICACIONES PERSISTENTES PARA REPRESENTANTES
+// ---------------------------------------------------------------------------
+const MAX_NOTIFICATIONS_PER_REP = 100;
+const MAX_NOTIFICATIONS_GLOBAL = 6000;
+
+export async function createNotificacionesRepresentanteBatch(
+  items: Array<{
+    idRepresentante: number;
+    tipo: TipoNotificacionRepresentante;
+    titulo: string;
+    mensaje: string;
+    fechaEvento: string;
+    horaEvento: string;
+    metadata?: NotificacionRepresentante['metadata'];
+  }>
+): Promise<NotificacionRepresentante[]> {
+  if (!items || items.length === 0) return [];
+
+  return withWriteLock((db) => {
+    const activeRepIds = new Set(
+      db.representantes.filter((r) => r.activo !== false).map((r) => r.idRepresentante)
+    );
+    const nowIso = new Date().toISOString();
+    let nextId = nextNumericId(db.notificacionesRepresentante, (n) => n.idNotificacion);
+    const createdList: NotificacionRepresentante[] = [];
+
+    for (const item of items) {
+      const repId = Number(item.idRepresentante);
+      if (!activeRepIds.has(repId)) continue;
+
+      const created: NotificacionRepresentante = {
+        idNotificacion: nextId++,
+        idRepresentante: repId,
+        tipo: item.tipo,
+        titulo: String(item.titulo || 'Notificación Escolar').trim(),
+        mensaje: String(item.mensaje || '').trim(),
+        fechaEvento: String(item.fechaEvento || '').trim(),
+        horaEvento: String(item.horaEvento || '').trim(),
+        leida: false,
+        leidaAt: null,
+        createdAt: nowIso,
+        ...(item.metadata ? { metadata: item.metadata } : {}),
+      };
+      db.notificacionesRepresentante.unshift(created);
+      createdList.push(created);
+    }
+
+    if (createdList.length > 0) {
+      // Conservar máximo MAX_NOTIFICATIONS_PER_REP por representante y límite global acotado
+      const countByRep = new Map<number, number>();
+      db.notificacionesRepresentante = db.notificacionesRepresentante
+        .filter((n) => {
+          const c = (countByRep.get(n.idRepresentante) || 0) + 1;
+          countByRep.set(n.idRepresentante, c);
+          return c <= MAX_NOTIFICATIONS_PER_REP;
+        })
+        .slice(0, MAX_NOTIFICATIONS_GLOBAL);
+    }
+
+    return createdList;
+  });
+}
+
+export async function getNotificacionesRepresentante(
+  idRepresentante: number,
+  options?: { onlyUnread?: boolean; limit?: number }
+): Promise<{ notificaciones: NotificacionRepresentante[]; unreadCount: number }> {
+  const db = await readDb();
+  const repId = Number(idRepresentante);
+  const allForRep = db.notificacionesRepresentante
+    .filter((n) => n.idRepresentante === repId)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.idNotificacion - a.idNotificacion);
+
+  const unreadCount = allForRep.reduce((acc, n) => acc + (n.leida ? 0 : 1), 0);
+  const filtered = options?.onlyUnread ? allForRep.filter((n) => !n.leida) : allForRep;
+  const limit = Math.min(100, Math.max(1, Number(options?.limit ?? 60)));
+
+  return {
+    notificaciones: filtered.slice(0, limit),
+    unreadCount,
+  };
+}
+
+export async function markNotificacionLeida(
+  idRepresentante: number,
+  idNotificacion: number
+): Promise<NotificacionRepresentante | null> {
+  return withWriteLock((db) => {
+    const idx = db.notificacionesRepresentante.findIndex(
+      (n) =>
+        n.idNotificacion === Number(idNotificacion) &&
+        n.idRepresentante === Number(idRepresentante)
+    );
+    if (idx === -1) return null;
+
+    if (!db.notificacionesRepresentante[idx].leida) {
+      db.notificacionesRepresentante[idx] = {
+        ...db.notificacionesRepresentante[idx],
+        leida: true,
+        leidaAt: new Date().toISOString(),
+      };
+    }
+    return db.notificacionesRepresentante[idx];
+  });
+}
+
+export async function markTodasNotificacionesLeidas(
+  idRepresentante: number
+): Promise<{ updatedCount: number }> {
+  return withWriteLock((db) => {
+    const repId = Number(idRepresentante);
+    const nowIso = new Date().toISOString();
+    let updatedCount = 0;
+
+    for (let i = 0; i < db.notificacionesRepresentante.length; i++) {
+      const item = db.notificacionesRepresentante[i];
+      if (item.idRepresentante === repId && !item.leida) {
+        db.notificacionesRepresentante[i] = {
+          ...item,
+          leida: true,
+          leidaAt: nowIso,
+        };
+        updatedCount++;
+      }
+    }
+
+    return { updatedCount };
+  });
 }

@@ -28,6 +28,7 @@ import type {
   VerificarDiaNoLaborableResult,
   PromocionMasivaPayload,
   PromocionMasivaResult,
+  NotificacionRepresentante,
 } from '../types.ts';
 
 export type { InstitutionalConfigSummary, MilestonePushStatusResponse };
@@ -949,4 +950,37 @@ export async function verificarDiaNoLaborable(
   fecha: string
 ): Promise<VerificarDiaNoLaborableResult> {
   return apiFetch(`/calendario/verificar${buildQuery({ fecha })}`);
+}
+
+// -------------------------------------------------------------
+// 11. BANDEJA DE NOTIFICACIONES DEL REPRESENTANTE
+// -------------------------------------------------------------
+export async function fetchRepresentanteNotificaciones(
+  idRepresentante: number,
+  options?: { unread?: boolean; limit?: number }
+): Promise<{ notificaciones: NotificacionRepresentante[]; unreadCount: number }> {
+  return apiFetch(
+    `/portal/representante/${idRepresentante}/notificaciones${buildQuery({
+      unread: options?.unread ? 'true' : undefined,
+      limit: options?.limit,
+    })}`
+  );
+}
+
+export async function markNotificacionLeida(
+  idRepresentante: number,
+  idNotificacion: number
+): Promise<{ success: boolean; notificacion: NotificacionRepresentante }> {
+  return apiFetch(
+    `/portal/representante/${idRepresentante}/notificaciones/${idNotificacion}/leer`,
+    { method: 'PATCH' }
+  );
+}
+
+export async function markTodasNotificacionesLeidas(
+  idRepresentante: number
+): Promise<{ success: boolean; updatedCount: number }> {
+  return apiFetch(`/portal/representante/${idRepresentante}/notificaciones/leer-todas`, {
+    method: 'PATCH',
+  });
 }

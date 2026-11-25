@@ -321,16 +321,68 @@ export const activateLapsoSchema = z.object({
   activo: z.boolean().optional().default(true),
 });
 
+export function isSafePushEndpointUrl(rawUrl: string): boolean {
+  try {
+    const parsed = new URL(String(rawUrl || '').trim());
+    if (parsed.protocol !== 'https:') return false;
+    if (parsed.username || parsed.password) return false;
+    const host = parsed.hostname.toLowerCase();
+    if (!host || !host.includes('.')) return false;
+    if (
+      host === 'localhost' ||
+      host.endsWith('.localhost') ||
+      host.endsWith('.local') ||
+      host.endsWith('.internal') ||
+      host.endsWith('.arpa') ||
+      host === 'metadata.google.internal'
+    ) {
+      return false;
+    }
+    // Bloquear literales IPv4 / IPv6 (todos los proveedores Web Push legítimos usan dominios públicos HTTPS)
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(':')) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const pushSubscriptionSchema = z.object({
-  endpoint: z.string().url('Endpoint de suscripción push inválido').min(10),
+  endpoint: z
+    .string()
+    .trim()
+    .url('Endpoint de suscripción push inválido')
+    .min(10)
+    .max(2048, 'Endpoint de suscripción demasiado largo')
+    .refine(isSafePushEndpointUrl, {
+      message: 'El endpoint Web Push debe usar HTTPS hacia un dominio público válido.',
+    }),
   keys: z.object({
-    p256dh: z.string().trim().min(10, 'Clave pública p256dh requerida'),
-    auth: z.string().trim().min(6, 'Secreto auth requerido'),
+    p256dh: z.string().trim().min(10, 'Clave pública p256dh requerida').max(512),
+    auth: z.string().trim().min(6, 'Secreto auth requerido').max(256),
   }),
 });
 
+export const pushRotateSchema = z.object({
+  oldEndpoint: z
+    .string()
+    .trim()
+    .url('Endpoint anterior inválido')
+    .min(10)
+    .max(2048)
+    .refine(isSafePushEndpointUrl, {
+      message: 'El endpoint anterior debe usar HTTPS hacia un dominio público válido.',
+    }),
+  oldKeys: z.object({
+    p256dh: z.string().trim().min(10, 'Clave pública anterior requerida').max(512),
+    auth: z.string().trim().min(6, 'Secreto anterior requerido').max(256),
+  }),
+  newSubscription: pushSubscriptionSchema,
+});
+
 export const pushUnsubscribeSchema = z.object({
-  endpoint: z.string().url('Endpoint de suscripción push inválido').min(10),
+  endpoint: z.string().trim().url('Endpoint de suscripción push inválido').min(10).max(2048),
 });
 
 export const updateHorariosConfigSchema = z

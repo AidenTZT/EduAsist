@@ -116,15 +116,28 @@ self.addEventListener('push', (event) => {
   }
 
   event.waitUntil(
-    self.registration.showNotification(payload.title, {
-      body: payload.body,
-      icon: payload.icon || '/pwa-192x192.png',
-      badge: payload.badge || '/pwa-192x192.png',
-      tag: payload.tag || 'eduasist-asistencia',
-      renotify: Boolean(payload.renotify),
-      requireInteraction: Boolean(payload.requireInteraction),
-      data: payload.data,
-    })
+    Promise.all([
+      self.registration.showNotification(payload.title, {
+        body: payload.body,
+        icon: payload.icon || '/pwa-192x192.png',
+        badge: payload.badge || '/pwa-192x192.png',
+        tag: payload.tag || 'eduasist-asistencia',
+        renotify: Boolean(payload.renotify),
+        requireInteraction: Boolean(payload.requireInteraction),
+        data: payload.data,
+      }),
+      self.clients
+        .matchAll({ type: 'window', includeUncontrolled: true })
+        .then((windowClients) => {
+          for (const client of windowClients) {
+            client.postMessage({
+              type: 'EDUASIST_PUSH_RECEIVED',
+              data: payload.data || {},
+            });
+          }
+        })
+        .catch(() => {}),
+    ])
   );
 });
 
@@ -161,40 +174,80 @@ self.addEventListener('pushsubscriptionchange', (event) => {
   event.waitUntil(
     (async () => {
       try {
-        const res = await fetch('/api/push/vapid-public-key');
-        if (!res.ok) return;
-        const { publicKey } = await res.json();
-        if (!publicKey) return;
+        const oldSub = event.oldSubscription;
+        const oldJson = oldSub && typeof oldSub.toJSON === 'function' ? oldSub.toJSON() : null;
 
-        const padding = '='.repeat((4 - (publicKey.length % 4)) % 4);
-        const base64 = (publicKey + padding).replace(/-/g, '+').replace(/_/g, '/');
-        const rawData = self.atob(base64);
-        const keyBytes = new Uint8Array(rawData.length);
-        for (let i = 0; i < rawData.length; ++i) {
-          keyBytes[i] = rawData.charCodeAt(i);
+        let newSub = event.newSubscription;
+        if (!newSub) {
+          let applicationServerKey =
+            oldSub && oldSub.options && oldSub.options.applicationServerKey
+              ? oldSub.options.applicationServerKey
+              : null;
+
+          if (!applicationServerKey) {
+            const res = await fetch('/api/push/vapid-public-key');
+            if (!res.ok) return;
+            const { publicKey } = await res.json();
+            if (!publicKey) return;
+
+            const padding = '='.repeat((4 - (publicKey.length % 4)) % 4);
+            const base64 = (publicKey + padding).replace(/-/g, '+').replace(/_/g, '/');
+            const rawData = self.atob(base64);
+            const keyBytes = new Uint8Array(rawData.length);
+            for (let i = 0; i < rawData.length; ++i) {
+              keyBytes[i] = rawData.charCodeAt(i);
+            }
+            applicationServerKey = keyBytes;
+          }
+
+          newSub = await self.registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey,
+          });
         }
 
-        const newSub = await self.registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: keyBytes,
-        });
         const subJson = newSub.toJSON();
-        if (subJson.endpoint && subJson.keys?.p256dh && subJson.keys?.auth) {
-          await fetch('/api/push/subscribe', {
+        if (!subJson.endpoint || !subJson.keys?.p256dh || !subJson.keys?.auth) {
+          return;
+        }
+
+        const newSubscriptionPayload = {
+          endpoint: subJson.endpoint,
+          keys: {
+            p256dh: subJson.keys.p256dh,
+            auth: subJson.keys.auth,
+          },
+        };
+
+        // Intentar rotación criptográfica segura usando las llaves previas (funciona aun si la cookie JWT expiró)
+        if (oldJson?.endpoint && oldJson.keys?.p256dh && oldJson.keys?.auth) {
+          const rotateRes = await fetch('/api/push/rotate', {
             method: 'POST',
             credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              endpoint: subJson.endpoint,
-              keys: {
-                p256dh: subJson.keys.p256dh,
-                auth: subJson.keys.auth,
+              oldEndpoint: oldJson.endpoint,
+              oldKeys: {
+                p256dh: oldJson.keys.p256dh,
+                auth: oldJson.keys.auth,
               },
+              newSubscription: newSubscriptionPayload,
             }),
           });
+          if (rotateRes.ok) {
+            return;
+          }
         }
+
+        // Respaldo con sesión activa
+        await fetch('/api/push/subscribe', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(newSubscriptionPayload),
+        });
       } catch {
-        // Ignorar si la sesión expiró; el cliente re-sincronizará al abrir el portal
+        // Ignorar si no hay red o sesión; el cliente re-sincronizará al abrir o enfocar el portal
       }
     })()
   );

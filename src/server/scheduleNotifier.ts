@@ -1,5 +1,8 @@
 import * as db from './localDb.ts';
-import { dispatchMilestonePushNotifications } from './pushService.ts';
+import {
+  dispatchMilestonePushNotifications,
+  buildMilestoneNotificationDetails,
+} from './pushService.ts';
 
 const DEFAULT_SCHOOL_TIMEZONE = process.env.SCHOOL_TIMEZONE || 'America/Caracas';
 
@@ -114,6 +117,32 @@ export async function triggerMilestonePush(
     db.getConfiguracion(),
     db.getMilestonePushTargets(),
   ]);
+
+  // Registrar en la bandeja persistente de todos los representantes elegibles (tengan o no push activo)
+  if (targets.eligibleRepresentanteIds.length > 0) {
+    try {
+      const details = buildMilestoneNotificationDetails({
+        tipo,
+        nombreInstitucion: config.nombreInstitucion,
+        horaRecesoInicio: config.horaRecesoInicio,
+        horaRecesoFin: config.horaRecesoFin,
+        horaSalida: config.horaSalida,
+        mensajePersonalizado: options.mensajePersonalizado,
+      });
+      await db.createNotificacionesRepresentanteBatch(
+        targets.eligibleRepresentanteIds.map((repId) => ({
+          idRepresentante: repId,
+          tipo,
+          titulo: details.title,
+          mensaje: details.body,
+          fechaEvento: clock.dateYmd,
+          horaEvento: clock.timeHHMM,
+        }))
+      );
+    } catch (inboxErr) {
+      console.warn('[ScheduleNotifier] Error guardando hito en bandeja de notificaciones:', inboxErr);
+    }
+  }
 
   let sent = 0;
   let failed = 0;
