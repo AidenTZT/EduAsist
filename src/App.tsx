@@ -418,42 +418,6 @@ export default function App() {
             ) : (
               /* Authenticated Staff Workspace */
               <div className="transition-all space-y-6">
-                {/* Active Role Quick Banner with Pure OLED Styling */}
-                <div className="bg-white dark:bg-[#121212] rounded-2xl px-4 py-3 border border-slate-200/90 dark:border-[#27272A] flex flex-wrap items-center justify-between gap-3 shadow-2xs">
-                  <div className="flex items-center space-x-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-bold text-xs shrink-0">
-                      {activeStaffUser.nombre[0]}
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold text-slate-800 dark:text-[#F4F4F5]">
-                        Sesión activa: {activeStaffUser.nombre} {activeStaffUser.apellidos}
-                      </p>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                        Rol:{' '}
-                        <span className="font-extrabold uppercase text-indigo-700 dark:text-indigo-400">
-                          {activeStaffUser.rol}
-                        </span>{' '}
-                        • Permisos de{' '}
-                        {activeStaffUser.rol === 'director'
-                          ? 'Dirección General (Control Total)'
-                          : activeStaffUser.rol === 'coordinador'
-                          ? 'Coordinación Académica (Asistencia, Justificaciones, Materias & Horarios)'
-                          : 'Docente de Aula (Materias Asignadas)'}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center space-x-2">
-                    <button
-                      type="button"
-                      onClick={handleLogoutStaff}
-                      className="px-3 py-1.5 rounded-xl text-xs font-bold text-rose-600 dark:text-rose-400 hover:text-rose-700 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/60 border border-rose-200 dark:border-rose-900 transition-colors cursor-pointer"
-                    >
-                      Cerrar Sesión
-                    </button>
-                  </div>
-                </div>
-
                 {/* Sub-Tabs Components */}
                 {activeDocenteTab === 'horarios' && (
                   <ScheduleManager
