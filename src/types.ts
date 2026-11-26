@@ -549,8 +549,12 @@ export interface CierreAnioEscolarResponse {
 export interface LimpiezaAntiguosRequest {
   diasRetencionPush?: number;
   diasRetencionLogs?: number;
+  diasRetencionNotificaciones?: number;
+  diasRetencionHitos?: number;
   limpiarPush?: boolean;
   limpiarLogs?: boolean;
+  limpiarNotificaciones?: boolean;
+  limpiarHitos?: boolean;
   dryRun?: boolean;
   confirmado?: boolean;
 }
@@ -560,12 +564,20 @@ export interface LimpiezaAntiguosResponse {
   dryRun: boolean;
   diasRetencionPush: number;
   diasRetencionLogs: number;
+  diasRetencionNotificaciones?: number;
+  diasRetencionHitos?: number;
   pushTotalAntes: number;
   pushEliminadas: number;
   pushConservadas: number;
   logsTotalAntes: number;
   logsEliminados: number;
   logsConservados: number;
+  notificacionesTotalAntes?: number;
+  notificacionesEliminadas?: number;
+  notificacionesConservadas?: number;
+  hitosTotalAntes?: number;
+  hitosEliminados?: number;
+  hitosConservados?: number;
   desgloseLogsPorAccion: Record<string, number>;
   mensaje: string;
 }

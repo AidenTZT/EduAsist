@@ -85,9 +85,8 @@ export const TeacherTodaySubjects: React.FC<TeacherTodaySubjectsProps> = ({
     setLoading(true);
     setError(null);
     try {
-      const [horariosData, asistenciaData, dayCheck] = await Promise.all([
+      const [horariosData, dayCheck] = await Promise.all([
         fetchHorarios({ idDocente: currentUser.id, diaSemana: todayDayName }),
-        fetchAsistencia({ fecha: todayDate }),
         verificarDiaNoLaborable(todayDate).catch(() => null),
       ]);
 
@@ -95,8 +94,18 @@ export const TeacherTodaySubjects: React.FC<TeacherTodaySubjectsProps> = ({
         a.horaInicio.localeCompare(b.horaInicio)
       );
       setTodayBlocks(sorted);
-      setTodayAttendance(asistenciaData);
       setNonWorkingInfo(dayCheck);
+
+      const idMateriasHoy = Array.from(new Set(sorted.map((h) => h.idMateria)));
+      if (idMateriasHoy.length > 0) {
+        const asistenciaData = await fetchAsistencia({
+          fecha: todayDate,
+          idMaterias: idMateriasHoy,
+        });
+        setTodayAttendance(asistenciaData);
+      } else {
+        setTodayAttendance([]);
+      }
     } catch (err: any) {
       setError(err?.message || 'No se pudieron cargar tus materias del día.');
     } finally {

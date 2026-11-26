@@ -639,6 +639,7 @@ export async function fetchAsistencia(filters?: {
   mes?: string;
   estado?: EstadoAsistencia;
   idMateria?: number;
+  idMaterias?: number[];
   idEstudiante?: number;
   idRepresentante?: number;
   idSeccion?: number;
@@ -651,6 +652,7 @@ export async function fetchAsistencia(filters?: {
       mes: filters?.mes,
       estado: filters?.estado,
       idMateria: filters?.idMateria,
+      idMaterias: filters?.idMaterias?.length ? filters.idMaterias.join(',') : undefined,
       idEstudiante: filters?.idEstudiante,
       idRepresentante: filters?.idRepresentante,
       idSeccion: filters?.idSeccion,

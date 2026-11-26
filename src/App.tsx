@@ -59,7 +59,17 @@ import type {
 
 export default function App() {
   // Navigation: 'staff' (institutional panel) or 'representante' (parent portal)
-  const [portalMode, setPortalMode] = useState<'staff' | 'representante'>('staff');
+  const [portalMode, setPortalMode] = useState<'staff' | 'representante'>(() => {
+    try {
+      if (typeof window !== 'undefined' && window.location.hash) {
+        const hashVal = window.location.hash.replace('#', '').trim().toLowerCase();
+        if (hashVal === 'portal-representante') {
+          return 'representante';
+        }
+      }
+    } catch (_) {}
+    return 'staff';
+  });
 
   type DocenteTab =
     | 'asistencia'
@@ -93,21 +103,6 @@ export default function App() {
     return 'horarios';
   });
 
-  useEffect(() => {
-    try {
-      if (typeof window !== 'undefined') {
-        const handleHashChange = () => {
-          const hashTab = window.location.hash.replace('#', '').trim().toLowerCase() as DocenteTab;
-          if (VALID_TABS.includes(hashTab)) {
-            setActiveDocenteTab(hashTab);
-          }
-        };
-        window.addEventListener('hashchange', handleHashChange);
-        return () => window.removeEventListener('hashchange', handleHashChange);
-      }
-    } catch (_) {}
-  }, []);
-
   // Datos maestros desde el servidor institucional EduAsist
   const [anos, setAnos] = useState<AnoEscolar[]>([]);
   const [secciones, setSecciones] = useState<Seccion[]>([]);
@@ -119,17 +114,50 @@ export default function App() {
 
   // Authenticated Staff User (Director, Coordinador, or Docente)
   const [activeStaffUser, setActiveStaffUser] = useState<Usuario | null>(null);
+  const activeStaffUserRef = React.useRef<Usuario | null>(null);
+  useEffect(() => {
+    activeStaffUserRef.current = activeStaffUser;
+  }, [activeStaffUser]);
 
   useEffect(() => {
     try {
-      if (typeof window !== 'undefined' && activeStaffUser) {
+      if (typeof window !== 'undefined') {
+        const handleHashChange = () => {
+          const hashVal = window.location.hash.replace('#', '').trim().toLowerCase();
+          if (hashVal === 'portal-representante') {
+            if (!activeStaffUserRef.current) {
+              setPortalMode('representante');
+            }
+            return;
+          }
+          const hashTab = hashVal as DocenteTab;
+          if (VALID_TABS.includes(hashTab)) {
+            setActiveDocenteTab(hashTab);
+          }
+        };
+        window.addEventListener('hashchange', handleHashChange);
+        return () => window.removeEventListener('hashchange', handleHashChange);
+      }
+    } catch (_) {}
+  }, []);
+
+  useEffect(() => {
+    try {
+      if (typeof window === 'undefined') return;
+      if (activeStaffUser && portalMode === 'staff') {
         const targetHash = `#${activeDocenteTab}`;
         if (window.location.hash !== targetHash) {
           window.history.replaceState(null, '', targetHash);
         }
+      } else if (portalMode === 'representante') {
+        if (window.location.hash !== '#portal-representante') {
+          window.history.replaceState(null, '', '#portal-representante');
+        }
+      } else if (portalMode === 'staff' && window.location.hash === '#portal-representante') {
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
       }
     } catch (_) {}
-  }, [activeDocenteTab, activeStaffUser]);
+  }, [activeDocenteTab, activeStaffUser, portalMode]);
 
   // Authenticated representative for parent portal
   const [currentRepresentante, setCurrentRepresentante] = useState<Representante | null>(null);

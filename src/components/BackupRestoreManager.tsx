@@ -130,16 +130,21 @@ export const BackupRestoreManager: React.FC<BackupRestoreManagerProps> = ({
     setStatusMessage(null);
     try {
       const backupData = await exportDatabaseBackup();
-      const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(
-        JSON.stringify(backupData, null, 2)
-      )}`;
+      const blob = new Blob([JSON.stringify(backupData, null, 2)], {
+        type: 'application/json;charset=utf-8',
+      });
+      const blobUrl = URL.createObjectURL(blob);
       const downloadAnchor = document.createElement('a');
       const filename = `backup_eduasist_${new Date().toISOString().split('T')[0]}_${Date.now()}.json`;
-      downloadAnchor.setAttribute('href', jsonString);
+      downloadAnchor.setAttribute('href', blobUrl);
       downloadAnchor.setAttribute('download', filename);
       document.body.appendChild(downloadAnchor);
-      downloadAnchor.click();
-      downloadAnchor.remove();
+      try {
+        downloadAnchor.click();
+      } finally {
+        downloadAnchor.remove();
+        URL.revokeObjectURL(blobUrl);
+      }
 
       setStatusMessage({
         type: 'success',
@@ -556,6 +561,15 @@ export const BackupRestoreManager: React.FC<BackupRestoreManagerProps> = ({
               <p>• Materias / Pensum: {fileContent.data?.materias?.length || 0}</p>
               <p>• Horarios: {fileContent.data?.horarios?.length || 0}</p>
               <p>• Personal / Staff: {fileContent.data?.users?.length || 0}</p>
+              {fileContent.metadata?.checksumSha256 ? (
+                <p className="pt-1 text-emerald-600 dark:text-emerald-400 break-all">
+                  • Integridad SHA-256: {String(fileContent.metadata.checksumSha256).slice(0, 16)}...
+                </p>
+              ) : (
+                <p className="pt-1 text-rose-600 dark:text-rose-400">
+                  • Advertencia: Archivo sin checksum SHA-256 (será rechazado por el servidor).
+                </p>
+              )}
             </div>
 
             <div className="flex items-center justify-end space-x-3 pt-3 border-t border-slate-100 dark:border-[#27272A]">

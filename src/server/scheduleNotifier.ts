@@ -1,7 +1,10 @@
 import * as db from './localDb.ts';
 import {
   dispatchMilestonePushNotifications,
+  dispatchDeparturePushNotificationsDirect,
   buildMilestoneNotificationDetails,
+  buildDepartureNotificationDetails,
+  type PushAuditAuthor,
 } from './pushService.ts';
 
 const DEFAULT_SCHOOL_TIMEZONE = process.env.SCHOOL_TIMEZONE || 'America/Caracas';
@@ -170,44 +173,45 @@ export async function triggerMilestonePush(
   }
 
   const sentAt = new Date().toISOString();
-  await db.recordMilestoneDispatch({
-    date: clock.dateYmd,
-    tipo,
-    sentAt,
-    sent,
-    failed,
-    targetReps: targets.targetRepresentantes,
-    trigger: options.trigger,
-  });
-
-  await db.logAuditEvent({
-    idUsuario: options.author?.idUsuario ?? null,
-    emailOCedula: options.author?.emailOCedula ?? 'sistema@eduasist.edu',
-    rol: options.author?.rol ?? 'sistema',
-    accion:
-      tipo === 'receso'
-        ? options.trigger === 'auto'
-          ? 'PUSH_AUTO_RECESO_ENVIADO'
-          : 'PUSH_MANUAL_RECESO_ENVIADO'
-        : options.trigger === 'auto'
-        ? 'PUSH_AUTO_SALIDA_ENVIADO'
-        : 'PUSH_MANUAL_SALIDA_ENVIADO',
-    entidad: 'push_notifications',
-    idEntidad: `${tipo}:${clock.dateYmd}`,
-    ipOrigen: options.author?.ipOrigen ?? null,
-    userAgent: options.author?.userAgent ?? null,
-    detalles: {
+  await db.recordMilestoneDispatch(
+    {
+      date: clock.dateYmd,
       tipo,
+      sentAt,
+      sent,
+      failed,
+      targetReps: targets.targetRepresentantes,
       trigger: options.trigger,
-      horaConfigurada: tipo === 'receso' ? config.horaRecesoInicio : config.horaSalida,
-      targetRepresentantes: targets.targetRepresentantes,
-      totalObjetivos: targets.targetDevices,
-      enviadosExitosos: sent,
-      eliminados410: expiredRemoved,
-      fallidosRed,
-      duracionMs,
     },
-  });
+    {
+      idUsuario: options.author?.idUsuario ?? null,
+      emailOCedula: options.author?.emailOCedula ?? 'sistema@eduasist.edu',
+      rol: options.author?.rol ?? 'sistema',
+      accion:
+        tipo === 'receso'
+          ? options.trigger === 'auto'
+            ? 'PUSH_AUTO_RECESO_ENVIADO'
+            : 'PUSH_MANUAL_RECESO_ENVIADO'
+          : options.trigger === 'auto'
+          ? 'PUSH_AUTO_SALIDA_ENVIADO'
+          : 'PUSH_MANUAL_SALIDA_ENVIADO',
+      entidad: 'push_notifications',
+      idEntidad: `${tipo}:${clock.dateYmd}`,
+      ipOrigen: options.author?.ipOrigen ?? null,
+      userAgent: options.author?.userAgent ?? null,
+      detalles: {
+        tipo,
+        trigger: options.trigger,
+        horaConfigurada: tipo === 'receso' ? config.horaRecesoInicio : config.horaSalida,
+        targetRepresentantes: targets.targetRepresentantes,
+        totalObjetivos: targets.targetDevices,
+        enviadosExitosos: sent,
+        eliminados410: expiredRemoved,
+        fallidosRed,
+        duracionMs,
+      },
+    }
+  );
 
   const label = tipo === 'receso' ? 'Aviso de Receso' : 'Aviso de Salida';
   const message =
@@ -302,6 +306,103 @@ export async function enqueueManualMilestonePush(
   };
 }
 
+export async function recordSalidaInboxNotifications(
+  payload: Awaited<ReturnType<typeof db.getSalidasPushDispatchPayload>>,
+  clock: { dateYmd: string; timeHHMM: string }
+): Promise<void> {
+  if (!payload.targets.length) return;
+  try {
+    await db.createNotificacionesRepresentanteBatch(
+      payload.targets.map((target) => {
+        const { title, body } = buildDepartureNotificationDetails({
+          nombreSalida: payload.salida.nombre,
+          horaSalida: payload.salida.horaSalida,
+          alcanceNombre: payload.salida.nombreNivel || 'Toda la institución',
+          nombreInstitucion: payload.nombreInstitucion,
+          studentNames: target.estudiantes.map((e) => e.nombre),
+        });
+        return {
+          idRepresentante: target.idRepresentante,
+          tipo: 'salida' as const,
+          titulo: title,
+          mensaje: body,
+          fechaEvento: clock.dateYmd,
+          horaEvento: clock.timeHHMM,
+          metadata: {
+            idSalida: payload.salida.idSalida,
+            nombreSalida: payload.salida.nombre,
+            alcance: payload.salida.nombreNivel || 'Toda la institución',
+          },
+        };
+      })
+    );
+  } catch (inboxErr) {
+    console.warn('[ScheduleNotifier] Error guardando salida en bandeja de notificaciones:', inboxErr);
+  }
+}
+
+export async function executeSalidaPushNotification(
+  idSalida: number,
+  motivo: 'auto' | 'manual',
+  clockOverride?: { dateYmd: string; timeHHMM: string },
+  author?: PushAuditAuthor,
+  preloadedPayload?: Awaited<ReturnType<typeof db.getSalidasPushDispatchPayload>>,
+  skipInboxPersist: boolean = false
+) {
+  const clock = clockOverride || getSchoolClockInTimezone();
+  const payload = preloadedPayload || (await db.getSalidasPushDispatchPayload(idSalida));
+
+  if (!skipInboxPersist) {
+    await recordSalidaInboxNotifications(payload, clock);
+  }
+
+  let sent = 0;
+  let failed = 0;
+  let expiredRemoved = 0;
+  let fallidosRed = 0;
+  let duracionMs = 0;
+  let lastError: string | undefined;
+
+  if (payload.subscriptions.length > 0 && payload.targets.length > 0) {
+    const pushRes = await dispatchDeparturePushNotificationsDirect({
+      idSalida: payload.salida.idSalida,
+      nombreSalida: payload.salida.nombre,
+      horaSalida: payload.salida.horaSalida,
+      alcanceNombre: payload.salida.nombreNivel || 'Toda la institución',
+      nombreInstitucion: payload.nombreInstitucion,
+      fecha: clock.dateYmd,
+      motivo,
+      targets: payload.targets,
+      subscriptions: payload.subscriptions,
+      author,
+    });
+    sent = pushRes.sent;
+    failed = pushRes.failed;
+    expiredRemoved = pushRes.metrics.eliminados410;
+    fallidosRed = pushRes.metrics.fallidosRed;
+    duracionMs = pushRes.metrics.duracionMs;
+    lastError = pushRes.lastError;
+  }
+
+  await db.markSalidaNotified(payload.salida.idSalida, clock.dateYmd, clock.timeHHMM);
+
+  return {
+    salida: {
+      ...payload.salida,
+      ultimaNotificacionFecha: clock.dateYmd,
+      ultimaNotificacionHora: clock.timeHHMM,
+    },
+    sent,
+    failed,
+    totalDispositivos: payload.subscriptions.length,
+    totalRepresentantes: payload.targets.length,
+    expiredRemoved,
+    fallidosRed,
+    duracionMs,
+    lastError,
+  };
+}
+
 let isCheckingMilestones = false;
 let schedulerStarted = false;
 
@@ -316,7 +417,10 @@ export async function checkAndDispatchDailyMilestones(): Promise<void> {
     const nonWorkingCheck = await db.verificarDiaNoLaborable(clock.dateYmd);
     if (nonWorkingCheck.esNoLaborable) return;
 
-    const config = await db.getConfiguracion();
+    const [config, activeSalidas] = await Promise.all([
+      db.getConfiguracion(),
+      db.getSalidas(true),
+    ]);
     const WINDOW_MINUTES = 2;
 
     if (config.alertaRecesoActiva) {
@@ -336,19 +440,59 @@ export async function checkAndDispatchDailyMilestones(): Promise<void> {
       }
     }
 
+    // Evaluar reglas específicas de salidas institucionales (por nivel o toda la institución)
+    for (const s of activeSalidas) {
+      if (!s.notificarPush) continue;
+      if (s.ultimaNotificacionFecha === clock.dateYmd) continue;
+
+      const salidaMins = hhmmToMinutes(s.horaSalida);
+      if (salidaMins > 0 && clock.minutesOfDay >= salidaMins && clock.minutesOfDay <= salidaMins + 15) {
+        const result = await executeSalidaPushNotification(s.idSalida, 'auto', clock, {
+          emailOCedula: 'sistema@eduasist.edu',
+          rol: 'sistema',
+        });
+        await db.logAuditEvent({
+          emailOCedula: 'sistema@eduasist.edu',
+          rol: 'sistema',
+          accion: 'SALIDA_PUSH_AUTOMATICA_ENVIADA',
+          entidad: 'salidas_institucionales',
+          idEntidad: s.idSalida,
+          detalles: {
+            nombre: s.nombre,
+            horaSalida: s.horaSalida,
+            fecha: clock.dateYmd,
+            totalObjetivos: result.totalDispositivos,
+            enviadosExitosos: result.sent,
+            eliminados410: result.expiredRemoved,
+            fallidosRed: result.fallidosRed,
+            duracionMs: result.duracionMs,
+          },
+        });
+      }
+    }
+
+    // Evaluar salida global solo si no existe ya una regla institucional global (idAno === null) cubriendo esa hora
     if (config.alertaSalidaActiva) {
-      const salidaMin = hhmmToMinutes(config.horaSalida);
-      if (
-        salidaMin > 0 &&
-        clock.minutesOfDay >= salidaMin &&
-        clock.minutesOfDay <= salidaMin + WINDOW_MINUTES
-      ) {
-        const alreadySent = await db.hasMilestoneDispatchedToday(clock.dateYmd, 'salida', 'auto');
-        if (!alreadySent) {
-          const res = await triggerMilestonePush('salida', { trigger: 'auto' });
-          console.log(
-            `[ScheduleNotifier] Auto Salida (${clock.dateYmd} ${clock.timeHHMM}): sent=${res.sent}, targets=${res.targetDevices}`
-          );
+      const globalSalidaCoveredByRule = activeSalidas.some(
+        (s) =>
+          s.notificarPush &&
+          s.idAno === null &&
+          s.horaSalida.slice(0, 5) === config.horaSalida.slice(0, 5)
+      );
+      if (!globalSalidaCoveredByRule) {
+        const salidaMin = hhmmToMinutes(config.horaSalida);
+        if (
+          salidaMin > 0 &&
+          clock.minutesOfDay >= salidaMin &&
+          clock.minutesOfDay <= salidaMin + WINDOW_MINUTES
+        ) {
+          const alreadySent = await db.hasMilestoneDispatchedToday(clock.dateYmd, 'salida', 'auto');
+          if (!alreadySent) {
+            const res = await triggerMilestonePush('salida', { trigger: 'auto' });
+            console.log(
+              `[ScheduleNotifier] Auto Salida (${clock.dateYmd} ${clock.timeHHMM}): sent=${res.sent}, targets=${res.targetDevices}`
+            );
+          }
         }
       }
     }

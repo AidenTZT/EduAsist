@@ -444,8 +444,6 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
         });
         return reset;
       });
-
-      onRefreshData();
     } catch (err: any) {
       setStatusMessage({
         type: 'error',

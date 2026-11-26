@@ -4,6 +4,9 @@ import { z, ZodError, type ZodSchema } from 'zod';
 // Regex estricto para validar nombres y apellidos venezolanos sin números
 export const NAME_REGEX = /^[A-Za-zÁÉÍÓÚáéíóúÑñÄËÏÖÜäëïöü\s'-]+$/;
 
+const emptyToUndefined = (val: unknown) =>
+  typeof val === 'string' && val.trim() === '' ? undefined : val;
+
 export const loginCredentialsSchema = z
   .object({
     usuario: z.string().trim().optional(),
@@ -191,14 +194,47 @@ export const updateAsistenciaJustificacionSchema = z.object({
 });
 
 export const createHorarioSchema = z.object({
-  idAno: z.coerce.number().positive(),
-  idSeccion: z.coerce.number().positive(),
-  idMateria: z.coerce.number().positive(),
+  idAno: z.coerce.number().int().positive(),
+  idSeccion: z.coerce.number().int().positive(),
+  idMateria: z.coerce.number().int().positive(),
   diaSemana: z.enum(['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes']),
   horaInicio: z.string().regex(/^\d{2}:\d{2}$/, 'Formato HH:MM requerido para horaInicio'),
   horaFin: z.string().regex(/^\d{2}:\d{2}$/, 'Formato HH:MM requerido para horaFin'),
-  aula: z.string().trim().max(50).optional(),
+  aula: z.string().trim().max(50).optional().nullable(),
   forceIgnoreConflict: z.boolean().optional(),
+});
+
+export const updateHorarioSchema = createHorarioSchema.partial();
+
+export const validateHorarioConflictSchema = z.object({
+  idHorario: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().optional()),
+  idAno: z.coerce.number().int().positive(),
+  idSeccion: z.coerce.number().int().positive(),
+  idMateria: z.coerce.number().int().positive(),
+  diaSemana: z.enum(['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes']),
+  horaInicio: z.string().regex(/^\d{2}:\d{2}$/, 'Formato HH:MM requerido para horaInicio'),
+  horaFin: z.string().regex(/^\d{2}:\d{2}$/, 'Formato HH:MM requerido para horaFin'),
+  aula: z.string().trim().max(50).optional().nullable(),
+});
+
+export const suggestSlotsSchema = z.object({
+  idAno: z.coerce.number().int().positive(),
+  idSeccion: z.coerce.number().int().positive(),
+  idMateria: z.coerce.number().int().positive(),
+  aula: z.string().trim().max(50).optional().nullable(),
+  idHorarioExcluir: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().optional()),
+});
+
+export const configuracionEntrySchema = z.object({
+  clave: z
+    .string()
+    .trim()
+    .min(1, 'La clave de configuración es obligatoria')
+    .max(100, 'La clave no puede exceder los 100 caracteres'),
+  valor: z
+    .union([z.string().max(1000), z.number(), z.boolean()])
+    .transform((v) => String(v)),
+  descripcion: z.string().trim().max(300).optional().nullable(),
 });
 
 export const recesoSchema = z.object({
@@ -206,7 +242,98 @@ export const recesoSchema = z.object({
   horaInicio: z.string().regex(/^\d{2}:\d{2}$/, 'Formato HH:MM requerido'),
   horaFin: z.string().regex(/^\d{2}:\d{2}$/, 'Formato HH:MM requerido'),
   activo: z.boolean().optional(),
-  descripcion: z.string().trim().optional().nullable(),
+  descripcion: z.string().trim().max(250).optional().nullable(),
+});
+
+export const updateRecesoSchema = recesoSchema.partial();
+
+export const createAnoSchema = z.object({
+  nombreNivel: z.string().trim().min(2, 'El nombre del nivel es obligatorio').max(80),
+  activo: z.boolean().optional().default(true),
+});
+
+export const updateAnoSchema = z.object({
+  nombreNivel: z.string().trim().min(2, 'El nombre del nivel es obligatorio').max(80),
+  activo: z.boolean().optional(),
+});
+
+export const createSeccionSchema = z.object({
+  idAno: z.coerce.number().int().positive('Año escolar inválido'),
+  nombreSeccion: z.string().trim().min(1, 'El nombre de la sección es obligatorio').max(40),
+});
+
+export const updateSeccionSchema = z.object({
+  nombreSeccion: z.string().trim().min(1, 'El nombre de la sección es obligatorio').max(40),
+  idAno: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().optional()),
+});
+
+export const createMateriaSchema = z.object({
+  idAno: z.coerce.number().int().positive('Año escolar inválido'),
+  nombreMateria: z.string().trim().min(2, 'El nombre de la materia es obligatorio').max(100),
+});
+
+export const updateMateriaSchema = z.object({
+  nombreMateria: z.string().trim().min(2, 'El nombre de la materia es obligatorio').max(100),
+  idAno: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().optional()),
+});
+
+export const assignDocenteMateriaSchema = z.object({
+  idUsuario: z.coerce.number().int().positive('Docente inválido'),
+  idMateria: z.coerce.number().int().positive('Materia inválida'),
+});
+
+export const assignDocenteMateriasBatchSchema = z.object({
+  idUsuario: z.coerce.number().int().positive('Docente inválido'),
+  idMaterias: z.array(z.coerce.number().int().positive('ID de materia inválido')).max(200),
+});
+
+export const createEstudianteSchema = z.object({
+  cedula: z.string().trim().min(3, 'Cédula escolar obligatoria').max(25),
+  nombres: z.string().trim().min(2, 'Nombres obligatorios').max(100),
+  apellidos: z.string().trim().min(2, 'Apellidos obligatorios').max(100),
+  idAnoActual: z.coerce.number().int().positive('Año escolar actual obligatorio'),
+  idSeccion: z.preprocess(
+    (v) => (v === '' || v === null || v === undefined || Number(v) === 0 ? null : Number(v)),
+    z.number().int().positive().nullable().optional()
+  ),
+  idRepresentante: z.coerce.number().int().positive('Representante obligatorio'),
+});
+
+export const asistenciaQuerySchema = z.object({
+  fecha: z.preprocess(
+    emptyToUndefined,
+    z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha YYYY-MM-DD').optional()
+  ),
+  mes: z.preprocess(
+    emptyToUndefined,
+    z.string().regex(/^\d{4}-\d{2}$/, 'Formato de mes YYYY-MM').optional()
+  ),
+  startDate: z.preprocess(
+    emptyToUndefined,
+    z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de startDate YYYY-MM-DD').optional()
+  ),
+  endDate: z.preprocess(
+    emptyToUndefined,
+    z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de endDate YYYY-MM-DD').optional()
+  ),
+  estado: z.preprocess(
+    emptyToUndefined,
+    z.enum(['Presente', 'Tarde', 'Ausente', 'Justificado', 'Reposo Médico']).optional()
+  ),
+  idMateria: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().optional()),
+  idMaterias: z.preprocess(
+    emptyToUndefined,
+    z
+      .string()
+      .regex(/^\d+(,\d+)*$/, 'idMaterias debe ser una lista de IDs separados por coma')
+      .optional()
+  ),
+  idEstudiante: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().optional()),
+  idRepresentante: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().optional()),
+  idSeccion: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().optional()),
+  idAno: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().optional()),
+  lapsoId: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().optional()),
+  lapso_id: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().optional()),
 });
 
 export const salidaSchema = z.object({
@@ -410,9 +537,6 @@ export const triggerMilestonePushSchema = z.object({
     .max(240, 'El mensaje personalizado no puede exceder 240 caracteres.')
     .optional(),
 });
-
-const emptyToUndefined = (val: unknown) =>
-  typeof val === 'string' && val.trim() === '' ? undefined : val;
 
 const optionalPositiveIntQuery = z.preprocess(
   emptyToUndefined,
@@ -706,8 +830,24 @@ export const limpiarAntiguosSchema = z
       .max(3650, 'El umbral máximo permitido es de 3650 días.')
       .optional()
       .default(180),
+    diasRetencionNotificaciones: z.coerce
+      .number()
+      .int('Los días de retención de notificaciones deben ser un número entero.')
+      .min(7, 'El umbral mínimo para notificaciones leídas es de 7 días.')
+      .max(3650, 'El umbral máximo permitido es de 3650 días.')
+      .optional()
+      .default(90),
+    diasRetencionHitos: z.coerce
+      .number()
+      .int('Los días de retención de hitos deben ser un número entero.')
+      .min(7, 'El umbral mínimo para despachos de hitos es de 7 días.')
+      .max(3650, 'El umbral máximo permitido es de 3650 días.')
+      .optional()
+      .default(90),
     limpiarPush: z.boolean().optional().default(true),
     limpiarLogs: z.boolean().optional().default(true),
+    limpiarNotificaciones: z.boolean().optional().default(true),
+    limpiarHitos: z.boolean().optional().default(true),
     dryRun: z.boolean().optional().default(false),
     confirmado: z.boolean().optional().default(false),
   })
@@ -725,6 +865,11 @@ export const restoreBackupSchema = z.object({
       sistema: z.string().max(200).optional(),
       version: z.string().max(50).optional(),
       fechaGeneracion: z.string().max(100).optional(),
+      checksumSha256: z
+        .string()
+        .trim()
+        .regex(/^[a-f0-9]{64}$/i, 'Formato de checksum SHA-256 inválido.')
+        .optional(),
     })
     .passthrough()
     .optional(),

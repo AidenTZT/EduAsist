@@ -7,7 +7,6 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import {
   schoolApp,
-  startSalidaNotificationScheduler,
   startInstitutionalMilestoneScheduler,
 } from './src/server/api.ts';
 
@@ -35,35 +34,73 @@ app.use(
   })
 );
 
-// 2. CORS restringido con Lista Blanca Estricta (Prevención de Exfiltración Cross-Origin / CSRF)
-const allowedOrigins = [
-  process.env.APP_URL,
-  'http://localhost:3000',
-  'http://127.0.0.1:3000',
-].filter(Boolean) as string[];
+// 2. CORS restringido mediante validación estricta de URL.hostname (sin coincidencias laxas por subcadena)
+const explicitAllowedOrigins = new Set<string>(
+  [
+    process.env.APP_URL,
+    ...(process.env.CORS_ALLOWED_ORIGINS ? process.env.CORS_ALLOWED_ORIGINS.split(',') : []),
+    'http://localhost:3000',
+    'https://localhost:3000',
+    'http://127.0.0.1:3000',
+    'https://127.0.0.1:3000',
+  ]
+    .map((entry) => {
+      if (!entry) return '';
+      try {
+        return new URL(entry.trim()).origin;
+      } catch {
+        return '';
+      }
+    })
+    .filter(Boolean)
+);
+
+function isOriginAllowed(origin: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    return false;
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return false;
+  }
+
+  if (explicitAllowedOrigins.has(parsed.origin)) {
+    return true;
+  }
+
+  const host = parsed.hostname.toLowerCase();
+
+  // Desarrollo local estricto
+  if (host === 'localhost' || host === '127.0.0.1') {
+    return true;
+  }
+
+  // Entornos productivos/preview requieren HTTPS y coincidencia exacta de dominio/subdominio permitido
+  if (parsed.protocol !== 'https:') {
+    return false;
+  }
+
+  return (
+    host === 'aistudio.google.com' ||
+    host.endsWith('.aistudio.google.com') ||
+    host === 'ai.studio' ||
+    host.endsWith('.ai.studio') ||
+    host.endsWith('.run.app') ||
+    host.endsWith('.googleusercontent.com') ||
+    host.endsWith('.web.app') ||
+    host.endsWith('.firebaseapp.com')
+  );
+}
 
 app.use(
   cors({
     origin: (origin, callback) => {
       // Peticiones sin origen (mismo origen en el navegador, herramientas locales, llamadas internas)
       if (!origin) return callback(null, true);
-
-      // Comprobar contra lista blanca o dominios autorizados de la plataforma Cloud Run / Google AI Studio
-      const isAllowed =
-        allowedOrigins.includes(origin) ||
-        origin.endsWith('.run.app') ||
-        origin.includes('google.com') ||
-        origin.includes('googleusercontent.com') ||
-        origin.includes('firebaseapp.com') ||
-        origin.includes('web.app') ||
-        origin.includes('localhost') ||
-        origin.includes('127.0.0.1');
-
-      if (isAllowed) {
-        callback(null, true);
-      } else {
-        callback(null, false);
-      }
+      callback(null, isOriginAllowed(origin));
     },
     credentials: true, // Habilita la transmisión de cookies HttpOnly seguras
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -71,14 +108,10 @@ app.use(
   })
 );
 
-// 3. Parser de cookies seguro
+// 3. Parser de cookies seguro (los parsers JSON/urlencoded con límite acotado se aplican dentro de schoolApp)
 app.use(cookieParser());
 
-// 4. Parser de JSON y URL-encoded con límite robusto para admitir respaldos masivos de base de datos y lotes de datos
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-
-// 5. Cabeceras frescas para manifiesto PWA y Service Worker (evitar cachés viejas de EduControl)
+// 4. Cabeceras frescas para manifiesto PWA y Service Worker (evitar cachés viejas de EduControl)
 app.use((req, res, next) => {
   if (req.path === '/manifest.webmanifest') {
     res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
@@ -90,10 +123,10 @@ app.use((req, res, next) => {
   next();
 });
 
-// 6. Montar la API escolar blindada
+// 5. Montar la API escolar blindada
 app.use('/api', schoolApp);
 
-// 7. Frontend: Vite middlewares en desarrollo, archivos estáticos compilados en producción
+// 6. Frontend: Vite middlewares en desarrollo, archivos estáticos compilados en producción
 if (!isProd) {
   const { createServer: createViteServer } = await import('vite');
   const vite = await createViteServer({
@@ -110,6 +143,5 @@ if (!isProd) {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[Seguridad] EduAsist activo en http://0.0.0.0:${PORT} (Modo: ${isProd ? 'Producción' : 'Desarrollo'})`);
-  startSalidaNotificationScheduler();
   startInstitutionalMilestoneScheduler();
 });

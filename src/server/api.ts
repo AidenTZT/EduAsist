@@ -48,23 +48,37 @@ import {
   restoreBackupSchema,
   resetDatabaseSchema,
   cierreBackupFilenameSchema,
+  configuracionEntrySchema,
+  updateRecesoSchema,
+  createAnoSchema,
+  updateAnoSchema,
+  createSeccionSchema,
+  updateSeccionSchema,
+  createMateriaSchema,
+  updateMateriaSchema,
+  assignDocenteMateriaSchema,
+  assignDocenteMateriasBatchSchema,
+  createEstudianteSchema,
+  asistenciaQuerySchema,
+  validateHorarioConflictSchema,
+  suggestSlotsSchema,
+  updateHorarioSchema,
 } from './validation.ts';
 import type { EstadoAsistencia } from '../types.ts';
 import {
   getVapidPublicKey,
   dispatchAttendancePushNotificationsDirect,
-  dispatchDeparturePushNotificationsDirect,
   buildAttendanceNotificationDetails,
-  buildDepartureNotificationDetails,
   sendTestPushToSubscriptions,
   testPushLoad,
-  type PushAuditAuthor,
 } from './pushService.ts';
 import {
   getSchoolClockInTimezone,
   triggerMilestonePush,
   enqueueManualMilestonePush,
   startInstitutionalMilestoneScheduler,
+  recordSalidaInboxNotifications,
+  executeSalidaPushNotification,
 } from './scheduleNotifier.ts';
 
 export { startInstitutionalMilestoneScheduler };
@@ -80,10 +94,18 @@ function enqueueDetachedPushJob(label: string, job: () => Promise<void>): void {
 export const apiRouter = express.Router();
 export const schoolApp = express();
 
+const standardJsonParser = express.json({ limit: '1mb' });
+const restoreJsonParser = express.json({ limit: '50mb' });
+
 schoolApp.set('trust proxy', 1);
 schoolApp.use(cookieParser());
-schoolApp.use(express.json({ limit: '50mb' }));
-schoolApp.use(express.urlencoded({ extended: true, limit: '50mb' }));
+schoolApp.use((req, res, next) => {
+  if (req.path === '/backup/restore' && req.method === 'POST') {
+    return restoreJsonParser(req, res, next);
+  }
+  return standardJsonParser(req, res, next);
+});
+schoolApp.use(express.urlencoded({ extended: true, limit: '1mb' }));
 schoolApp.use(apiRouter);
 
 function getAuditAuthorFromReq(req: Request) {
@@ -399,13 +421,11 @@ apiRouter.put(
   '/configuracion',
   requireAuth,
   requireRole('director', 'coordinador'),
+  validateBody(configuracionEntrySchema),
   async (req: Request, res: Response) => {
     try {
-      const { clave, valor, descripcion } = req.body || {};
-      if (!clave || valor === undefined) {
-        return res.status(400).json({ error: 'Clave y valor son obligatorios.' });
-      }
-      const updated = await db.setConfiguracion(String(clave), String(valor), descripcion);
+      const { clave, valor, descripcion } = req.body;
+      const updated = await db.setConfiguracion(clave, valor, descripcion ?? undefined);
       await db.logAuditEvent({
         ...getAuditAuthorFromReq(req),
         accion: 'CONFIGURACION_INSTITUCIONAL_MODIFICADA',
@@ -477,10 +497,14 @@ apiRouter.put(
   '/recesos/:id',
   requireAuth,
   requireRole('director', 'coordinador'),
+  validateBody(updateRecesoSchema),
   async (req: Request, res: Response) => {
     try {
       const idReceso = Number(req.params.id);
-      const updated = await db.updateReceso(idReceso, req.body || {});
+      if (!Number.isInteger(idReceso) || idReceso <= 0) {
+        return res.status(400).json({ error: 'ID de receso inválido.' });
+      }
+      const updated = await db.updateReceso(idReceso, req.body);
       await db.logAuditEvent({
         ...getAuditAuthorFromReq(req),
         accion: 'RECESO_ACTUALIZADO',
@@ -540,204 +564,8 @@ apiRouter.delete(
 
 // ---------------------------------------------------------------------------
 // 1.1 HORA DE SALIDA INSTITUCIONAL & DESPACHO PUSH
+// (Planificador automático unificado en scheduleNotifier.ts)
 // ---------------------------------------------------------------------------
-function getSchoolZonedClock(timeZone: string = process.env.SCHOOL_TIMEZONE || 'America/Caracas') {
-  const now = new Date();
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    weekday: 'short',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).formatToParts(now);
-
-  const map: Record<string, string> = {};
-  for (const p of parts) {
-    if (p.type !== 'literal') map[p.type] = p.value;
-  }
-
-  const weekday = map.weekday || '';
-  const isWeekday = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].includes(weekday);
-  const rawHour = Number(map.hour === '24' ? '0' : map.hour || '0');
-  const rawMinute = Number(map.minute || '0');
-  const hh = String(rawHour).padStart(2, '0');
-  const mm = String(rawMinute).padStart(2, '0');
-
-  return {
-    isWeekday,
-    todayYmd: `${map.year}-${map.month}-${map.day}`,
-    currentHhmm: `${hh}:${mm}`,
-    currentMins: rawHour * 60 + rawMinute,
-  };
-}
-
-function hhmmToMinutes(hhmm: string): number {
-  const [h, m] = String(hhmm || '00:00').split(':').map(Number);
-  return (h || 0) * 60 + (m || 0);
-}
-
-async function recordSalidaInboxNotifications(
-  payload: Awaited<ReturnType<typeof db.getSalidasPushDispatchPayload>>,
-  clock: { todayYmd: string; currentHhmm: string }
-): Promise<void> {
-  if (!payload.targets.length) return;
-  try {
-    await db.createNotificacionesRepresentanteBatch(
-      payload.targets.map((target) => {
-        const { title, body } = buildDepartureNotificationDetails({
-          nombreSalida: payload.salida.nombre,
-          horaSalida: payload.salida.horaSalida,
-          alcanceNombre: payload.salida.nombreNivel || 'Toda la institución',
-          nombreInstitucion: payload.nombreInstitucion,
-          studentNames: target.estudiantes.map((e) => e.nombre),
-        });
-        return {
-          idRepresentante: target.idRepresentante,
-          tipo: 'salida' as const,
-          titulo: title,
-          mensaje: body,
-          fechaEvento: clock.todayYmd,
-          horaEvento: clock.currentHhmm,
-          metadata: {
-            idSalida: payload.salida.idSalida,
-            nombreSalida: payload.salida.nombre,
-            alcance: payload.salida.nombreNivel || 'Toda la institución',
-          },
-        };
-      })
-    );
-  } catch (inboxErr) {
-    console.warn('[WebPush] Error guardando salida en bandeja de notificaciones:', inboxErr);
-  }
-}
-
-async function executeSalidaPushNotification(
-  idSalida: number,
-  motivo: 'auto' | 'manual',
-  clockOverride?: { todayYmd: string; currentHhmm: string },
-  author?: PushAuditAuthor,
-  preloadedPayload?: Awaited<ReturnType<typeof db.getSalidasPushDispatchPayload>>,
-  skipInboxPersist: boolean = false
-) {
-  const clock = clockOverride || getSchoolZonedClock();
-  const payload = preloadedPayload || (await db.getSalidasPushDispatchPayload(idSalida));
-
-  if (!skipInboxPersist) {
-    await recordSalidaInboxNotifications(payload, clock);
-  }
-
-  let sent = 0;
-  let failed = 0;
-  let expiredRemoved = 0;
-  let fallidosRed = 0;
-  let duracionMs = 0;
-  let lastError: string | undefined;
-
-  if (payload.subscriptions.length > 0 && payload.targets.length > 0) {
-    const pushRes = await dispatchDeparturePushNotificationsDirect({
-      idSalida: payload.salida.idSalida,
-      nombreSalida: payload.salida.nombre,
-      horaSalida: payload.salida.horaSalida,
-      alcanceNombre: payload.salida.nombreNivel || 'Toda la institución',
-      nombreInstitucion: payload.nombreInstitucion,
-      fecha: clock.todayYmd,
-      motivo,
-      targets: payload.targets,
-      subscriptions: payload.subscriptions,
-      author,
-    });
-    sent = pushRes.sent;
-    failed = pushRes.failed;
-    expiredRemoved = pushRes.metrics.eliminados410;
-    fallidosRed = pushRes.metrics.fallidosRed;
-    duracionMs = pushRes.metrics.duracionMs;
-    lastError = pushRes.lastError;
-  }
-
-  await db.markSalidaNotified(payload.salida.idSalida, clock.todayYmd, clock.currentHhmm);
-
-  return {
-    salida: {
-      ...payload.salida,
-      ultimaNotificacionFecha: clock.todayYmd,
-      ultimaNotificacionHora: clock.currentHhmm,
-    },
-    sent,
-    failed,
-    totalDispositivos: payload.subscriptions.length,
-    totalRepresentantes: payload.targets.length,
-    expiredRemoved,
-    fallidosRed,
-    duracionMs,
-    lastError,
-  };
-}
-
-let salidaSchedulerTimer: NodeJS.Timeout | null = null;
-let salidaSchedulerRunning = false;
-
-export function startSalidaNotificationScheduler(): void {
-  if (salidaSchedulerTimer) return;
-
-  const tick = async () => {
-    if (salidaSchedulerRunning) return;
-    salidaSchedulerRunning = true;
-    try {
-      const clock = getSchoolZonedClock();
-      if (!clock.isWeekday) return;
-
-      const nonWorkingCheck = await db.verificarDiaNoLaborable(clock.todayYmd);
-      if (nonWorkingCheck.esNoLaborable) return;
-
-      const activeSalidas = await db.getSalidas(true);
-      for (const s of activeSalidas) {
-        if (!s.notificarPush) continue;
-        if (s.ultimaNotificacionFecha === clock.todayYmd) continue;
-
-        const salidaMins = hhmmToMinutes(s.horaSalida);
-        // Ventana de 15 minutos tras la hora configurada para emitir la alerta automática una sola vez al día
-        if (clock.currentMins >= salidaMins && clock.currentMins <= salidaMins + 15) {
-          const result = await executeSalidaPushNotification(s.idSalida, 'auto', clock, {
-            emailOCedula: 'sistema@eduasist.edu',
-            rol: 'sistema',
-          });
-          await db.logAuditEvent({
-            emailOCedula: 'sistema@eduasist.edu',
-            rol: 'sistema',
-            accion: 'SALIDA_PUSH_AUTOMATICA_ENVIADA',
-            entidad: 'salidas_institucionales',
-            idEntidad: s.idSalida,
-            detalles: {
-              nombre: s.nombre,
-              horaSalida: s.horaSalida,
-              fecha: clock.todayYmd,
-              totalObjetivos: result.totalDispositivos,
-              enviadosExitosos: result.sent,
-              eliminados410: result.expiredRemoved,
-              fallidosRed: result.fallidosRed,
-              duracionMs: result.duracionMs,
-            },
-          });
-        }
-      }
-    } catch (err) {
-      console.warn('[WebPush] Error en planificador automático de hora de salida:', err);
-    } finally {
-      salidaSchedulerRunning = false;
-    }
-  };
-
-  // Ejecutar primera verificación corta al iniciar y luego cada 30 segundos
-  setTimeout(() => {
-    void tick();
-  }, 5000);
-  salidaSchedulerTimer = setInterval(() => {
-    void tick();
-  }, 30_000);
-}
 
 apiRouter.get('/salidas', requireAuth, async (req: Request, res: Response) => {
   try {
@@ -856,21 +684,21 @@ apiRouter.post(
         return res.status(400).json({ error: 'ID de hora de salida inválido.' });
       }
 
-      const clock = getSchoolZonedClock();
+      const clock = getSchoolClockInTimezone();
       const author = getAuditAuthorFromReq(req);
       const payload = await db.getSalidasPushDispatchPayload(idSalida);
 
       await recordSalidaInboxNotifications(payload, clock);
 
       if (payload.subscriptions.length === 0 || payload.targets.length === 0) {
-        await db.markSalidaNotified(payload.salida.idSalida, clock.todayYmd, clock.currentHhmm);
+        await db.markSalidaNotified(payload.salida.idSalida, clock.dateYmd, clock.timeHHMM);
         return res.json({
           success: true,
           queued: false,
           salida: {
             ...payload.salida,
-            ultimaNotificacionFecha: clock.todayYmd,
-            ultimaNotificacionHora: clock.currentHhmm,
+            ultimaNotificacionFecha: clock.dateYmd,
+            ultimaNotificacionHora: clock.timeHHMM,
           },
           sent: 0,
           failed: 0,
@@ -882,7 +710,7 @@ apiRouter.post(
       }
 
       // Marcar fecha/hora de despacho y ejecutar el envío masivo por lotes de forma desacoplada
-      await db.markSalidaNotified(payload.salida.idSalida, clock.todayYmd, clock.currentHhmm);
+      await db.markSalidaNotified(payload.salida.idSalida, clock.dateYmd, clock.timeHHMM);
       enqueueDetachedPushJob(`salida_manual_${idSalida}`, async () => {
         const result = await executeSalidaPushNotification(
           idSalida,
@@ -916,8 +744,8 @@ apiRouter.post(
         queued: true,
         salida: {
           ...payload.salida,
-          ultimaNotificacionFecha: clock.todayYmd,
-          ultimaNotificacionHora: clock.currentHhmm,
+          ultimaNotificacionFecha: clock.dateYmd,
+          ultimaNotificacionHora: clock.timeHHMM,
         },
         sent: 0,
         failed: 0,
@@ -1178,13 +1006,11 @@ apiRouter.post(
   '/anos',
   requireAuth,
   requireRole('director', 'coordinador'),
+  validateBody(createAnoSchema),
   async (req: Request, res: Response) => {
     try {
-      const { nombreNivel, activo = true } = req.body || {};
-      if (!nombreNivel || !String(nombreNivel).trim()) {
-        return res.status(400).json({ error: 'El nombre del nivel es obligatorio.' });
-      }
-      const created = await db.createAnoEscolar(String(nombreNivel), Boolean(activo));
+      const { nombreNivel, activo = true } = req.body;
+      const created = await db.createAnoEscolar(nombreNivel, activo);
       await db.logAuditEvent({
         ...getAuditAuthorFromReq(req),
         accion: 'ANO_ESCOLAR_CREADO',
@@ -1203,11 +1029,15 @@ apiRouter.put(
   '/anos/:id',
   requireAuth,
   requireRole('director', 'coordinador'),
+  validateBody(updateAnoSchema),
   async (req: Request, res: Response) => {
     try {
       const id = Number(req.params.id);
-      const { nombreNivel, activo } = req.body || {};
-      res.json(await db.updateAnoEscolar(id, String(nombreNivel), activo));
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ error: 'ID de año escolar inválido.' });
+      }
+      const { nombreNivel, activo } = req.body;
+      res.json(await db.updateAnoEscolar(id, nombreNivel, activo));
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -1241,10 +1071,11 @@ apiRouter.post(
   '/secciones',
   requireAuth,
   requireRole('director', 'coordinador'),
+  validateBody(createSeccionSchema),
   async (req: Request, res: Response) => {
     try {
-      const { idAno, nombreSeccion } = req.body || {};
-      res.status(201).json(await db.createSeccion(Number(idAno), String(nombreSeccion)));
+      const { idAno, nombreSeccion } = req.body;
+      res.status(201).json(await db.createSeccion(idAno, nombreSeccion));
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -1255,10 +1086,15 @@ apiRouter.put(
   '/secciones/:id',
   requireAuth,
   requireRole('director', 'coordinador'),
+  validateBody(updateSeccionSchema),
   async (req: Request, res: Response) => {
     try {
-      const { nombreSeccion, idAno } = req.body || {};
-      res.json(await db.updateSeccion(Number(req.params.id), String(nombreSeccion), idAno ? Number(idAno) : undefined));
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ error: 'ID de sección inválido.' });
+      }
+      const { nombreSeccion, idAno } = req.body;
+      res.json(await db.updateSeccion(id, nombreSeccion, idAno));
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -1292,10 +1128,11 @@ apiRouter.post(
   '/materias',
   requireAuth,
   requireRole('director', 'coordinador'),
+  validateBody(createMateriaSchema),
   async (req: Request, res: Response) => {
     try {
-      const { idAno, nombreMateria } = req.body || {};
-      res.status(201).json(await db.createMateria(Number(idAno), String(nombreMateria)));
+      const { idAno, nombreMateria } = req.body;
+      res.status(201).json(await db.createMateria(idAno, nombreMateria));
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -1306,10 +1143,15 @@ apiRouter.put(
   '/materias/:id',
   requireAuth,
   requireRole('director', 'coordinador'),
+  validateBody(updateMateriaSchema),
   async (req: Request, res: Response) => {
     try {
-      const { nombreMateria, idAno } = req.body || {};
-      res.json(await db.updateMateria(Number(req.params.id), String(nombreMateria), idAno ? Number(idAno) : undefined));
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ error: 'ID de materia inválido.' });
+      }
+      const { nombreMateria, idAno } = req.body;
+      res.json(await db.updateMateria(id, nombreMateria, idAno));
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -1344,10 +1186,11 @@ apiRouter.post(
   '/docente-materias',
   requireAuth,
   requireRole('director', 'coordinador'),
+  validateBody(assignDocenteMateriaSchema),
   async (req: Request, res: Response) => {
     try {
-      const { idUsuario, idMateria } = req.body || {};
-      const created = await db.assignDocenteMateria(Number(idUsuario), Number(idMateria));
+      const { idUsuario, idMateria } = req.body;
+      const created = await db.assignDocenteMateria(idUsuario, idMateria);
       await db.logAuditEvent({
         ...getAuditAuthorFromReq(req),
         accion: 'ASIGNACION_DOCENTE_MATERIA',
@@ -1366,16 +1209,17 @@ apiRouter.post(
   '/docente-materias/batch',
   requireAuth,
   requireRole('director', 'coordinador'),
+  validateBody(assignDocenteMateriasBatchSchema),
   async (req: Request, res: Response) => {
     try {
-      const { idUsuario, idMaterias } = req.body || {};
-      const result = await db.assignDocenteMateriasBatch(Number(idUsuario), idMaterias || []);
+      const { idUsuario, idMaterias } = req.body;
+      const result = await db.assignDocenteMateriasBatch(idUsuario, idMaterias);
       await db.logAuditEvent({
         ...getAuditAuthorFromReq(req),
         accion: 'ASIGNACION_DOCENTE_MATERIAS_BATCH',
         entidad: 'docente_materias',
         idEntidad: idUsuario,
-        detalles: { idUsuario, totalMaterias: (idMaterias || []).length },
+        detalles: { idUsuario, totalMaterias: idMaterias.length },
       });
       res.json(result);
     } catch (e: any) {
@@ -1556,6 +1400,7 @@ apiRouter.post(
   '/estudiantes',
   requireAuth,
   requireRole('director', 'coordinador'),
+  validateBody(createEstudianteSchema),
   async (req: Request, res: Response) => {
     try {
       const est = await db.createEstudiante(req.body);
@@ -1758,32 +1603,72 @@ apiRouter.get(
 // ---------------------------------------------------------------------------
 // 5. ASISTENCIA & PORTAL REPRESENTANTE
 // ---------------------------------------------------------------------------
-apiRouter.get('/asistencia', requireAuth, async (req: Request, res: Response) => {
-  try {
-    const filters = {
-      fecha: req.query.fecha ? String(req.query.fecha) : undefined,
-      mes: req.query.mes ? String(req.query.mes) : undefined,
-      estado: req.query.estado ? (String(req.query.estado) as EstadoAsistencia) : undefined,
-      idMateria: req.query.idMateria ? Number(req.query.idMateria) : undefined,
-      idEstudiante: req.query.idEstudiante ? Number(req.query.idEstudiante) : undefined,
-      idRepresentante:
-        req.authType === 'representante' && req.representante
-          ? req.representante.idRepresentante
-          : req.query.idRepresentante
-          ? Number(req.query.idRepresentante)
-          : undefined,
-      idSeccion: req.query.idSeccion ? Number(req.query.idSeccion) : undefined,
-      idAno: req.query.idAno ? Number(req.query.idAno) : undefined,
-      lapsoId:
-        req.query.lapsoId || req.query.lapso_id
-          ? Number(req.query.lapsoId || req.query.lapso_id)
-          : undefined,
-    };
-    res.json(await db.getAsistencia(filters));
-  } catch (e: any) {
-    res.status(500).json({ error: e.message });
+apiRouter.get(
+  '/asistencia',
+  requireAuth,
+  validateQuery(asistenciaQuerySchema),
+  async (req: Request, res: Response) => {
+    try {
+      const q = res.locals.validatedQuery as {
+        fecha?: string;
+        mes?: string;
+        startDate?: string;
+        endDate?: string;
+        estado?: EstadoAsistencia;
+        idMateria?: number;
+        idMaterias?: string;
+        idEstudiante?: number;
+        idRepresentante?: number;
+        idSeccion?: number;
+        idAno?: number;
+        lapsoId?: number;
+        lapso_id?: number;
+      };
+
+      let requestedIdMaterias = q.idMaterias
+        ? q.idMaterias
+            .split(',')
+            .map((v) => Number(v))
+            .filter((n) => Number.isInteger(n) && n > 0)
+        : undefined;
+
+      // Restringir automáticamente consultas de docentes a sus materias asignadas (ligero y seguro)
+      if (req.authType === 'staff' && req.user?.rol === 'docente') {
+        const assigned = await db.getDocenteMaterias(req.user.id);
+        const assignedSet = new Set(assigned.map((a) => a.idMateria));
+        if (q.idMateria && !assignedSet.has(q.idMateria)) {
+          return res.json([]);
+        }
+        if (requestedIdMaterias) {
+          requestedIdMaterias = requestedIdMaterias.filter((id) => assignedSet.has(id));
+        } else if (!q.idMateria) {
+          requestedIdMaterias = Array.from(assignedSet);
+        }
+      }
+
+      const filters = {
+        fecha: q.fecha,
+        mes: q.mes,
+        startDate: q.startDate,
+        endDate: q.endDate,
+        estado: q.estado,
+        idMateria: q.idMateria,
+        idMaterias: requestedIdMaterias,
+        idEstudiante: q.idEstudiante,
+        idRepresentante:
+          req.authType === 'representante' && req.representante
+            ? req.representante.idRepresentante
+            : q.idRepresentante,
+        idSeccion: q.idSeccion,
+        idAno: q.idAno,
+        lapsoId: q.lapsoId || q.lapso_id,
+      };
+      res.json(await db.getAsistencia(filters));
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   }
-});
+);
 
 const handleGetAttendanceHistoryPaginated = async (_req: Request, res: Response) => {
   try {
@@ -1882,76 +1767,20 @@ const handleRegistrarAsistenciaBatch = async (req: Request, res: Response) => {
     const actorNombre = req.user
       ? `${req.user.nombre} ${req.user.apellidos || ''}`.trim()
       : 'Sistema';
+    const author = getAuditAuthorFromReq(req);
 
+    // Persistencia consolidada en una única transacción atómica: asistencia + auditLogs + notificacionesRepresentante
     const saved = await db.registrarAsistenciaBatch(Number(idMateria), fecha, records, {
       actorId: req.user?.id,
       actorNombre,
       actorRol: req.user?.rol,
+      auditAuthor: author,
+      buildNotification: buildAttendanceNotificationDetails,
     });
 
-    const resumenEstados = (
-      records as Array<{ idEstudiante: number; estado: EstadoAsistencia }>
-    ).reduce<Record<string, number>>((acc, item) => {
-      acc[item.estado] = (acc[item.estado] || 0) + 1;
-      return acc;
-    }, {});
-
-    await db.logAuditEvent({
-      ...getAuditAuthorFromReq(req),
-      accion: 'ASISTENCIA_REGISTRADA_BATCH',
-      entidad: 'asistencia',
-      idEntidad: idMateria,
-      detalles: {
-        idMateria,
-        fecha,
-        totalEstudiantes: records.length,
-        resumenEstados,
-        responsableId: req.user?.id || null,
-        responsableNombre: actorNombre,
-        responsableRol: req.user?.rol || null,
-      },
-    });
-
-    // Persistir en la bandeja de notificaciones de cada representante activo y luego despachar Web Push desacoplado
+    // Lectura ligera en memoria para despacho Web Push desacoplado
     const pushPayload = await db.getPushDispatchPayloadForBatch(Number(idMateria), saved);
-    if (pushPayload.records.length > 0) {
-      try {
-        await db.createNotificacionesRepresentanteBatch(
-          pushPayload.records.map((rec) => {
-            const { title, body } = buildAttendanceNotificationDetails({
-              estudianteNombreCompleto: rec.estudianteNombre,
-              nombreMateria: pushPayload.nombreMateria,
-              estado: rec.estado,
-              fecha,
-              horaEntrada: rec.horaEntrada || '',
-              motivoJustificacion: rec.motivoJustificacion,
-            });
-            return {
-              idRepresentante: rec.idRepresentante,
-              tipo:
-                rec.estado === 'Justificado' || rec.estado === 'Reposo Médico'
-                  ? ('justificacion' as const)
-                  : ('asistencia' as const),
-              titulo: title,
-              mensaje: body,
-              fechaEvento: fecha,
-              horaEvento: (rec.horaEntrada || '').slice(0, 5),
-              metadata: {
-                idEstudiante: rec.idEstudiante,
-                estudianteNombre: rec.estudianteNombre,
-                idMateria: pushPayload.idMateria,
-                nombreMateria: pushPayload.nombreMateria,
-                estado: rec.estado as EstadoAsistencia,
-              },
-            };
-          })
-        );
-      } catch (inboxErr) {
-        console.warn('[WebPush] Error guardando asistencia en bandeja de notificaciones:', inboxErr);
-      }
-    }
 
-    const author = getAuditAuthorFromReq(req);
     enqueueDetachedPushJob(`asistencia_batch_${idMateria}`, async () => {
       if (pushPayload.subscriptions.length > 0 && pushPayload.records.length > 0) {
         await dispatchAttendancePushNotificationsDirect({
@@ -2001,7 +1830,9 @@ const handleUpdateAsistenciaJustificacion = async (req: Request, res: Response) 
 
     const { estado, motivoJustificacion, numeroJustificante, fechaRecepcionDocumento } = req.body;
     const actorNombre = `${req.user.nombre} ${req.user.apellidos || ''}`.trim();
+    const author = getAuditAuthorFromReq(req);
 
+    // Persistencia consolidada en una única transacción atómica: actualización + auditoría + bandeja representante
     const updated = await db.updateAsistenciaJustificacion(
       idAsistencia,
       {
@@ -2014,6 +1845,10 @@ const handleUpdateAsistenciaJustificacion = async (req: Request, res: Response) 
         id: req.user.id,
         nombre: actorNombre,
         rol: req.user.rol,
+      },
+      {
+        auditAuthor: author,
+        buildNotification: buildAttendanceNotificationDetails,
       }
     );
 
@@ -2021,66 +1856,11 @@ const handleUpdateAsistenciaJustificacion = async (req: Request, res: Response) 
       return res.status(404).json({ error: 'Registro de asistencia no encontrado.' });
     }
 
-    await db.logAuditEvent({
-      ...getAuditAuthorFromReq(req),
-      accion: 'ASISTENCIA_JUSTIFICACION_MODIFICADA',
-      entidad: 'asistencia',
-      idEntidad: idAsistencia,
-      detalles: {
-        idAsistencia,
-        idEstudiante: updated.registro.idEstudiante,
-        estudiante: `${updated.registro.estudianteApellidos || ''}, ${updated.registro.estudianteNombres || ''}`.trim(),
-        fechaClase: updated.registro.fecha,
-        materia: updated.registro.nombreMateria,
-        estadoAnterior: updated.previousEstado,
-        estadoNuevo: updated.registro.estado,
-        motivoJustificacion: updated.registro.motivoJustificacion,
-        numeroJustificante: updated.registro.numeroJustificante,
-        fechaRecepcionDocumento: updated.registro.fechaRecepcionDocumento,
-        coordinadorResponsable: actorNombre,
-        rolResponsable: req.user.rol,
-      },
-    });
-
-    // Persistir en bandeja de notificaciones y notificar al representante de forma asíncrona desacoplada
+    // Lectura ligera en memoria para despacho Web Push desacoplado
     const pushPayload = await db.getPushDispatchPayloadForBatch(updated.registro.idMateria, [
       updated.registro,
     ]);
-    if (pushPayload.records.length > 0) {
-      try {
-        await db.createNotificacionesRepresentanteBatch(
-          pushPayload.records.map((rec) => {
-            const { title, body } = buildAttendanceNotificationDetails({
-              estudianteNombreCompleto: rec.estudianteNombre,
-              nombreMateria: pushPayload.nombreMateria,
-              estado: rec.estado,
-              fecha: updated.registro.fecha,
-              horaEntrada: rec.horaEntrada || '',
-              motivoJustificacion: rec.motivoJustificacion,
-            });
-            return {
-              idRepresentante: rec.idRepresentante,
-              tipo: 'justificacion' as const,
-              titulo: title,
-              mensaje: body,
-              fechaEvento: updated.registro.fecha,
-              horaEvento: (rec.horaEntrada || '').slice(0, 5),
-              metadata: {
-                idEstudiante: rec.idEstudiante,
-                estudianteNombre: rec.estudianteNombre,
-                idMateria: pushPayload.idMateria,
-                nombreMateria: pushPayload.nombreMateria,
-                estado: rec.estado as EstadoAsistencia,
-              },
-            };
-          })
-        );
-      } catch (inboxErr) {
-        console.warn('[WebPush] Error guardando justificación en bandeja:', inboxErr);
-      }
-    }
 
-    const author = getAuditAuthorFromReq(req);
     enqueueDetachedPushJob(`asistencia_justificacion_${idAsistencia}`, async () => {
       if (pushPayload.subscriptions.length > 0 && pushPayload.records.length > 0) {
         await dispatchAttendancePushNotificationsDirect({
@@ -2241,6 +2021,7 @@ apiRouter.post(
   '/horarios/validate-conflict',
   requireAuth,
   requireRole('director', 'coordinador'),
+  validateBody(validateHorarioConflictSchema),
   async (req: Request, res: Response) => {
     try {
       res.json(await db.detectHorarioConflict(req.body));
@@ -2254,6 +2035,7 @@ apiRouter.post(
   '/horarios/suggest-slots',
   requireAuth,
   requireRole('director', 'coordinador'),
+  validateBody(suggestSlotsSchema),
   async (req: Request, res: Response) => {
     try {
       res.json(await db.suggestConflictFreeSlots(req.body));
@@ -2309,9 +2091,13 @@ apiRouter.put(
   '/horarios/:id',
   requireAuth,
   requireRole('director', 'coordinador'),
+  validateBody(updateHorarioSchema),
   async (req: Request, res: Response) => {
     try {
       const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ error: 'ID de horario inválido.' });
+      }
       const updated = await db.updateHorario(id, req.body);
       await db.logAuditEvent({
         ...getAuditAuthorFromReq(req),
@@ -2427,13 +2213,13 @@ apiRouter.post(
   validateBody(restoreBackupSchema),
   async (req: Request, res: Response) => {
     try {
-      const result = await db.restoreFullDatabaseBackup(req.body);
-      await db.logAuditEvent({
-        ...getAuditAuthorFromReq(req),
-        accion: 'RESTAURACION_BASE_DATOS_EJECUTADA',
-        entidad: 'DATABASE',
-        idEntidad: 'full_restore',
-        detalles: { tablasRestauradas: result.tablasRestauradas },
+      const author = getAuditAuthorFromReq(req);
+      const result = await db.restoreFullDatabaseBackup(req.body, {
+        id: req.user?.id,
+        email: req.user?.email,
+        rol: req.user?.rol,
+        ipOrigen: author.ipOrigen,
+        userAgent: author.userAgent,
       });
       res.json(result);
     } catch (e: any) {
@@ -2535,33 +2321,17 @@ apiRouter.post(
   validateBody(cierreAnioEscolarSchema),
   async (req: Request, res: Response) => {
     try {
+      const author = getAuditAuthorFromReq(req);
       const authorInfo = req.user
-        ? { id: req.user.id, email: req.user.email, rol: req.user.rol }
+        ? {
+            id: req.user.id,
+            email: req.user.email,
+            rol: req.user.rol,
+            ipOrigen: author.ipOrigen,
+            userAgent: author.userAgent,
+          }
         : undefined;
       const result = await db.ejecutarCierreAnioEscolar(req.body, authorInfo);
-
-      if (!result.dryRun) {
-        await db.logAuditEvent({
-          ...getAuditAuthorFromReq(req),
-          accion: 'CIERRE_ANIO_ESCOLAR_COMPACTACION',
-          entidad: 'resumenes_asistencia',
-          idEntidad: result.metricas.anoLectivoActivoDespues,
-          detalles: {
-            anoLectivoAntes: result.metricas.anoLectivoActivoActual,
-            anoLectivoDespues: result.metricas.anoLectivoActivoDespues,
-            respaldoGenerado: Boolean(result.respaldoSnapshot),
-            respaldoArchivoId: result.respaldoArchivoId ?? null,
-            asistenciasCompactadas: result.metricas.asistenciasACompactar,
-            asistenciasDepuradas: result.metricas.asistenciasADepurar,
-            asistenciasConservadas: result.metricas.asistenciasConservadas,
-            resumenesGenerados: result.metricas.resumenesGeneradosCount,
-            resumenesNuevos: result.metricas.resumenesNuevosCount,
-            resumenesActualizados: result.metricas.resumenesActualizadosCount,
-            estudiantesAfectados: result.metricas.estudiantesAfectadosCount,
-          },
-        });
-      }
-
       res.json(result);
     } catch (e: any) {
       res.status(400).json({
@@ -2578,26 +2348,7 @@ apiRouter.post(
   validateBody(limpiarAntiguosSchema),
   async (req: Request, res: Response) => {
     try {
-      const result = await db.limpiarDatosAntiguos(req.body);
-
-      if (!result.dryRun) {
-        await db.logAuditEvent({
-          ...getAuditAuthorFromReq(req),
-          accion: 'LIMPIEZA_RETENCION_DATOS',
-          entidad: 'DATABASE',
-          idEntidad: 'retention_cleanup',
-          detalles: {
-            diasRetencionPush: result.diasRetencionPush,
-            diasRetencionLogs: result.diasRetencionLogs,
-            pushEliminadas: result.pushEliminadas,
-            pushConservadas: result.pushConservadas,
-            logsEliminados: result.logsEliminados,
-            logsConservados: result.logsConservados,
-            desgloseLogsPorAccion: result.desgloseLogsPorAccion,
-          },
-        });
-      }
-
+      const result = await db.limpiarDatosAntiguos(req.body, getAuditAuthorFromReq(req));
       res.json(result);
     } catch (e: any) {
       res.status(400).json({

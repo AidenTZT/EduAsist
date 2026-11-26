@@ -463,25 +463,7 @@ export async function dispatchPushTasksResilient(
   }
 
   const expiredEndpoints = Array.from(expiredEndpointsSet);
-
-  // Auto-limpieza de tokens caducados (410 Gone / 404 Not Found / 401 / 403)
-  if (autoCleanupExpired && expiredEndpoints.length > 0) {
-    try {
-      await db.deletePushSubscriptionsByEndpoints(expiredEndpoints);
-    } catch (cleanupErr) {
-      console.warn('[WebPush] Error al depurar suscripciones caducadas:', cleanupErr);
-    }
-  }
-
-  // Registrar marca temporal lastUsed en suscripciones entregadas exitosamente
-  if (!dryRun && succeededEndpointsSet.size > 0) {
-    try {
-      await db.markPushSubscriptionsUsed(Array.from(succeededEndpointsSet));
-    } catch (lastUsedErr) {
-      console.warn('[WebPush] Error actualizando lastUsed de suscripciones:', lastUsedErr);
-    }
-  }
-
+  const succeededEndpoints = !dryRun ? Array.from(succeededEndpointsSet) : [];
   const duracionMs = Math.max(1, Math.round(performance.now() - startedAt));
   const metrics: PushDispatchMetrics = {
     totalObjetivos: tasks.length,
@@ -493,28 +475,32 @@ export async function dispatchPushTasksResilient(
     duracionMs,
   };
 
-  if (recordAudit) {
-    try {
-      await db.logAuditEvent({
-        idUsuario: options.author?.idUsuario ?? null,
-        emailOCedula: options.author?.emailOCedula ?? 'sistema@eduasist.edu',
-        rol: options.author?.rol ?? 'sistema',
-        ipOrigen: options.author?.ipOrigen ?? null,
-        userAgent: options.author?.userAgent ?? null,
-        accion: 'PUSH_LOTE_DESPACHADO',
-        entidad: 'push_notifications',
-        idEntidad: options.context,
-        detalles: {
-          contexto: options.context,
-          chunkSize,
-          chunkDelayMs,
-          ...metrics,
-          ...(options.auditMeta || {}),
-        },
-      });
-    } catch (auditErr) {
-      console.warn('[WebPush] No se pudo registrar métrica de lote en auditLogs:', auditErr);
-    }
+  try {
+    await db.finalizePushDispatchBatch({
+      expiredEndpoints: autoCleanupExpired ? expiredEndpoints : [],
+      succeededEndpoints,
+      auditEntry: recordAudit
+        ? {
+            idUsuario: options.author?.idUsuario ?? null,
+            emailOCedula: options.author?.emailOCedula ?? 'sistema@eduasist.edu',
+            rol: options.author?.rol ?? 'sistema',
+            ipOrigen: options.author?.ipOrigen ?? null,
+            userAgent: options.author?.userAgent ?? null,
+            accion: 'PUSH_LOTE_DESPACHADO',
+            entidad: 'push_notifications',
+            idEntidad: options.context,
+            detalles: {
+              contexto: options.context,
+              chunkSize,
+              chunkDelayMs,
+              ...metrics,
+              ...(options.auditMeta || {}),
+            },
+          }
+        : null,
+    });
+  } catch (finalizeErr) {
+    console.warn('[WebPush] Error consolidando cierre de lote push:', finalizeErr);
   }
 
   return {

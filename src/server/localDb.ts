@@ -479,7 +479,8 @@ function syncAsistenciaLapsoIds(state: DatabaseState): void {
 async function persistDbAtomic(state: DatabaseState): Promise<void> {
   await fs.promises.mkdir(DB_DIR, { recursive: true });
   const tmpFile = path.join(DB_DIR, `eduasist-db.${process.pid}.${Date.now()}.tmp`);
-  await fs.promises.writeFile(tmpFile, JSON.stringify(state, null, 2), 'utf-8');
+  // Formato compacto en disco para minimizar tamaño y tiempo de serialización en escrituras frecuentes
+  await fs.promises.writeFile(tmpFile, JSON.stringify(state), 'utf-8');
   await fs.promises.rename(tmpFile, DB_FILE);
 }
 
@@ -2467,12 +2468,17 @@ export async function getAsistencia(filter: {
   endDate?: string;
   estado?: EstadoAsistencia;
   idMateria?: number;
+  idMaterias?: number[];
   idEstudiante?: number;
   idRepresentante?: number;
   idSeccion?: number;
   idAno?: number;
   lapsoId?: number;
 }): Promise<RegistroAsistencia[]> {
+  if (filter.idMaterias && filter.idMaterias.length === 0) {
+    return [];
+  }
+
   const db = await readDb();
   const estMap = new Map(db.estudiantes.map((e) => [e.idEstudiante, e]));
   const matMap = new Map(db.materias.map((m) => [m.idMateria, m]));
@@ -2480,6 +2486,10 @@ export async function getAsistencia(filter: {
   const secMap = new Map(db.secciones.map((s) => [s.idSeccion, s.nombreSeccion]));
   const lapsoMap = new Map(db.lapsosEscolares.map((l) => [l.id, l]));
   const targetLapso = filter.lapsoId ? lapsoMap.get(Number(filter.lapsoId)) || null : null;
+  const idMateriasSet =
+    filter.idMaterias && filter.idMaterias.length > 0
+      ? new Set(filter.idMaterias.map((id) => Number(id)))
+      : null;
 
   let list = db.asistencia
     .map((a) => {
@@ -2526,6 +2536,7 @@ export async function getAsistencia(filter: {
   }
   if (filter.estado) list = list.filter((a) => a.estado === filter.estado);
   if (filter.idMateria) list = list.filter((a) => a.idMateria === Number(filter.idMateria));
+  if (idMateriasSet) list = list.filter((a) => idMateriasSet.has(a.idMateria));
   if (filter.idEstudiante) list = list.filter((a) => a.idEstudiante === Number(filter.idEstudiante));
   if (filter.idRepresentante) list = list.filter((a) => a.idRepresentante === Number(filter.idRepresentante));
   if (filter.idSeccion) list = list.filter((a) => a._estIdSeccion === Number(filter.idSeccion));
@@ -2795,11 +2806,32 @@ export async function getAsistenciaPaginated(filter: {
   };
 }
 
+export type AttendanceNotificationFormatter = (params: {
+  estudianteNombreCompleto: string;
+  nombreMateria: string;
+  estado: string;
+  fecha: string;
+  horaEntrada: string;
+  motivoJustificacion?: string | null;
+}) => { title: string; body: string };
+
 export async function registrarAsistenciaBatch(
   idMateria: number,
   fecha: string,
   records: Array<{ idEstudiante: number; estado: EstadoAsistencia; horaEntrada?: string }>,
-  options?: { actorId?: number; actorNombre?: string; actorRol?: RolUsuario }
+  options?: {
+    actorId?: number;
+    actorNombre?: string;
+    actorRol?: RolUsuario;
+    auditAuthor?: {
+      idUsuario?: number | null;
+      emailOCedula?: string | null;
+      rol?: string | null;
+      ipOrigen?: string | null;
+      userAgent?: string | null;
+    };
+    buildNotification?: AttendanceNotificationFormatter;
+  }
 ): Promise<RegistroAsistencia[]> {
   return withWriteLock((db) => {
     const holidayCheck = evaluateDiaNoLaborable(db.diasNoLaborables, fecha);
@@ -2814,6 +2846,7 @@ export async function registrarAsistenciaBatch(
     const canJustify = options?.actorRol === 'director' || options?.actorRol === 'coordinador';
     const matchedLapso = findLapsoByDate(db.lapsosEscolares, fecha);
     const lapsoId = matchedLapso ? matchedLapso.id : null;
+    let nextAsistenciaId = nextNumericId(db.asistencia, (a) => a.idAsistencia);
 
     for (const r of records) {
       const hora = r.horaEntrada || serverTime;
@@ -2858,7 +2891,7 @@ export async function registrarAsistenciaBatch(
       } else {
         const shouldStampModifier = canJustify && isSpecialStatus;
         const created: RegistroAsistencia = {
-          idAsistencia: nextNumericId(db.asistencia, (a) => a.idAsistencia),
+          idAsistencia: nextAsistenciaId++,
           idEstudiante: Number(r.idEstudiante),
           idMateria: Number(idMateria),
           lapsoId,
@@ -2879,6 +2912,86 @@ export async function registrarAsistenciaBatch(
       }
     }
 
+    // Consolidar bitácora de auditoría dentro de la misma transacción atómica
+    if (options?.auditAuthor) {
+      const resumenEstados = records.reduce<Record<string, number>>((acc, item) => {
+        acc[item.estado] = (acc[item.estado] || 0) + 1;
+        return acc;
+      }, {});
+
+      appendAuditLogInMemory(db, {
+        ...options.auditAuthor,
+        accion: 'ASISTENCIA_REGISTRADA_BATCH',
+        entidad: 'asistencia',
+        idEntidad: idMateria,
+        detalles: {
+          idMateria,
+          fecha,
+          totalEstudiantes: records.length,
+          resumenEstados,
+          responsableId: options.actorId ?? null,
+          responsableNombre: options.actorNombre || 'Sistema',
+          responsableRol: options.actorRol ?? null,
+        },
+      });
+    }
+
+    // Consolidar bandeja persistente de representantes dentro de la misma transacción atómica
+    if (options?.buildNotification && results.length > 0) {
+      const mat = db.materias.find((m) => m.idMateria === Number(idMateria));
+      const nombreMateria = mat?.nombreMateria || 'Asignatura';
+      const estMap = new Map(db.estudiantes.map((e) => [e.idEstudiante, e]));
+      const activeRepIds = new Set(
+        db.representantes.filter((r) => r.activo !== false).map((r) => r.idRepresentante)
+      );
+
+      const inboxItems: Array<{
+        idRepresentante: number;
+        tipo: TipoNotificacionRepresentante;
+        titulo: string;
+        mensaje: string;
+        fechaEvento: string;
+        horaEvento: string;
+        metadata?: NotificacionRepresentante['metadata'];
+      }> = [];
+
+      for (const rec of results) {
+        const est = estMap.get(Number(rec.idEstudiante));
+        if (!est || !activeRepIds.has(est.idRepresentante)) continue;
+        const estudianteNombre = `${est.nombres} ${est.apellidos}`.trim();
+        const { title, body } = options.buildNotification({
+          estudianteNombreCompleto: estudianteNombre,
+          nombreMateria,
+          estado: rec.estado,
+          fecha,
+          horaEntrada: rec.horaEntrada || '',
+          motivoJustificacion: rec.motivoJustificacion ?? null,
+        });
+        inboxItems.push({
+          idRepresentante: est.idRepresentante,
+          tipo:
+            rec.estado === 'Justificado' || rec.estado === 'Reposo Médico'
+              ? 'justificacion'
+              : 'asistencia',
+          titulo: title,
+          mensaje: body,
+          fechaEvento: fecha,
+          horaEvento: (rec.horaEntrada || '').slice(0, 5),
+          metadata: {
+            idEstudiante: est.idEstudiante,
+            estudianteNombre,
+            idMateria: Number(idMateria),
+            nombreMateria,
+            estado: rec.estado as EstadoAsistencia,
+          },
+        });
+      }
+
+      if (inboxItems.length > 0) {
+        appendNotificacionesBatchInMemory(db, inboxItems);
+      }
+    }
+
     return results;
   });
 }
@@ -2895,6 +3008,16 @@ export async function updateAsistenciaJustificacion(
     id: number;
     nombre: string;
     rol: RolUsuario;
+  },
+  options?: {
+    auditAuthor?: {
+      idUsuario?: number | null;
+      emailOCedula?: string | null;
+      rol?: string | null;
+      ipOrigen?: string | null;
+      userAgent?: string | null;
+    };
+    buildNotification?: AttendanceNotificationFormatter;
   }
 ): Promise<{ registro: RegistroAsistencia; previousEstado: EstadoAsistencia } | null> {
   return withWriteLock((db) => {
@@ -2927,20 +3050,80 @@ export async function updateAsistenciaJustificacion(
     const ano = mat ? db.anosEscolares.find((a) => a.idAno === mat.idAno) : undefined;
     const sec = est?.idSeccion ? db.secciones.find((s) => s.idSeccion === est.idSeccion) : undefined;
 
+    const enriched: RegistroAsistencia = {
+      ...updatedRecord,
+      lapsoNombre: matchedLapso?.nombre ?? null,
+      numeroLapso: matchedLapso?.numeroLapso ?? null,
+      estudianteCedula: est?.cedula,
+      estudianteNombres: est?.nombres,
+      estudianteApellidos: est?.apellidos,
+      nombreMateria: mat?.nombreMateria,
+      nombreNivel: ano?.nombreNivel,
+      nombreSeccion: sec?.nombreSeccion || null,
+      idRepresentante: est?.idRepresentante,
+    };
+
+    if (options?.auditAuthor) {
+      appendAuditLogInMemory(db, {
+        ...options.auditAuthor,
+        accion: 'ASISTENCIA_JUSTIFICACION_MODIFICADA',
+        entidad: 'asistencia',
+        idEntidad: idAsistencia,
+        detalles: {
+          idAsistencia,
+          idEstudiante: enriched.idEstudiante,
+          estudiante: `${enriched.estudianteApellidos || ''}, ${enriched.estudianteNombres || ''}`.trim(),
+          fechaClase: enriched.fecha,
+          materia: enriched.nombreMateria,
+          estadoAnterior: previousEstado,
+          estadoNuevo: enriched.estado,
+          motivoJustificacion: enriched.motivoJustificacion,
+          numeroJustificante: enriched.numeroJustificante,
+          fechaRecepcionDocumento: enriched.fechaRecepcionDocumento,
+          coordinadorResponsable: actor.nombre,
+          rolResponsable: actor.rol,
+        },
+      });
+    }
+
+    if (options?.buildNotification && est) {
+      const rep = db.representantes.find(
+        (r) => r.idRepresentante === est.idRepresentante && r.activo !== false
+      );
+      if (rep) {
+        const estudianteNombre = `${est.nombres} ${est.apellidos}`.trim();
+        const nombreMateria = mat?.nombreMateria || 'Asignatura';
+        const { title, body } = options.buildNotification({
+          estudianteNombreCompleto: estudianteNombre,
+          nombreMateria,
+          estado: updatedRecord.estado,
+          fecha: updatedRecord.fecha,
+          horaEntrada: updatedRecord.horaEntrada || '',
+          motivoJustificacion: updatedRecord.motivoJustificacion,
+        });
+        appendNotificacionesBatchInMemory(db, [
+          {
+            idRepresentante: rep.idRepresentante,
+            tipo: 'justificacion',
+            titulo: title,
+            mensaje: body,
+            fechaEvento: updatedRecord.fecha,
+            horaEvento: (updatedRecord.horaEntrada || '').slice(0, 5),
+            metadata: {
+              idEstudiante: est.idEstudiante,
+              estudianteNombre,
+              idMateria: updatedRecord.idMateria,
+              nombreMateria,
+              estado: updatedRecord.estado,
+            },
+          },
+        ]);
+      }
+    }
+
     return {
       previousEstado,
-      registro: {
-        ...updatedRecord,
-        lapsoNombre: matchedLapso?.nombre ?? null,
-        numeroLapso: matchedLapso?.numeroLapso ?? null,
-        estudianteCedula: est?.cedula,
-        estudianteNombres: est?.nombres,
-        estudianteApellidos: est?.apellidos,
-        nombreMateria: mat?.nombreMateria,
-        nombreNivel: ano?.nombreNivel,
-        nombreSeccion: sec?.nombreSeccion || null,
-        idRepresentante: est?.idRepresentante,
-      },
+      registro: enriched,
     };
   });
 }
@@ -3515,7 +3698,7 @@ export async function getPortalRepresentanteData(
 // ---------------------------------------------------------------------------
 // 8. AUDITORÍA, RESPALDOS & RESTAURACIÓN
 // ---------------------------------------------------------------------------
-export async function logAuditEvent(entry: {
+export interface AuditLogInput {
   idUsuario?: number | null;
   emailOCedula?: string | null;
   rol?: string | null;
@@ -3525,28 +3708,68 @@ export async function logAuditEvent(entry: {
   ipOrigen?: string | null;
   userAgent?: string | null;
   detalles?: Record<string, any> | string | null;
-}): Promise<AuditLog | null> {
-  try {
-    return await withWriteLock((db) => {
-      const logEntry: AuditLog = {
-        idLog: nextNumericId(db.auditLogs, (l) => l.idLog),
-        idUsuario: entry.idUsuario ?? null,
-        emailOCedula: entry.emailOCedula ? String(entry.emailOCedula).trim() : null,
-        rol: entry.rol ? String(entry.rol).trim() : null,
-        accion: entry.accion.trim(),
-        entidad: entry.entidad.trim(),
-        idEntidad: entry.idEntidad != null ? String(entry.idEntidad).trim() : null,
-        ipOrigen: entry.ipOrigen ? String(entry.ipOrigen).trim() : null,
-        userAgent: entry.userAgent ? String(entry.userAgent).trim().slice(0, 500) : null,
-        detalles: entry.detalles ?? null,
-        createdAt: new Date().toISOString(),
-      };
-      db.auditLogs.unshift(logEntry);
-      if (db.auditLogs.length > 2000) {
-        db.auditLogs = db.auditLogs.slice(0, 2000);
+}
+
+// Acciones operativas de rutina elegibles para limpieza por antigüedad o poda prioritaria al superar el tope.
+// Todo evento crítico (cierres, respaldos, restauraciones, promociones, justificaciones, bajas, cambios de rol) queda protegido.
+const ROUTINE_AUDIT_ACTIONS = new Set([
+  'PUSH_LOTE_DESPACHADO',
+  'PUSH_HITO_MANUAL',
+  'PUSH_HITO_AUTO',
+  'PUSH_PRUEBA_ENVIADA',
+  'PUSH_SUSCRIPCION_REGISTRADA',
+  'PUSH_SUSCRIPCION_ROTADA',
+  'PUSH_AUTO_RECESO_ENVIADO',
+  'PUSH_MANUAL_RECESO_ENVIADO',
+  'PUSH_AUTO_SALIDA_ENVIADO',
+  'PUSH_MANUAL_SALIDA_ENVIADO',
+  'SALIDA_NOTIFICADA_PUSH',
+  'SALIDA_PUSH_AUTOMATICA_ENVIADA',
+  'SALIDA_PUSH_MANUAL_ENVIADA',
+  'LOGIN_EXITOSO',
+  'LOGIN_EXITOSO_PERSONAL',
+  'LOGIN_EXITOSO_REPRESENTANTE',
+  'LOGOUT_SESION',
+]);
+
+function appendAuditLogInMemory(db: DatabaseState, entry: AuditLogInput): AuditLog {
+  const logEntry: AuditLog = {
+    idLog: nextNumericId(db.auditLogs, (l) => l.idLog),
+    idUsuario: entry.idUsuario ?? null,
+    emailOCedula: entry.emailOCedula ? String(entry.emailOCedula).trim() : null,
+    rol: entry.rol ? String(entry.rol).trim() : null,
+    accion: entry.accion.trim(),
+    entidad: entry.entidad.trim(),
+    idEntidad: entry.idEntidad != null ? String(entry.idEntidad).trim() : null,
+    ipOrigen: entry.ipOrigen ? String(entry.ipOrigen).trim() : null,
+    userAgent: entry.userAgent ? String(entry.userAgent).trim().slice(0, 500) : null,
+    detalles: entry.detalles ?? null,
+    createdAt: new Date().toISOString(),
+  };
+  db.auditLogs.unshift(logEntry);
+
+  // Al alcanzar el límite de 2000 registros, podar primero los más antiguos de rutina y proteger eventos críticos
+  while (db.auditLogs.length > 2000) {
+    let removeIdx = -1;
+    for (let i = db.auditLogs.length - 1; i >= 0; i--) {
+      const actionKey = String(db.auditLogs[i].accion || '').trim().toUpperCase();
+      if (ROUTINE_AUDIT_ACTIONS.has(actionKey)) {
+        removeIdx = i;
+        break;
       }
-      return logEntry;
-    });
+    }
+    if (removeIdx !== -1) {
+      db.auditLogs.splice(removeIdx, 1);
+    } else {
+      db.auditLogs.pop();
+    }
+  }
+  return logEntry;
+}
+
+export async function logAuditEvent(entry: AuditLogInput): Promise<AuditLog | null> {
+  try {
+    return await withWriteLock((db) => appendAuditLogInMemory(db, entry));
   } catch (err) {
     console.error('[LocalDB] Error logging audit event:', err);
     return null;
@@ -3651,14 +3874,56 @@ export async function getDatabaseStats() {
   };
 }
 
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => (item === undefined ? 'null' : stableStringify(item))).join(',')}]`;
+  }
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj)
+    .filter((k) => obj[k] !== undefined)
+    .sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(',')}}`;
+}
+
+function computeBackupChecksum(data: Record<string, unknown>): string {
+  return crypto.createHash('sha256').update(stableStringify(data), 'utf8').digest('hex');
+}
+
 export async function createFullDatabaseBackup(authorInfo?: { id?: number; email?: string; rol?: string }) {
   const db = await readDb();
+  const data = structuredClone({
+    configuracionInstitucional: db.configuracionInstitucional,
+    recesosInstitucionales: db.recesosInstitucionales,
+    salidasInstitucionales: db.salidasInstitucionales,
+    lapsosEscolares: db.lapsosEscolares,
+    diasNoLaborables: db.diasNoLaborables,
+    anosEscolares: db.anosEscolares,
+    secciones: db.secciones,
+    materias: db.materias,
+    docenteMaterias: db.docenteMaterias,
+    representantes: db.representantes,
+    estudiantes: db.estudiantes,
+    asistencia: db.asistencia,
+    resumenesAsistencia: db.resumenesAsistencia,
+    horarios: db.horarios,
+    users: db.users,
+    notificacionesRepresentante: db.notificacionesRepresentante,
+    auditLogs: db.auditLogs,
+    pushSubscriptions: db.pushSubscriptions,
+    milestoneDispatches: db.milestoneDispatches,
+  });
+  const checksumSha256 = computeBackupChecksum(data);
+
   return {
     metadata: {
       sistema: 'EduAsist - Sistema de Control de Asistencia Escolar',
-      version: '1.0.0',
+      version: '1.1.0',
       fechaGeneracion: new Date().toISOString(),
       generadoPor: authorInfo || { email: 'director@eduasist.edu', rol: 'director' },
+      checksumSha256,
       resumenConteos: {
         configuracion: db.configuracionInstitucional.length,
         recesos: db.recesosInstitucionales.length,
@@ -3676,52 +3941,133 @@ export async function createFullDatabaseBackup(authorInfo?: { id?: number; email
         horarios: db.horarios.length,
         usuariosPersonal: db.users.length,
         notificacionesRepresentante: db.notificacionesRepresentante.length,
+        logsAuditoria: db.auditLogs.length,
+        suscripcionesPush: db.pushSubscriptions.length,
+        hitosDespachados: db.milestoneDispatches.length,
       },
     },
-    data: {
-      configuracionInstitucional: db.configuracionInstitucional,
-      recesosInstitucionales: db.recesosInstitucionales,
-      salidasInstitucionales: db.salidasInstitucionales,
-      lapsosEscolares: db.lapsosEscolares,
-      diasNoLaborables: db.diasNoLaborables,
-      anosEscolares: db.anosEscolares,
-      secciones: db.secciones,
-      materias: db.materias,
-      docenteMaterias: db.docenteMaterias,
-      representantes: db.representantes,
-      estudiantes: db.estudiantes,
-      asistencia: db.asistencia,
-      resumenesAsistencia: db.resumenesAsistencia,
-      horarios: db.horarios,
-      users: db.users,
-      notificacionesRepresentante: db.notificacionesRepresentante,
-    },
+    data,
   };
 }
 
-export async function restoreFullDatabaseBackup(backupPayload: any) {
-  if (!backupPayload || !backupPayload.data) {
+export async function restoreFullDatabaseBackup(
+  backupPayload: any,
+  operatorContext?: {
+    id?: number;
+    email?: string;
+    rol?: string;
+    ipOrigen?: string | null;
+    userAgent?: string | null;
+  }
+) {
+  if (!backupPayload || !backupPayload.data || typeof backupPayload.data !== 'object') {
     throw new Error('Archivo de respaldo inválido o estructura de datos corrupta.');
   }
 
+  const providedChecksum = String(backupPayload.metadata?.checksumSha256 || '').trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(providedChecksum)) {
+    throw new Error(
+      'Integridad no verificable: el archivo de respaldo no contiene un checksum SHA-256 válido.'
+    );
+  }
+
+  const expectedChecksum = computeBackupChecksum(backupPayload.data);
+  const checksumMatches = crypto.timingSafeEqual(
+    Buffer.from(providedChecksum, 'hex'),
+    Buffer.from(expectedChecksum, 'hex')
+  );
+  if (!checksumMatches) {
+    throw new Error(
+      'Integridad comprometida: el checksum SHA-256 del respaldo no coincide con su contenido.'
+    );
+  }
+
   return withWriteLock(async (db) => {
+    const operatingDirector =
+      operatorContext?.id != null
+        ? db.users.find((u) => u.id === Number(operatorContext.id))
+        : operatorContext?.email
+        ? db.users.find((u) => u.email.toLowerCase() === operatorContext.email!.toLowerCase())
+        : undefined;
+
     const normalized = await normalizeAndEnsureIntegrity({
       ...backupPayload.data,
-      auditLogs: db.auditLogs,
-      pushSubscriptions: db.pushSubscriptions,
-      milestoneDispatches: db.milestoneDispatches,
+      auditLogs: backupPayload.data.auditLogs ?? db.auditLogs,
+      pushSubscriptions: backupPayload.data.pushSubscriptions ?? db.pushSubscriptions,
+      milestoneDispatches: backupPayload.data.milestoneDispatches ?? db.milestoneDispatches,
       notificacionesRepresentante:
         backupPayload.data.notificacionesRepresentante ?? db.notificacionesRepresentante,
       resumenesAsistencia:
         backupPayload.data.resumenesAsistencia ?? db.resumenesAsistencia,
     });
 
+    // Preservar al Director activo que ejecuta la restauración para evitar pérdida de acceso o sesión vigente
+    if (operatingDirector && operatingDirector.rol === 'director') {
+      const idxById = normalized.users.findIndex((u) => u.id === operatingDirector.id);
+      const idxByEmail = normalized.users.findIndex(
+        (u) => u.email.toLowerCase() === operatingDirector.email.toLowerCase()
+      );
+
+      if (idxById !== -1 && normalized.users[idxById].email.toLowerCase() === operatingDirector.email.toLowerCase()) {
+        normalized.users[idxById] = {
+          ...normalized.users[idxById],
+          rol: 'director',
+          activo: true,
+        };
+      } else if (idxByEmail !== -1 && idxById === -1) {
+        normalized.users[idxByEmail] = {
+          ...normalized.users[idxByEmail],
+          id: operatingDirector.id,
+          rol: 'director',
+          activo: true,
+        };
+      } else {
+        // Si el ID estaba ocupado por otro usuario distinto, reubicar al usuario en colisión manteniendo sus relaciones
+        if (idxById !== -1) {
+          const collidingUser = normalized.users[idxById];
+          const reassignedId = nextNumericId(normalized.users, (u) => u.id);
+          normalized.users[idxById] = { ...collidingUser, id: reassignedId };
+          normalized.docenteMaterias = normalized.docenteMaterias.map((dm) =>
+            dm.idUsuario === collidingUser.id ? { ...dm, idUsuario: reassignedId } : dm
+          );
+        }
+        const remainingByEmailIdx = normalized.users.findIndex(
+          (u) => u.email.toLowerCase() === operatingDirector.email.toLowerCase()
+        );
+        if (remainingByEmailIdx !== -1) {
+          normalized.users.splice(remainingByEmailIdx, 1);
+        }
+        normalized.users.unshift({
+          ...operatingDirector,
+          rol: 'director',
+          activo: true,
+        });
+      }
+    }
+
     Object.assign(db, normalized);
+
+    const tablasRestauradas = Object.keys(backupPayload.data).length;
+    appendAuditLogInMemory(db, {
+      idUsuario: operatorContext?.id ?? operatingDirector?.id ?? null,
+      emailOCedula: operatorContext?.email ?? operatingDirector?.email ?? null,
+      rol: operatorContext?.rol ?? operatingDirector?.rol ?? 'director',
+      ipOrigen: operatorContext?.ipOrigen ?? null,
+      userAgent: operatorContext?.userAgent ?? null,
+      accion: 'RESTAURACION_BASE_DATOS_EJECUTADA',
+      entidad: 'DATABASE',
+      idEntidad: 'full_restore',
+      detalles: {
+        tablasRestauradas,
+        checksumSha256: expectedChecksum,
+        directorPreservado: operatingDirector?.email || null,
+      },
+    });
 
     return {
       success: true,
-      mensaje: 'Base de datos restaurada correctamente desde la copia de seguridad.',
-      tablasRestauradas: Object.keys(backupPayload.data).length,
+      mensaje: 'Base de datos restaurada correctamente desde la copia de seguridad verificada.',
+      tablasRestauradas,
     };
   });
 }
@@ -3906,6 +4252,40 @@ export async function markPushSubscriptionsUsed(endpoints: string[]): Promise<vo
           lastUsed: nowIso,
         };
       }
+    }
+  });
+}
+
+export async function finalizePushDispatchBatch(params: {
+  expiredEndpoints?: string[];
+  succeededEndpoints?: string[];
+  auditEntry?: AuditLogInput | null;
+}): Promise<void> {
+  const expiredSet = new Set(params.expiredEndpoints || []);
+  const succeededSet = new Set(params.succeededEndpoints || []);
+  const hasExpired = expiredSet.size > 0;
+  const hasSucceeded = succeededSet.size > 0;
+  const hasAudit = Boolean(params.auditEntry);
+
+  if (!hasExpired && !hasSucceeded && !hasAudit) return;
+
+  const nowIso = new Date().toISOString();
+  await withWriteLock((db) => {
+    if (hasExpired) {
+      db.pushSubscriptions = db.pushSubscriptions.filter((s) => !expiredSet.has(s.endpoint));
+    }
+    if (hasSucceeded) {
+      for (let i = 0; i < db.pushSubscriptions.length; i++) {
+        if (succeededSet.has(db.pushSubscriptions[i].endpoint)) {
+          db.pushSubscriptions[i] = {
+            ...db.pushSubscriptions[i],
+            lastUsed: nowIso,
+          };
+        }
+      }
+    }
+    if (params.auditEntry) {
+      appendAuditLogInMemory(db, params.auditEntry);
     }
   });
 }
@@ -4124,11 +4504,17 @@ export async function getMilestonePushTargets(): Promise<{
   };
 }
 
-export async function recordMilestoneDispatch(entry: MilestoneDispatchRecord): Promise<void> {
+export async function recordMilestoneDispatch(
+  entry: MilestoneDispatchRecord,
+  auditEntry?: AuditLogInput | null
+): Promise<void> {
   await withWriteLock((db) => {
     db.milestoneDispatches.unshift(entry);
     if (db.milestoneDispatches.length > 100) {
       db.milestoneDispatches = db.milestoneDispatches.slice(0, 100);
+    }
+    if (auditEntry) {
+      appendAuditLogInMemory(db, auditEntry);
     }
   });
 }
@@ -4157,62 +4543,70 @@ export async function getMilestoneDispatches(
 const MAX_NOTIFICATIONS_PER_REP = 100;
 const MAX_NOTIFICATIONS_GLOBAL = 6000;
 
+export interface NotificacionRepresentanteInput {
+  idRepresentante: number;
+  tipo: TipoNotificacionRepresentante;
+  titulo: string;
+  mensaje: string;
+  fechaEvento: string;
+  horaEvento: string;
+  metadata?: NotificacionRepresentante['metadata'];
+}
+
+function appendNotificacionesBatchInMemory(
+  db: DatabaseState,
+  items: NotificacionRepresentanteInput[]
+): NotificacionRepresentante[] {
+  if (!items || items.length === 0) return [];
+  const activeRepIds = new Set(
+    db.representantes.filter((r) => r.activo !== false).map((r) => r.idRepresentante)
+  );
+  const nowIso = new Date().toISOString();
+  let nextId = nextNumericId(db.notificacionesRepresentante, (n) => n.idNotificacion);
+  const createdList: NotificacionRepresentante[] = [];
+
+  for (const item of items) {
+    const repId = Number(item.idRepresentante);
+    if (!activeRepIds.has(repId)) continue;
+
+    const created: NotificacionRepresentante = {
+      idNotificacion: nextId++,
+      idRepresentante: repId,
+      tipo: item.tipo,
+      titulo: String(item.titulo || 'Notificación Escolar').trim(),
+      mensaje: String(item.mensaje || '').trim(),
+      fechaEvento: String(item.fechaEvento || '').trim(),
+      horaEvento: String(item.horaEvento || '').trim(),
+      leida: false,
+      leidaAt: null,
+      createdAt: nowIso,
+      ...(item.metadata ? { metadata: item.metadata } : {}),
+    };
+    db.notificacionesRepresentante.unshift(created);
+    createdList.push(created);
+  }
+
+  if (createdList.length > 0) {
+    // Conservar máximo MAX_NOTIFICATIONS_PER_REP por representante y límite global acotado
+    const countByRep = new Map<number, number>();
+    db.notificacionesRepresentante = db.notificacionesRepresentante
+      .filter((n) => {
+        const c = (countByRep.get(n.idRepresentante) || 0) + 1;
+        countByRep.set(n.idRepresentante, c);
+        return c <= MAX_NOTIFICATIONS_PER_REP;
+      })
+      .slice(0, MAX_NOTIFICATIONS_GLOBAL);
+  }
+
+  return createdList;
+}
+
 export async function createNotificacionesRepresentanteBatch(
-  items: Array<{
-    idRepresentante: number;
-    tipo: TipoNotificacionRepresentante;
-    titulo: string;
-    mensaje: string;
-    fechaEvento: string;
-    horaEvento: string;
-    metadata?: NotificacionRepresentante['metadata'];
-  }>
+  items: NotificacionRepresentanteInput[]
 ): Promise<NotificacionRepresentante[]> {
   if (!items || items.length === 0) return [];
 
-  return withWriteLock((db) => {
-    const activeRepIds = new Set(
-      db.representantes.filter((r) => r.activo !== false).map((r) => r.idRepresentante)
-    );
-    const nowIso = new Date().toISOString();
-    let nextId = nextNumericId(db.notificacionesRepresentante, (n) => n.idNotificacion);
-    const createdList: NotificacionRepresentante[] = [];
-
-    for (const item of items) {
-      const repId = Number(item.idRepresentante);
-      if (!activeRepIds.has(repId)) continue;
-
-      const created: NotificacionRepresentante = {
-        idNotificacion: nextId++,
-        idRepresentante: repId,
-        tipo: item.tipo,
-        titulo: String(item.titulo || 'Notificación Escolar').trim(),
-        mensaje: String(item.mensaje || '').trim(),
-        fechaEvento: String(item.fechaEvento || '').trim(),
-        horaEvento: String(item.horaEvento || '').trim(),
-        leida: false,
-        leidaAt: null,
-        createdAt: nowIso,
-        ...(item.metadata ? { metadata: item.metadata } : {}),
-      };
-      db.notificacionesRepresentante.unshift(created);
-      createdList.push(created);
-    }
-
-    if (createdList.length > 0) {
-      // Conservar máximo MAX_NOTIFICATIONS_PER_REP por representante y límite global acotado
-      const countByRep = new Map<number, number>();
-      db.notificacionesRepresentante = db.notificacionesRepresentante
-        .filter((n) => {
-          const c = (countByRep.get(n.idRepresentante) || 0) + 1;
-          countByRep.set(n.idRepresentante, c);
-          return c <= MAX_NOTIFICATIONS_PER_REP;
-        })
-        .slice(0, MAX_NOTIFICATIONS_GLOBAL);
-    }
-
-    return createdList;
-  });
+  return withWriteLock((db) => appendNotificacionesBatchInMemory(db, items));
 }
 
 export async function getNotificacionesRepresentante(
@@ -4427,7 +4821,13 @@ export async function readCierreBackupFile(filename: string): Promise<CierreAnio
 
 export async function ejecutarCierreAnioEscolar(
   params: CierreAnioEscolarRequest,
-  authorInfo?: { id?: number; email?: string; rol?: string }
+  authorInfo?: {
+    id?: number;
+    email?: string;
+    rol?: string;
+    ipOrigen?: string | null;
+    userAgent?: string | null;
+  }
 ): Promise<CierreAnioEscolarResponse> {
   const runComputation = async (
     db: DatabaseState,
@@ -4776,6 +5176,30 @@ export async function ejecutarCierreAnioEscolar(
           'Año lectivo escolar vigente'
         );
       }
+
+      appendAuditLogInMemory(db, {
+        idUsuario: authorInfo?.id ?? null,
+        emailOCedula: authorInfo?.email ?? null,
+        rol: authorInfo?.rol ?? 'director',
+        ipOrigen: authorInfo?.ipOrigen ?? null,
+        userAgent: authorInfo?.userAgent ?? null,
+        accion: 'CIERRE_ANIO_ESCOLAR_COMPACTACION',
+        entidad: 'resumenes_asistencia',
+        idEntidad: anoLectivoDespues,
+        detalles: {
+          anoLectivoAntes: anoLectivoActual,
+          anoLectivoDespues,
+          respaldoGenerado: Boolean(respaldoSnapshot),
+          respaldoArchivoId: respaldoArchivoId ?? null,
+          asistenciasCompactadas: asistenciasADepurar,
+          asistenciasDepuradas: asistenciasADepurar,
+          asistenciasConservadas,
+          resumenesGenerados: generatedSummaries.length,
+          resumenesNuevos: resumenesNuevosCount,
+          resumenesActualizados: resumenesActualizadosCount,
+          estudiantesAfectados: studentIdsInvolved.size,
+        },
+      });
     }
 
     const lapsosDisponibles = [...db.lapsosEscolares].sort(
@@ -4828,27 +5252,27 @@ export async function ejecutarCierreAnioEscolar(
   return withWriteLock((db) => runComputation(db, true));
 }
 
-// Acciones operativas de rutina elegibles para limpieza por antigüedad.
-// Todo evento crítico (cierres, respaldos, restauraciones, promociones, justificaciones, bajas) queda fuera y protegido.
-const ROUTINE_AUDIT_ACTIONS = new Set([
-  'PUSH_LOTE_DESPACHADO',
-  'PUSH_HITO_MANUAL',
-  'PUSH_HITO_AUTO',
-  'PUSH_PRUEBA_ENVIADA',
-  'PUSH_SUSCRIPCION_REGISTRADA',
-  'PUSH_SUSCRIPCION_ROTADA',
-  'SALIDA_NOTIFICADA_PUSH',
-  'LOGIN_EXITOSO',
-  'LOGOUT_SESION',
-]);
-
 export async function limpiarDatosAntiguos(
-  params: LimpiezaAntiguosRequest = {}
+  params: LimpiezaAntiguosRequest = {},
+  authorInfo?: {
+    idUsuario?: number | null;
+    emailOCedula?: string | null;
+    rol?: string | null;
+    ipOrigen?: string | null;
+    userAgent?: string | null;
+  }
 ): Promise<LimpiezaAntiguosResponse> {
   const diasRetencionPush = Math.min(3650, Math.max(7, Number(params.diasRetencionPush ?? 90)));
   const diasRetencionLogs = Math.min(3650, Math.max(30, Number(params.diasRetencionLogs ?? 180)));
+  const diasRetencionNotificaciones = Math.min(
+    3650,
+    Math.max(7, Number(params.diasRetencionNotificaciones ?? 90))
+  );
+  const diasRetencionHitos = Math.min(3650, Math.max(7, Number(params.diasRetencionHitos ?? 90)));
   const limpiarPush = params.limpiarPush !== false;
   const limpiarLogs = params.limpiarLogs !== false;
+  const limpiarNotificaciones = params.limpiarNotificaciones !== false;
+  const limpiarHitos = params.limpiarHitos !== false;
   const dryRun = Boolean(params.dryRun);
 
   if (!dryRun && params.confirmado !== true) {
@@ -4861,9 +5285,13 @@ export async function limpiarDatosAntiguos(
     const nowMs = Date.now();
     const pushCutoffMs = nowMs - diasRetencionPush * 86_400_000;
     const logsCutoffMs = nowMs - diasRetencionLogs * 86_400_000;
+    const notifCutoffMs = nowMs - diasRetencionNotificaciones * 86_400_000;
+    const hitosCutoffMs = nowMs - diasRetencionHitos * 86_400_000;
 
     const pushTotalAntes = db.pushSubscriptions.length;
     const logsTotalAntes = db.auditLogs.length;
+    const notificacionesTotalAntes = db.notificacionesRepresentante.length;
+    const hitosTotalAntes = db.milestoneDispatches.length;
 
     const pushToKeep: PushSubscriptionRecord[] = [];
     let pushEliminadas = 0;
@@ -4875,10 +5303,10 @@ export async function limpiarDatosAntiguos(
       }
       const refDateStr = sub.lastUsed || sub.createdAt;
       const refMs = refDateStr ? Date.parse(refDateStr) : NaN;
-      const isInactive = sub.activa === false;
       const isStale = !Number.isNaN(refMs) && refMs < pushCutoffMs;
 
-      if (isInactive || isStale) {
+      // Respetar siempre el umbral de retención en días incluso si activa === false
+      if (isStale) {
         pushEliminadas++;
       } else {
         pushToKeep.push(sub);
@@ -4907,6 +5335,47 @@ export async function limpiarDatosAntiguos(
       }
     }
 
+    // Limpieza opcional de notificaciones ya leídas por el representante y que superen el umbral
+    const notificacionesToKeep: NotificacionRepresentante[] = [];
+    let notificacionesEliminadas = 0;
+    for (const notif of db.notificacionesRepresentante) {
+      if (!limpiarNotificaciones || !notif.leida) {
+        notificacionesToKeep.push(notif);
+        continue;
+      }
+      const refStr = notif.leidaAt || notif.createdAt;
+      const refMs = refStr ? Date.parse(refStr) : NaN;
+      const isOlderThanThreshold = !Number.isNaN(refMs) && refMs < notifCutoffMs;
+      if (isOlderThanThreshold) {
+        notificacionesEliminadas++;
+      } else {
+        notificacionesToKeep.push(notif);
+      }
+    }
+
+    // Limpieza opcional de historial antiguo de hitos despachados
+    const hitosToKeep: MilestoneDispatchRecord[] = [];
+    let hitosEliminados = 0;
+    for (const hito of db.milestoneDispatches) {
+      if (!limpiarHitos) {
+        hitosToKeep.push(hito);
+        continue;
+      }
+      const refStr = hito.sentAt || hito.date;
+      const refMs = refStr ? Date.parse(refStr) : NaN;
+      const isOlderThanThreshold = !Number.isNaN(refMs) && refMs < hitosCutoffMs;
+      if (isOlderThanThreshold) {
+        hitosEliminados++;
+      } else {
+        hitosToKeep.push(hito);
+      }
+    }
+
+    const pushConservadas = pushTotalAntes - pushEliminadas;
+    const logsConservados = logsTotalAntes - logsEliminados;
+    const notificacionesConservadas = notificacionesTotalAntes - notificacionesEliminadas;
+    const hitosConservados = hitosTotalAntes - hitosEliminados;
+
     if (mutate) {
       if (limpiarPush) {
         db.pushSubscriptions = pushToKeep;
@@ -4914,26 +5383,61 @@ export async function limpiarDatosAntiguos(
       if (limpiarLogs) {
         db.auditLogs = logsToKeep;
       }
+      if (limpiarNotificaciones) {
+        db.notificacionesRepresentante = notificacionesToKeep;
+      }
+      if (limpiarHitos) {
+        db.milestoneDispatches = hitosToKeep;
+      }
+
+      if (authorInfo) {
+        appendAuditLogInMemory(db, {
+          ...authorInfo,
+          accion: 'LIMPIEZA_RETENCION_DATOS',
+          entidad: 'DATABASE',
+          idEntidad: 'retention_cleanup',
+          detalles: {
+            diasRetencionPush,
+            diasRetencionLogs,
+            diasRetencionNotificaciones,
+            diasRetencionHitos,
+            pushEliminadas,
+            pushConservadas,
+            logsEliminados,
+            logsConservados,
+            notificacionesEliminadas,
+            notificacionesConservadas,
+            hitosEliminados,
+            hitosConservados,
+            desgloseLogsPorAccion,
+          },
+        });
+      }
     }
 
-    const pushConservadas = pushTotalAntes - pushEliminadas;
-    const logsConservados = logsTotalAntes - logsEliminados;
-
     const mensaje = dryRun
-      ? `Vista previa de retención: se detectaron ${pushEliminadas} suscripción(es) push obsoleta(s) (>${diasRetencionPush} días) y ${logsEliminados} log(s) de rutina antiguo(s) (>${diasRetencionLogs} días) listos para depurar.`
-      : `Limpieza ejecutada: ${pushEliminadas} suscripción(es) push obsoleta(s) y ${logsEliminados} registro(s) de auditoría de rutina depurados. Eventos críticos y registros vigentes conservados.`;
+      ? `Vista previa de retención: se detectaron ${pushEliminadas} suscripción(es) push obsoleta(s) (>${diasRetencionPush}d), ${logsEliminados} log(s) de rutina antiguo(s) (>${diasRetencionLogs}d), ${notificacionesEliminadas} notificación(es) leída(s) (>${diasRetencionNotificaciones}d) y ${hitosEliminados} hito(s) antiguo(s) listos para depurar.`
+      : `Limpieza ejecutada: ${pushEliminadas} suscripción(es) push, ${logsEliminados} log(s) de rutina, ${notificacionesEliminadas} notificación(es) leída(s) y ${hitosEliminados} hito(s) antiguo(s) depurados. Eventos críticos y registros vigentes conservados.`;
 
     return {
       success: true,
       dryRun,
       diasRetencionPush,
       diasRetencionLogs,
+      diasRetencionNotificaciones,
+      diasRetencionHitos,
       pushTotalAntes,
       pushEliminadas,
       pushConservadas,
       logsTotalAntes,
       logsEliminados,
       logsConservados,
+      notificacionesTotalAntes,
+      notificacionesEliminadas,
+      notificacionesConservadas,
+      hitosTotalAntes,
+      hitosEliminados,
+      hitosConservados,
       desgloseLogsPorAccion,
       mensaje,
     };

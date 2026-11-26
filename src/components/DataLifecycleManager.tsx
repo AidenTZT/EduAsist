@@ -126,8 +126,12 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
   // =========================================================================
   const [diasRetencionPush, setDiasRetencionPush] = useState<number>(90);
   const [diasRetencionLogs, setDiasRetencionLogs] = useState<number>(180);
+  const [diasRetencionNotificaciones, setDiasRetencionNotificaciones] = useState<number>(90);
+  const [diasRetencionHitos, setDiasRetencionHitos] = useState<number>(90);
   const [limpiarPush, setLimpiarPush] = useState<boolean>(true);
   const [limpiarLogs, setLimpiarLogs] = useState<boolean>(true);
+  const [limpiarNotificaciones, setLimpiarNotificaciones] = useState<boolean>(true);
+  const [limpiarHitos, setLimpiarHitos] = useState<boolean>(true);
 
   const [previewRetention, setPreviewRetention] = useState<LimpiezaAntiguosResponse | null>(null);
   const [previewRetentionKey, setPreviewRetentionKey] = useState<string>('');
@@ -142,10 +146,23 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
       JSON.stringify({
         diasRetencionPush: Math.min(3650, Math.max(7, Number(diasRetencionPush) || 90)),
         diasRetencionLogs: Math.min(3650, Math.max(30, Number(diasRetencionLogs) || 180)),
+        diasRetencionNotificaciones: Math.min(3650, Math.max(7, Number(diasRetencionNotificaciones) || 90)),
+        diasRetencionHitos: Math.min(3650, Math.max(7, Number(diasRetencionHitos) || 90)),
         limpiarPush,
         limpiarLogs,
+        limpiarNotificaciones,
+        limpiarHitos,
       }),
-    [diasRetencionPush, diasRetencionLogs, limpiarPush, limpiarLogs]
+    [
+      diasRetencionPush,
+      diasRetencionLogs,
+      diasRetencionNotificaciones,
+      diasRetencionHitos,
+      limpiarPush,
+      limpiarLogs,
+      limpiarNotificaciones,
+      limpiarHitos,
+    ]
   );
 
   const isRetentionPreviewSynced = Boolean(
@@ -210,8 +227,12 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
       const res = await limpiarDatosAntiguos({
         diasRetencionPush: Math.min(3650, Math.max(7, Number(diasRetencionPush) || 90)),
         diasRetencionLogs: Math.min(3650, Math.max(30, Number(diasRetencionLogs) || 180)),
+        diasRetencionNotificaciones: Math.min(3650, Math.max(7, Number(diasRetencionNotificaciones) || 90)),
+        diasRetencionHitos: Math.min(3650, Math.max(7, Number(diasRetencionHitos) || 90)),
         limpiarPush,
         limpiarLogs,
+        limpiarNotificaciones,
+        limpiarHitos,
         dryRun: true,
         confirmado: false,
       });
@@ -236,8 +257,12 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
     retentionParamsKey,
     diasRetencionPush,
     diasRetencionLogs,
+    diasRetencionNotificaciones,
+    diasRetencionHitos,
     limpiarPush,
     limpiarLogs,
+    limpiarNotificaciones,
+    limpiarHitos,
   ]);
 
   const loadResumenes = useCallback(async () => {
@@ -401,8 +426,12 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
       const res = await limpiarDatosAntiguos({
         diasRetencionPush: Math.min(3650, Math.max(7, Number(diasRetencionPush) || 90)),
         diasRetencionLogs: Math.min(3650, Math.max(30, Number(diasRetencionLogs) || 180)),
+        diasRetencionNotificaciones: Math.min(3650, Math.max(7, Number(diasRetencionNotificaciones) || 90)),
+        diasRetencionHitos: Math.min(3650, Math.max(7, Number(diasRetencionHitos) || 90)),
         limpiarPush,
         limpiarLogs,
+        limpiarNotificaciones,
+        limpiarHitos,
         dryRun: false,
         confirmado: true,
       });
@@ -781,8 +810,8 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
                 Políticas de Retención y Limpieza de Registros Auxiliares
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
-                Depura suscripciones push caducadas o inactivas y eventos rutinarios antiguos en{' '}
-                <code className="font-mono">auditLogs</code>. Los eventos críticos (cierres, respaldos, promociones, cambios de rol y justificaciones) se conservan siempre.
+                Depura suscripciones push caducadas/inactivas, notificaciones ya leídas, hitos diarios y eventos rutinarios antiguos en{' '}
+                <code className="font-mono">auditLogs</code>. Los eventos críticos y notificaciones no leídas se conservan siempre.
               </p>
             </div>
           </div>
@@ -884,6 +913,92 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
               </p>
             )}
           </div>
+
+          {/* Política Notificaciones Leídas */}
+          <div className="bg-slate-50 dark:bg-[#181818] p-4 rounded-xl border border-slate-200/80 dark:border-[#27272A] space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="flex items-center space-x-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={limpiarNotificaciones}
+                  onChange={(e) => setLimpiarNotificaciones(e.target.checked)}
+                  className="rounded border-slate-300 text-amber-600 focus:ring-amber-500"
+                />
+                <span className="text-xs font-bold text-slate-800 dark:text-[#F4F4F5]">
+                  Depurar Notificaciones Leídas Antiguas
+                </span>
+              </label>
+              <span className="text-[11px] font-mono font-bold text-amber-600 dark:text-amber-400">
+                {isRetentionPreviewSynced && previewRetention
+                  ? `${previewRetention.notificacionesEliminadas ?? 0} por depurar`
+                  : 'Calculando...'}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs text-slate-600 dark:text-slate-400">Antigüedad máxima (días):</span>
+              <input
+                type="number"
+                min={7}
+                max={3650}
+                value={diasRetencionNotificaciones}
+                onChange={(e) => setDiasRetencionNotificaciones(Number(e.target.value))}
+                className="w-24 bg-white dark:bg-[#121212] border border-slate-200 dark:border-[#27272A] rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold text-slate-900 dark:text-[#F4F4F5] text-right"
+              />
+            </div>
+
+            {previewRetention && (
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                Total: <strong className="font-mono">{previewRetention.notificacionesTotalAntes ?? 0}</strong> · Se conservan:{' '}
+                <strong className="font-mono text-emerald-600 dark:text-emerald-400">
+                  {previewRetention.notificacionesConservadas ?? 0}
+                </strong>
+              </p>
+            )}
+          </div>
+
+          {/* Política Hitos Diarios */}
+          <div className="bg-slate-50 dark:bg-[#181818] p-4 rounded-xl border border-slate-200/80 dark:border-[#27272A] space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="flex items-center space-x-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={limpiarHitos}
+                  onChange={(e) => setLimpiarHitos(e.target.checked)}
+                  className="rounded border-slate-300 text-amber-600 focus:ring-amber-500"
+                />
+                <span className="text-xs font-bold text-slate-800 dark:text-[#F4F4F5]">
+                  Depurar Hitos Diarios Antiguos
+                </span>
+              </label>
+              <span className="text-[11px] font-mono font-bold text-amber-600 dark:text-amber-400">
+                {isRetentionPreviewSynced && previewRetention
+                  ? `${previewRetention.hitosEliminados ?? 0} por depurar`
+                  : 'Calculando...'}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs text-slate-600 dark:text-slate-400">Antigüedad máxima (días):</span>
+              <input
+                type="number"
+                min={7}
+                max={3650}
+                value={diasRetencionHitos}
+                onChange={(e) => setDiasRetencionHitos(Number(e.target.value))}
+                className="w-24 bg-white dark:bg-[#121212] border border-slate-200 dark:border-[#27272A] rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold text-slate-900 dark:text-[#F4F4F5] text-right"
+              />
+            </div>
+
+            {previewRetention && (
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                Total: <strong className="font-mono">{previewRetention.hitosTotalAntes ?? 0}</strong> · Se conservan:{' '}
+                <strong className="font-mono text-emerald-600 dark:text-emerald-400">
+                  {previewRetention.hitosConservados ?? 0}
+                </strong>
+              </p>
+            )}
+          </div>
         </div>
 
         {!isRetentionPreviewSynced && (
@@ -921,7 +1036,10 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
               executingRetention ||
               !isRetentionPreviewSynced ||
               !previewRetention ||
-              (previewRetention.pushEliminadas === 0 && previewRetention.logsEliminados === 0)
+              (previewRetention.pushEliminadas === 0 &&
+                previewRetention.logsEliminados === 0 &&
+                (previewRetention.notificacionesEliminadas ?? 0) === 0 &&
+                (previewRetention.hitosEliminados ?? 0) === 0)
             }
             className="px-4 py-2.5 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white shadow-xs flex items-center gap-2 transition-colors cursor-pointer disabled:opacity-45"
           >
@@ -1148,6 +1266,10 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
               <p>• Suscripciones Push protegidas: {previewRetention.pushConservadas}</p>
               <p>• Logs rutinarios a eliminar: {previewRetention.logsEliminados}</p>
               <p>• Logs críticos/recientes protegidos: {previewRetention.logsConservados}</p>
+              <p>• Notificaciones leídas a eliminar: {previewRetention.notificacionesEliminadas ?? 0}</p>
+              <p>• Notificaciones protegidas: {previewRetention.notificacionesConservadas ?? 0}</p>
+              <p>• Hitos diarios a eliminar: {previewRetention.hitosEliminados ?? 0}</p>
+              <p>• Hitos recientes protegidos: {previewRetention.hitosConservados ?? 0}</p>
             </div>
 
             <div className="flex items-center justify-end space-x-3 pt-3 border-t border-slate-100 dark:border-[#27272A]">
