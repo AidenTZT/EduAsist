@@ -892,6 +892,7 @@ export const restoreBackupSchema = z.object({
       users: backupArrayField,
       notificacionesRepresentante: backupArrayField.optional(),
       auditLogs: backupArrayField.optional(),
+      backupLogs: backupArrayField.optional(),
       pushSubscriptions: backupArrayField.optional(),
       milestoneDispatches: backupArrayField.optional(),
     })
@@ -907,7 +908,52 @@ export const resetDatabaseSchema = z.object({
 export const cierreBackupFilenameSchema = z
   .string()
   .trim()
+  .refine((val) => !val.includes('..') && !val.includes('/') && !val.includes('\\'), {
+    message: 'Nombre de archivo de respaldo inválido.',
+  })
   .regex(/^cierre-[a-zA-Z0-9._-]+\.json$/, 'Nombre de archivo de respaldo inválido.');
+
+export const backupLogsQuerySchema = z.object({
+  page: z.preprocess(
+    emptyToUndefined,
+    z.coerce
+      .number()
+      .int('El número de página debe ser un entero')
+      .min(1, 'La página mínima es 1')
+      .max(10000, 'Número de página fuera de rango')
+      .default(1)
+  ),
+  limit: z.preprocess(
+    emptyToUndefined,
+    z.coerce
+      .number()
+      .int('El límite por página debe ser un entero')
+      .min(1, 'El límite mínimo por página es 1')
+      .max(100, 'El límite máximo por página es 100')
+      .default(15)
+  ),
+  tipo: z.preprocess(
+    emptyToUndefined,
+    z.enum(['completo', 'cierre_anio']).optional()
+  ),
+  origen: z.preprocess(
+    emptyToUndefined,
+    z.enum(['manual', 'previo_cierre']).optional()
+  ),
+  estado: z.preprocess(
+    emptyToUndefined,
+    z.enum(['exitoso', 'fallido']).optional()
+  ),
+  search: z.preprocess(
+    emptyToUndefined,
+    z.string().trim().max(100, 'El criterio de búsqueda es demasiado largo').optional()
+  ),
+});
+
+export const backupLogIdParamSchema = z.coerce
+  .number()
+  .int('ID de log de backup inválido.')
+  .positive('ID de log de backup inválido.');
 
 export const resumenesAsistenciaQuerySchema = z.object({
   anioLectivo: z.preprocess(emptyToUndefined, z.string().trim().max(40).optional()),

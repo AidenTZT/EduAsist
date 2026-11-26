@@ -17,10 +17,17 @@ import {
   Clock,
   Key,
   Archive,
+  History,
+  Search,
+  ChevronLeft,
+  ChevronRight,
+  HardDriveDownload,
 } from 'lucide-react';
-import type { Usuario } from '../types.ts';
+import type { Usuario, BackupLog, TipoBackupLog, EstadoBackupLog, PaginationMeta } from '../types.ts';
 import {
   fetchBackupStats,
+  fetchBackupLogs,
+  downloadBackupByLogId,
   exportDatabaseBackup,
   restoreDatabaseBackup,
   resetDatabaseToMaster,
@@ -37,7 +44,7 @@ export const BackupRestoreManager: React.FC<BackupRestoreManagerProps> = ({
   onRefreshData,
 }) => {
   const isDirector = currentUser?.rol === 'director';
-  const [activeSubTab, setActiveSubTab] = useState<'respaldos' | 'mantenimiento'>('respaldos');
+  const [activeSubTab, setActiveSubTab] = useState<'respaldos' | 'historial' | 'mantenimiento'>('respaldos');
 
   const [stats, setStats] = useState<{
     anosEscolares: number;
@@ -51,12 +58,24 @@ export const BackupRestoreManager: React.FC<BackupRestoreManagerProps> = ({
     suscripcionesPush?: number;
     usuariosPersonal: number;
     logsAuditoria: number;
+    logsBackups?: number;
   } | null>(null);
 
   const [loadingStats, setLoadingStats] = useState<boolean>(false);
   const [exporting, setExporting] = useState<boolean>(false);
   const [restoring, setRestoring] = useState<boolean>(false);
   const [resetting, setResetting] = useState<boolean>(false);
+
+  // Backup Logs state
+  const [backupLogs, setBackupLogs] = useState<BackupLog[]>([]);
+  const [logsPagination, setLogsPagination] = useState<PaginationMeta | null>(null);
+  const [loadingLogs, setLoadingLogs] = useState<boolean>(false);
+  const [logsPage, setLogsPage] = useState<number>(1);
+  const [logsTipoFilter, setLogsTipoFilter] = useState<'' | TipoBackupLog>('');
+  const [logsEstadoFilter, setLogsEstadoFilter] = useState<'' | EstadoBackupLog>('');
+  const [logsSearchInput, setLogsSearchInput] = useState<string>('');
+  const [logsSearchQuery, setLogsSearchQuery] = useState<string>('');
+  const [downloadingLogId, setDownloadingLogId] = useState<number | null>(null);
 
   const [statusMessage, setStatusMessage] = useState<{
     type: 'success' | 'error' | 'info';
@@ -71,6 +90,28 @@ export const BackupRestoreManager: React.FC<BackupRestoreManagerProps> = ({
   // Reset seed confirmation state
   const [showResetModal, setShowResetModal] = useState<boolean>(false);
   const [resetConfirmText, setResetConfirmText] = useState<string>('');
+
+  const formatBytes = (bytes: number): string => {
+    const val = Math.max(0, Number(bytes) || 0);
+    if (val < 1024) return `${val} B`;
+    if (val < 1024 * 1024) return `${(val / 1024).toFixed(1)} KB`;
+    return `${(val / (1024 * 1024)).toFixed(2)} MB`;
+  };
+
+  const formatDateTime = (iso: string): string => {
+    try {
+      return new Date(iso).toLocaleString('es-VE', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      });
+    } catch {
+      return iso;
+    }
+  };
 
   const loadStats = async () => {
     if (!currentUser || currentUser.rol !== 'director') return;
@@ -99,11 +140,49 @@ export const BackupRestoreManager: React.FC<BackupRestoreManagerProps> = ({
     }
   };
 
+  const loadBackupLogs = async (overridePage?: number) => {
+    if (!currentUser || currentUser.rol !== 'director') return;
+    setLoadingLogs(true);
+    try {
+      const res = await fetchBackupLogs({
+        page: overridePage ?? logsPage,
+        limit: 10,
+        tipo: logsTipoFilter || undefined,
+        estado: logsEstadoFilter || undefined,
+        search: logsSearchQuery || undefined,
+      });
+      setBackupLogs(res.data);
+      setLogsPagination(res.pagination);
+    } catch (err: any) {
+      console.warn('Notice loading backup logs:', err?.message);
+      setStatusMessage({
+        type: 'error',
+        text: err?.message || 'No se pudo cargar el historial de respaldos.',
+      });
+    } finally {
+      setLoadingLogs(false);
+    }
+  };
+
   useEffect(() => {
     if (isDirector) {
       loadStats();
     }
   }, [isDirector]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setLogsSearchQuery(logsSearchInput.trim());
+      setLogsPage(1);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [logsSearchInput]);
+
+  useEffect(() => {
+    if (isDirector && activeSubTab === 'historial') {
+      loadBackupLogs();
+    }
+  }, [isDirector, activeSubTab, logsPage, logsTipoFilter, logsEstadoFilter, logsSearchQuery]);
 
   // Si no es director, denegar acceso inmediatamente
   if (!isDirector) {
@@ -135,7 +214,9 @@ export const BackupRestoreManager: React.FC<BackupRestoreManagerProps> = ({
       });
       const blobUrl = URL.createObjectURL(blob);
       const downloadAnchor = document.createElement('a');
-      const filename = `backup_eduasist_${new Date().toISOString().split('T')[0]}_${Date.now()}.json`;
+      const filename =
+        backupData?.metadata?.archivoSugerido ||
+        `backup_eduasist_${new Date().toISOString().split('T')[0]}_${Date.now()}.json`;
       downloadAnchor.setAttribute('href', blobUrl);
       downloadAnchor.setAttribute('download', filename);
       document.body.appendChild(downloadAnchor);
@@ -148,16 +229,42 @@ export const BackupRestoreManager: React.FC<BackupRestoreManagerProps> = ({
 
       setStatusMessage({
         type: 'success',
-        text: `Copia de seguridad oficial descargada con éxito (${filename}).`,
+        text: `Copia de seguridad oficial descargada con éxito (${filename}) y registrada en el historial.`,
       });
       loadStats();
+      if (activeSubTab === 'historial') {
+        loadBackupLogs(1);
+      }
     } catch (err: any) {
       setStatusMessage({
         type: 'error',
         text: err.message || 'Error al exportar copia de seguridad.',
       });
+      loadStats();
+      if (activeSubTab === 'historial') {
+        loadBackupLogs(1);
+      }
     } finally {
       setExporting(false);
+    }
+  };
+
+  const handleDownloadBackupLog = async (log: BackupLog) => {
+    setDownloadingLogId(log.id);
+    setStatusMessage(null);
+    try {
+      const downloadedName = await downloadBackupByLogId(log.id, log.archivoNombre);
+      setStatusMessage({
+        type: 'success',
+        text: `Respaldo archivado descargado correctamente (${downloadedName}).`,
+      });
+    } catch (err: any) {
+      setStatusMessage({
+        type: 'error',
+        text: err?.message || 'No se pudo descargar el archivo de respaldo desde el servidor.',
+      });
+    } finally {
+      setDownloadingLogId(null);
     }
   };
 
@@ -211,6 +318,7 @@ export const BackupRestoreManager: React.FC<BackupRestoreManagerProps> = ({
       setSelectedFile(null);
       setFileContent(null);
       loadStats();
+      if (activeSubTab === 'historial') loadBackupLogs(1);
       if (onRefreshData) onRefreshData();
     } catch (err: any) {
       setStatusMessage({
@@ -243,6 +351,7 @@ export const BackupRestoreManager: React.FC<BackupRestoreManagerProps> = ({
       setShowResetModal(false);
       setResetConfirmText('');
       loadStats();
+      if (activeSubTab === 'historial') loadBackupLogs(1);
       if (onRefreshData) onRefreshData();
     } catch (err: any) {
       setStatusMessage({
@@ -289,7 +398,7 @@ export const BackupRestoreManager: React.FC<BackupRestoreManagerProps> = ({
         </button>
       </div>
 
-      {/* Sub-tab Switcher (Respaldos vs Cierre de Año & Retención) */}
+      {/* Sub-tab Switcher (Respaldos vs Historial vs Cierre de Año & Retención) */}
       <div className="bg-white dark:bg-[#121212] p-1.5 rounded-2xl border border-slate-200 dark:border-[#27272A] inline-flex flex-wrap gap-1.5">
         <button
           type="button"
@@ -302,6 +411,29 @@ export const BackupRestoreManager: React.FC<BackupRestoreManagerProps> = ({
         >
           <Database className="w-4 h-4" />
           <span>Respaldo & Restauración JSON</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('historial')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer ${
+            activeSubTab === 'historial'
+              ? 'bg-emerald-600 text-white shadow-xs'
+              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-[#181818]'
+          }`}
+        >
+          <History className="w-4 h-4" />
+          <span>Historial / Logs de Backups</span>
+          {typeof stats?.logsBackups === 'number' && (
+            <span
+              className={`px-1.5 py-0.5 rounded-md font-mono text-[10px] ${
+                activeSubTab === 'historial'
+                  ? 'bg-white/20 text-white'
+                  : 'bg-slate-200 dark:bg-[#27272A] text-slate-700 dark:text-slate-300'
+              }`}
+            >
+              {stats.logsBackups}
+            </span>
+          )}
         </button>
         <button
           type="button"
@@ -419,6 +551,12 @@ export const BackupRestoreManager: React.FC<BackupRestoreManagerProps> = ({
                 {stats.suscripcionesPush ?? 0}
               </p>
             </div>
+            <div className="bg-slate-50 dark:bg-[#181818] p-3 rounded-xl border border-slate-200/80 dark:border-[#27272A]">
+              <span className="text-[10px] font-bold uppercase text-slate-400">Logs de Backups</span>
+              <p className="font-mono text-lg font-black text-emerald-600 dark:text-emerald-400 mt-0.5">
+                {stats.logsBackups ?? 0}
+              </p>
+            </div>
           </div>
         ) : (
           <div className="p-4 text-center text-xs text-slate-500">Cargando conteos relacionales...</div>
@@ -433,6 +571,332 @@ export const BackupRestoreManager: React.FC<BackupRestoreManagerProps> = ({
             if (onRefreshData) onRefreshData();
           }}
         />
+      ) : activeSubTab === 'historial' ? (
+        <div className="bg-white dark:bg-[#121212] p-5 sm:p-6 rounded-2xl border border-slate-200 dark:border-[#27272A] shadow-xs space-y-5">
+          {/* Header & Toolbar */}
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-[#27272A]">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                <History className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-base text-slate-900 dark:text-[#F4F4F5]">
+                  Historial de Respaldos Realizados
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Trazabilidad persistente de exportaciones completas y respaldos automáticos previos al cierre de año escolar.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => loadBackupLogs()}
+              disabled={loadingLogs}
+              className="self-start lg:self-auto px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-100 dark:bg-[#181818] hover:bg-slate-200 dark:hover:bg-[#202024] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-[#27272A] flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loadingLogs ? 'animate-spin' : ''}`} />
+              <span>Actualizar Historial</span>
+            </button>
+          </div>
+
+          {/* Filter Bar */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="relative sm:col-span-2">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={logsSearchInput}
+                onChange={(e) => setLogsSearchInput(e.target.value)}
+                placeholder="Buscar por responsable, archivo, checksum o error..."
+                className="w-full pl-9 pr-3.5 py-2.5 rounded-xl text-xs bg-slate-50 dark:bg-[#181818] border border-slate-200 dark:border-[#27272A] text-slate-900 dark:text-[#F4F4F5] placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+
+            <select
+              value={logsTipoFilter}
+              onChange={(e) => {
+                setLogsTipoFilter(e.target.value as '' | TipoBackupLog);
+                setLogsPage(1);
+              }}
+              aria-label="Filtrar por tipo de respaldo"
+              className="w-full px-3.5 py-2.5 rounded-xl text-xs font-semibold bg-slate-50 dark:bg-[#181818] border border-slate-200 dark:border-[#27272A] text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            >
+              <option value="">Todos los tipos</option>
+              <option value="completo">Respaldo Completo</option>
+              <option value="cierre_anio">Cierre de Año Escolar</option>
+            </select>
+
+            <select
+              value={logsEstadoFilter}
+              onChange={(e) => {
+                setLogsEstadoFilter(e.target.value as '' | EstadoBackupLog);
+                setLogsPage(1);
+              }}
+              aria-label="Filtrar por estado de respaldo"
+              className="w-full px-3.5 py-2.5 rounded-xl text-xs font-semibold bg-slate-50 dark:bg-[#181818] border border-slate-200 dark:border-[#27272A] text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            >
+              <option value="">Todos los estados</option>
+              <option value="exitoso">Exitoso</option>
+              <option value="fallido">Fallido</option>
+            </select>
+          </div>
+
+          {/* Content: Loading / Empty / Desktop Table + Mobile Cards */}
+          {loadingLogs && backupLogs.length === 0 ? (
+            <div className="p-8 text-center text-xs text-slate-500 dark:text-slate-400">
+              Cargando historial de respaldos...
+            </div>
+          ) : backupLogs.length === 0 ? (
+            <div className="p-8 rounded-2xl border border-dashed border-slate-200 dark:border-[#27272A] text-center space-y-2">
+              <FileJson className="w-8 h-8 text-slate-400 mx-auto" />
+              <p className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                No se encontraron registros de backups con los filtros actuales.
+              </p>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                Cada exportación manual o respaldo previo a un cierre de año aparecerá automáticamente aquí.
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* Desktop Table */}
+              <div className="hidden md:block overflow-x-auto rounded-xl border border-slate-200 dark:border-[#27272A]">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 dark:bg-[#181818] border-b border-slate-200 dark:border-[#27272A] text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                      <th className="py-3 px-3.5">Fecha y Hora</th>
+                      <th className="py-3 px-3.5">Responsable</th>
+                      <th className="py-3 px-3.5">Tipo / Origen</th>
+                      <th className="py-3 px-3.5">Estado</th>
+                      <th className="py-3 px-3.5">Tamaño / Registros</th>
+                      <th className="py-3 px-3.5">Archivo / Integridad</th>
+                      <th className="py-3 px-3.5 text-right">Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-[#27272A] text-xs">
+                    {backupLogs.map((log) => (
+                      <tr
+                        key={log.id}
+                        className="hover:bg-slate-50/70 dark:hover:bg-[#181818]/70 transition-colors"
+                      >
+                        <td className="py-3 px-3.5 whitespace-nowrap font-mono text-[11px] text-slate-700 dark:text-slate-300">
+                          {formatDateTime(log.fechaHora)}
+                        </td>
+                        <td className="py-3 px-3.5">
+                          <div className="font-semibold text-slate-900 dark:text-[#F4F4F5]">
+                            {log.usuarioNombre}
+                          </div>
+                          {log.usuarioEmail && (
+                            <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                              {log.usuarioEmail}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3 px-3.5 whitespace-nowrap">
+                          <div className="flex flex-col gap-1 items-start">
+                            <span
+                              className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                                log.tipo === 'cierre_anio'
+                                  ? 'bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-900'
+                                  : 'bg-slate-100 dark:bg-[#202024] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-[#27272A]'
+                              }`}
+                            >
+                              {log.tipo === 'cierre_anio' ? 'Cierre de Año' : 'Respaldo Completo'}
+                            </span>
+                            <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                              Origen: {log.origen === 'previo_cierre' ? 'Previo al cierre' : 'Manual'}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="py-3 px-3.5 whitespace-nowrap">
+                          {log.estado === 'exitoso' ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                              <CheckCircle2 className="w-3 h-3" />
+                              Exitoso
+                            </span>
+                          ) : (
+                            <div className="space-y-1">
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
+                                <AlertCircle className="w-3 h-3" />
+                                Fallido
+                              </span>
+                              {log.detalleError && (
+                                <p className="text-[10px] text-rose-600 dark:text-rose-400 max-w-[200px] whitespace-normal">
+                                  {log.detalleError}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3 px-3.5 whitespace-nowrap font-mono text-[11px]">
+                          <div className="font-bold text-slate-900 dark:text-[#F4F4F5]">
+                            {formatBytes(log.tamanoBytes)}
+                          </div>
+                          <div className="text-slate-500 dark:text-slate-400">
+                            {log.totalRegistros.toLocaleString()} registros
+                          </div>
+                        </td>
+                        <td className="py-3 px-3.5">
+                          <div className="font-mono text-[11px] text-slate-700 dark:text-slate-300 truncate max-w-[220px]" title={log.archivoNombre || ''}>
+                            {log.archivoNombre || '—'}
+                          </div>
+                          {log.checksum && (
+                            <div className="font-mono text-[10px] text-emerald-600 dark:text-emerald-400" title={log.checksum}>
+                              SHA-256: {log.checksum.slice(0, 14)}...
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3 px-3.5 text-right whitespace-nowrap">
+                          {log.descargableEnServidor ? (
+                            <button
+                              type="button"
+                              onClick={() => handleDownloadBackupLog(log)}
+                              disabled={downloadingLogId === log.id}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                              <HardDriveDownload className="w-3.5 h-3.5" />
+                              <span>{downloadingLogId === log.id ? 'Descargando...' : 'Descargar'}</span>
+                            </button>
+                          ) : (
+                            <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500">
+                              {log.estado === 'fallido' ? 'Sin archivo' : 'Descarga directa'}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile Card List */}
+              <div className="md:hidden space-y-3">
+                {backupLogs.map((log) => (
+                  <div
+                    key={log.id}
+                    className="p-4 rounded-xl bg-slate-50 dark:bg-[#181818] border border-slate-200 dark:border-[#27272A] space-y-3"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <span className="font-mono text-[11px] text-slate-500 dark:text-slate-400">
+                          {formatDateTime(log.fechaHora)}
+                        </span>
+                        <h4 className="font-bold text-xs text-slate-900 dark:text-[#F4F4F5] mt-0.5">
+                          {log.usuarioNombre}
+                        </h4>
+                        {log.usuarioEmail && (
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                            {log.usuarioEmail}
+                          </p>
+                        )}
+                      </div>
+                      {log.estado === 'exitoso' ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 shrink-0">
+                          <CheckCircle2 className="w-3 h-3" />
+                          Exitoso
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800 shrink-0">
+                          <AlertCircle className="w-3 h-3" />
+                          Fallido
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                      <span
+                        className={`px-2 py-0.5 rounded-md font-bold ${
+                          log.tipo === 'cierre_anio'
+                            ? 'bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-900'
+                            : 'bg-white dark:bg-[#121212] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-[#27272A]'
+                        }`}
+                      >
+                        {log.tipo === 'cierre_anio' ? 'Cierre de Año' : 'Respaldo Completo'}
+                      </span>
+                      <span className="text-slate-500 dark:text-slate-400">
+                        {log.origen === 'previo_cierre' ? 'Previo al cierre' : 'Manual'}
+                      </span>
+                      <span className="font-mono font-bold text-slate-800 dark:text-slate-200 ml-auto">
+                        {formatBytes(log.tamanoBytes)} · {log.totalRegistros.toLocaleString()} reg.
+                      </span>
+                    </div>
+
+                    {log.archivoNombre && (
+                      <div className="text-[11px] font-mono text-slate-600 dark:text-slate-400 break-all bg-white dark:bg-[#121212] px-2.5 py-1.5 rounded-lg border border-slate-200/70 dark:border-[#27272A]">
+                        {log.archivoNombre}
+                        {log.checksum && (
+                          <span className="block text-[10px] text-emerald-600 dark:text-emerald-400 mt-0.5">
+                            SHA-256: {log.checksum.slice(0, 18)}...
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {log.detalleError && (
+                      <p className="text-[11px] text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/30 px-2.5 py-1.5 rounded-lg border border-rose-200 dark:border-rose-900">
+                        {log.detalleError}
+                      </p>
+                    )}
+
+                    {log.descargableEnServidor && (
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadBackupLog(log)}
+                        disabled={downloadingLogId === log.id}
+                        className="w-full py-2 px-3 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        <HardDriveDownload className="w-3.5 h-3.5" />
+                        <span>
+                          {downloadingLogId === log.id
+                            ? 'Descargando respaldo...'
+                            : 'Descargar Respaldo del Servidor'}
+                        </span>
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Pagination */}
+              {logsPagination && (
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-100 dark:border-[#27272A]">
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Mostrando página{' '}
+                    <strong className="text-slate-800 dark:text-slate-200">
+                      {logsPagination.page}
+                    </strong>{' '}
+                    de{' '}
+                    <strong className="text-slate-800 dark:text-slate-200">
+                      {logsPagination.totalPages}
+                    </strong>{' '}
+                    ({logsPagination.totalCount} registro{logsPagination.totalCount === 1 ? '' : 's'})
+                  </p>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setLogsPage((p) => Math.max(1, p - 1))}
+                      disabled={!logsPagination.hasPrevPage || loadingLogs}
+                      className="px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-100 dark:bg-[#181818] hover:bg-slate-200 dark:hover:bg-[#202024] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-[#27272A] flex items-center gap-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                      <span>Anterior</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLogsPage((p) => p + 1)}
+                      disabled={!logsPagination.hasNextPage || loadingLogs}
+                      className="px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-100 dark:bg-[#181818] hover:bg-slate-200 dark:hover:bg-[#202024] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-[#27272A] flex items-center gap-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <span>Siguiente</span>
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
       ) : (
         <>
       {/* Main Operations Grid */}

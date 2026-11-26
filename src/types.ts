@@ -582,3 +582,25 @@ export interface LimpiezaAntiguosResponse {
   mensaje: string;
 }
 
+export type TipoBackupLog = 'completo' | 'cierre_anio';
+export type OrigenBackupLog = 'manual' | 'previo_cierre';
+export type EstadoBackupLog = 'exitoso' | 'fallido';
+
+export interface BackupLog {
+  id: number;
+  fechaHora: string;
+  usuarioId?: number | null;
+  usuarioNombre: string;
+  usuarioEmail?: string | null;
+  tipo: TipoBackupLog;
+  origen: OrigenBackupLog;
+  estado: EstadoBackupLog;
+  tamanoBytes: number;
+  totalRegistros: number;
+  checksum?: string | null;
+  archivoNombre?: string | null;
+  descargableEnServidor?: boolean;
+  detalleError?: string | null;
+}
+
+

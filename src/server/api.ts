@@ -48,6 +48,8 @@ import {
   restoreBackupSchema,
   resetDatabaseSchema,
   cierreBackupFilenameSchema,
+  backupLogsQuerySchema,
+  backupLogIdParamSchema,
   configuracionEntrySchema,
   updateRecesoSchema,
   createAnoSchema,
@@ -2188,20 +2190,93 @@ apiRouter.get(
   requireAuth,
   requireRole('director'),
   async (req: Request, res: Response) => {
+    const author = getAuditAuthorFromReq(req);
+    const fullName = req.user ? `${req.user.nombre} ${req.user.apellidos}`.trim() : undefined;
     try {
       const backup = await db.createFullDatabaseBackup(
-        req.user ? { id: req.user.id, email: req.user.email, rol: req.user.rol } : undefined
+        req.user
+          ? {
+              id: req.user.id,
+              email: req.user.email,
+              nombre: fullName,
+              rol: req.user.rol,
+              ipOrigen: author.ipOrigen,
+              userAgent: author.userAgent,
+            }
+          : undefined
       );
-      await db.logAuditEvent({
-        ...getAuditAuthorFromReq(req),
-        accion: 'BACKUP_BASE_DATOS_EXPORTADO',
-        entidad: 'DATABASE',
-        idEntidad: 'full_backup',
-        detalles: { conteos: backup.metadata.resumenConteos },
-      });
       res.json(backup);
     } catch (e: any) {
+      await db.recordBackupLogOutcome({
+        usuarioId: req.user?.id ?? null,
+        usuarioNombre: fullName ?? null,
+        usuarioEmail: req.user?.email ?? null,
+        rol: req.user?.rol ?? 'director',
+        ipOrigen: author.ipOrigen,
+        userAgent: author.userAgent,
+        tipo: 'completo',
+        origen: 'manual',
+        estado: 'fallido',
+        tamanoBytes: 0,
+        totalRegistros: 0,
+        detalleError: e?.message || 'Error al generar copia de seguridad completa.',
+      });
       res.status(500).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.get(
+  '/backup/logs',
+  requireAuth,
+  requireRole('director'),
+  validateQuery(backupLogsQuerySchema),
+  async (_req: Request, res: Response) => {
+    try {
+      const query = res.locals.validatedQuery as {
+        page: number;
+        limit: number;
+        tipo?: 'completo' | 'cierre_anio';
+        origen?: 'manual' | 'previo_cierre';
+        estado?: 'exitoso' | 'fallido';
+        search?: string;
+      };
+      res.json(await db.getBackupLogsPaginated(query));
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || 'Error al consultar historial de respaldos.' });
+    }
+  }
+);
+
+apiRouter.get(
+  '/backup/logs/:id/download',
+  requireAuth,
+  requireRole('director'),
+  async (req: Request, res: Response) => {
+    try {
+      const parsedId = backupLogIdParamSchema.safeParse(req.params.id);
+      if (!parsedId.success) {
+        res.status(400).json({
+          error: parsedId.error.issues[0]?.message || 'ID de registro de respaldo inválido.',
+        });
+        return;
+      }
+
+      const { filename, content, log } = await db.readBackupFileByLogId(parsedId.data);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'BACKUP_HISTORIAL_DESCARGADO',
+        entidad: 'backup_logs',
+        idEntidad: String(log.id),
+        detalles: { filename, tipo: log.tipo, origen: log.origen },
+      });
+
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.send(content);
+    } catch (e: any) {
+      const status = e?.statusCode === 404 ? 404 : 400;
+      res.status(status).json({ error: e.message || 'No se pudo descargar el respaldo solicitado.' });
     }
   }
 );
@@ -2326,6 +2401,7 @@ apiRouter.post(
         ? {
             id: req.user.id,
             email: req.user.email,
+            nombre: `${req.user.nombre} ${req.user.apellidos}`.trim(),
             rol: req.user.rol,
             ipOrigen: author.ipOrigen,
             userAgent: author.userAgent,

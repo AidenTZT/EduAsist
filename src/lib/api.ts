@@ -37,6 +37,10 @@ import type {
   RespaldoCierreArchivoMeta,
   LimpiezaAntiguosRequest,
   LimpiezaAntiguosResponse,
+  BackupLog,
+  TipoBackupLog,
+  OrigenBackupLog,
+  EstadoBackupLog,
 } from '../types.ts';
 
 export type { InstitutionalConfigSummary, MilestonePushStatusResponse };
@@ -829,7 +833,74 @@ export async function fetchBackupStats() {
     suscripcionesPush?: number;
     usuariosPersonal: number;
     logsAuditoria: number;
+    logsBackups?: number;
   }>('/backup/stats');
+}
+
+export async function fetchBackupLogs(params?: {
+  page?: number;
+  limit?: number;
+  tipo?: TipoBackupLog;
+  origen?: OrigenBackupLog;
+  estado?: EstadoBackupLog;
+  search?: string;
+}): Promise<PaginatedResponse<BackupLog>> {
+  return apiFetch<PaginatedResponse<BackupLog>>(
+    `/backup/logs${buildQuery({
+      page: params?.page,
+      limit: params?.limit,
+      tipo: params?.tipo,
+      origen: params?.origen,
+      estado: params?.estado,
+      search: params?.search,
+    })}`
+  );
+}
+
+export async function downloadBackupByLogId(
+  logId: number,
+  fallbackFilename?: string | null
+): Promise<string> {
+  const token = getStoredToken();
+  const headers = new Headers();
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  const res = await fetch(`/api/backup/logs/${logId}/download`, {
+    method: 'GET',
+    headers,
+    credentials: 'include',
+  });
+
+  if (!res.ok) {
+    let message = `Error HTTP ${res.status}`;
+    try {
+      const errData = await res.json();
+      message = errData?.error || errData?.mensaje || message;
+    } catch {
+      // Ignorar si no es JSON
+    }
+    throw new Error(message);
+  }
+
+  const disposition = res.headers.get('Content-Disposition') || '';
+  const match = disposition.match(/filename="?([^";\n]+)"?/i);
+  const filename = match?.[1] || fallbackFilename || `backup_${logId}.json`;
+
+  const blob = await res.blob();
+  const blobUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = blobUrl;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  try {
+    anchor.click();
+  } finally {
+    anchor.remove();
+    URL.revokeObjectURL(blobUrl);
+  }
+  return filename;
 }
 
 export async function exportDatabaseBackup(): Promise<any> {

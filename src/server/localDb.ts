@@ -46,6 +46,10 @@ import type {
   RespaldoCierreArchivoMeta,
   LimpiezaAntiguosRequest,
   LimpiezaAntiguosResponse,
+  BackupLog,
+  TipoBackupLog,
+  OrigenBackupLog,
+  EstadoBackupLog,
 } from '../types.ts';
 
 // ---------------------------------------------------------------------------
@@ -100,6 +104,7 @@ export interface DatabaseState {
   diasNoLaborables: DiaNoLaborable[];
   notificacionesRepresentante: NotificacionRepresentante[];
   resumenesAsistencia: ResumenAsistenciaConsolidado[];
+  backupLogs: BackupLog[];
 }
 
 let cachedDb: DatabaseState | null = null;
@@ -268,6 +273,23 @@ async function normalizeAndEnsureIntegrity(raw: Partial<DatabaseState>): Promise
           reposoMedico: Math.max(0, Number(r.reposoMedico) || 0),
           porcentajeAsistencia: Math.min(100, Math.max(0, Number(r.porcentajeAsistencia) || 0)),
           fechaCompactacion: String(r.fechaCompactacion || new Date().toISOString()),
+        }))
+      : [],
+    backupLogs: Array.isArray(raw.backupLogs)
+      ? raw.backupLogs.map((b, idx) => ({
+          id: Number(b.id) || idx + 1,
+          fechaHora: String(b.fechaHora || new Date().toISOString()),
+          usuarioId: b.usuarioId != null && Number(b.usuarioId) > 0 ? Number(b.usuarioId) : null,
+          usuarioNombre: String(b.usuarioNombre || 'Dirección General'),
+          usuarioEmail: b.usuarioEmail ? String(b.usuarioEmail) : null,
+          tipo: (b.tipo === 'cierre_anio' ? 'cierre_anio' : 'completo') as TipoBackupLog,
+          origen: (b.origen === 'previo_cierre' ? 'previo_cierre' : 'manual') as OrigenBackupLog,
+          estado: (b.estado === 'fallido' ? 'fallido' : 'exitoso') as EstadoBackupLog,
+          tamanoBytes: Math.max(0, Number(b.tamanoBytes) || 0),
+          totalRegistros: Math.max(0, Number(b.totalRegistros) || 0),
+          checksum: b.checksum ? String(b.checksum) : null,
+          archivoNombre: b.archivoNombre ? String(b.archivoNombre) : null,
+          detalleError: b.detalleError ? String(b.detalleError) : null,
         }))
       : [],
   };
@@ -3871,6 +3893,7 @@ export async function getDatabaseStats() {
     usuariosPersonal: db.users.length,
     suscripcionesPush: db.pushSubscriptions.length,
     logsAuditoria: db.auditLogs.length,
+    logsBackups: db.backupLogs.length,
   };
 }
 
@@ -3892,62 +3915,359 @@ function computeBackupChecksum(data: Record<string, unknown>): string {
   return crypto.createHash('sha256').update(stableStringify(data), 'utf8').digest('hex');
 }
 
-export async function createFullDatabaseBackup(authorInfo?: { id?: number; email?: string; rol?: string }) {
+function resolveBackupAuthorName(
+  db: DatabaseState,
+  authorInfo?: { id?: number | null; email?: string | null; nombre?: string | null }
+): string {
+  if (authorInfo?.nombre && authorInfo.nombre.trim()) {
+    return authorInfo.nombre.trim();
+  }
+  const matchedUser =
+    authorInfo?.id != null
+      ? db.users.find((u) => u.id === Number(authorInfo.id))
+      : authorInfo?.email
+      ? db.users.find((u) => u.email.toLowerCase() === authorInfo.email!.toLowerCase())
+      : undefined;
+  if (matchedUser) {
+    return `${matchedUser.nombre} ${matchedUser.apellidos}`.trim() || matchedUser.email;
+  }
+  return authorInfo?.email || 'Dirección General';
+}
+
+interface BackupLogInput {
+  fechaHora?: string;
+  usuarioId?: number | null;
+  usuarioNombre?: string | null;
+  usuarioEmail?: string | null;
+  tipo: TipoBackupLog;
+  origen: OrigenBackupLog;
+  estado: EstadoBackupLog;
+  tamanoBytes: number;
+  totalRegistros: number;
+  checksum?: string | null;
+  archivoNombre?: string | null;
+  detalleError?: string | null;
+}
+
+function appendBackupLogInMemory(db: DatabaseState, entry: BackupLogInput): BackupLog {
+  const newLog: BackupLog = {
+    id: nextNumericId(db.backupLogs, (b) => b.id),
+    fechaHora: entry.fechaHora || new Date().toISOString(),
+    usuarioId: entry.usuarioId ?? null,
+    usuarioNombre: resolveBackupAuthorName(db, {
+      id: entry.usuarioId ?? null,
+      email: entry.usuarioEmail ?? null,
+      nombre: entry.usuarioNombre ?? null,
+    }),
+    usuarioEmail: entry.usuarioEmail ?? null,
+    tipo: entry.tipo,
+    origen: entry.origen,
+    estado: entry.estado,
+    tamanoBytes: Math.max(0, Number(entry.tamanoBytes) || 0),
+    totalRegistros: Math.max(0, Number(entry.totalRegistros) || 0),
+    checksum: entry.checksum ?? null,
+    archivoNombre: entry.archivoNombre ?? null,
+    detalleError: entry.detalleError ?? null,
+  };
+  db.backupLogs.unshift(newLog);
+  if (db.backupLogs.length > 500) {
+    db.backupLogs = db.backupLogs.slice(0, 500);
+  }
+  return newLog;
+}
+
+export async function recordBackupLogOutcome(params: {
+  usuarioId?: number | null;
+  usuarioNombre?: string | null;
+  usuarioEmail?: string | null;
+  rol?: string | null;
+  ipOrigen?: string | null;
+  userAgent?: string | null;
+  tipo: TipoBackupLog;
+  origen: OrigenBackupLog;
+  estado: EstadoBackupLog;
+  tamanoBytes?: number;
+  totalRegistros?: number;
+  checksum?: string | null;
+  archivoNombre?: string | null;
+  detalleError?: string | null;
+}): Promise<BackupLog | null> {
+  try {
+    return await withWriteLock((db) => {
+      const entry = appendBackupLogInMemory(db, {
+        usuarioId: params.usuarioId ?? null,
+        usuarioNombre: params.usuarioNombre ?? null,
+        usuarioEmail: params.usuarioEmail ?? null,
+        tipo: params.tipo,
+        origen: params.origen,
+        estado: params.estado,
+        tamanoBytes: params.tamanoBytes ?? 0,
+        totalRegistros: params.totalRegistros ?? 0,
+        checksum: params.checksum ?? null,
+        archivoNombre: params.archivoNombre ?? null,
+        detalleError: params.detalleError ?? null,
+      });
+
+      appendAuditLogInMemory(db, {
+        idUsuario: params.usuarioId ?? null,
+        emailOCedula: params.usuarioEmail ?? null,
+        rol: params.rol ?? 'director',
+        ipOrigen: params.ipOrigen ?? null,
+        userAgent: params.userAgent ?? null,
+        accion:
+          params.estado === 'fallido'
+            ? params.tipo === 'cierre_anio'
+              ? 'BACKUP_CIERRE_FALLIDO'
+              : 'BACKUP_BASE_DATOS_FALLIDO'
+            : params.tipo === 'cierre_anio'
+            ? 'BACKUP_CIERRE_REGISTRADO'
+            : 'BACKUP_BASE_DATOS_EXPORTADO',
+        entidad: 'backup_logs',
+        idEntidad: String(entry.id),
+        detalles: {
+          tipo: entry.tipo,
+          origen: entry.origen,
+          estado: entry.estado,
+          archivoNombre: entry.archivoNombre,
+          tamanoBytes: entry.tamanoBytes,
+          totalRegistros: entry.totalRegistros,
+          detalleError: entry.detalleError,
+        },
+      });
+
+      return entry;
+    });
+  } catch (err) {
+    console.error('[LocalDB] Error recording backup log:', err);
+    return null;
+  }
+}
+
+export async function getBackupLogsPaginated(params: {
+  page?: number;
+  limit?: number;
+  tipo?: TipoBackupLog;
+  origen?: OrigenBackupLog;
+  estado?: EstadoBackupLog;
+  search?: string;
+}): Promise<PaginatedResponse<BackupLog>> {
   const db = await readDb();
-  const data = structuredClone({
-    configuracionInstitucional: db.configuracionInstitucional,
-    recesosInstitucionales: db.recesosInstitucionales,
-    salidasInstitucionales: db.salidasInstitucionales,
-    lapsosEscolares: db.lapsosEscolares,
-    diasNoLaborables: db.diasNoLaborables,
-    anosEscolares: db.anosEscolares,
-    secciones: db.secciones,
-    materias: db.materias,
-    docenteMaterias: db.docenteMaterias,
-    representantes: db.representantes,
-    estudiantes: db.estudiantes,
-    asistencia: db.asistencia,
-    resumenesAsistencia: db.resumenesAsistencia,
-    horarios: db.horarios,
-    users: db.users,
-    notificacionesRepresentante: db.notificacionesRepresentante,
-    auditLogs: db.auditLogs,
-    pushSubscriptions: db.pushSubscriptions,
-    milestoneDispatches: db.milestoneDispatches,
+  const page = Math.max(1, Number(params.page) || 1);
+  const limit = Math.min(Math.max(1, Number(params.limit) || 15), 100);
+  const offset = (page - 1) * limit;
+  const searchLower = params.search ? params.search.trim().toLowerCase() : '';
+
+  const existingDiskFiles = new Set<string>();
+  try {
+    if (fs.existsSync(BACKUPS_DIR)) {
+      const entries = await fs.promises.readdir(BACKUPS_DIR, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isFile() && CIERRE_BACKUP_FILENAME_RE.test(entry.name)) {
+          existingDiskFiles.add(entry.name);
+        }
+      }
+    }
+  } catch {
+    // Ignorar error de lectura de directorio; descargableEnServidor quedará en false
+  }
+
+  const matched: BackupLog[] = [];
+  for (const log of db.backupLogs) {
+    if (params.tipo && log.tipo !== params.tipo) continue;
+    if (params.origen && log.origen !== params.origen) continue;
+    if (params.estado && log.estado !== params.estado) continue;
+
+    if (searchLower) {
+      const hit =
+        log.usuarioNombre.toLowerCase().includes(searchLower) ||
+        (log.usuarioEmail || '').toLowerCase().includes(searchLower) ||
+        (log.archivoNombre || '').toLowerCase().includes(searchLower) ||
+        (log.checksum || '').toLowerCase().includes(searchLower) ||
+        (log.detalleError || '').toLowerCase().includes(searchLower);
+      if (!hit) continue;
+    }
+
+    matched.push({
+      ...log,
+      descargableEnServidor: Boolean(
+        log.estado === 'exitoso' &&
+          log.archivoNombre &&
+          CIERRE_BACKUP_FILENAME_RE.test(log.archivoNombre) &&
+          existingDiskFiles.has(log.archivoNombre)
+      ),
+    });
+  }
+
+  matched.sort((a, b) => {
+    const cmp = String(b.fechaHora).localeCompare(String(a.fechaHora));
+    return cmp !== 0 ? cmp : b.id - a.id;
   });
-  const checksumSha256 = computeBackupChecksum(data);
+
+  const totalCount = matched.length;
+  const totalPages = Math.max(1, Math.ceil(totalCount / limit));
+  const data = matched.slice(offset, offset + limit);
 
   return {
-    metadata: {
-      sistema: 'EduAsist - Sistema de Control de Asistencia Escolar',
-      version: '1.1.0',
-      fechaGeneracion: new Date().toISOString(),
-      generadoPor: authorInfo || { email: 'director@eduasist.edu', rol: 'director' },
-      checksumSha256,
-      resumenConteos: {
-        configuracion: db.configuracionInstitucional.length,
-        recesos: db.recesosInstitucionales.length,
-        salidas: db.salidasInstitucionales.length,
-        lapsosEscolares: db.lapsosEscolares.length,
-        diasNoLaborables: db.diasNoLaborables.length,
-        anosEscolares: db.anosEscolares.length,
-        secciones: db.secciones.length,
-        materias: db.materias.length,
-        asignacionesDocentes: db.docenteMaterias.length,
-        representantes: db.representantes.length,
-        estudiantes: db.estudiantes.length,
-        asistencias: db.asistencia.length,
-        resumenesAsistencia: db.resumenesAsistencia.length,
-        horarios: db.horarios.length,
-        usuariosPersonal: db.users.length,
-        notificacionesRepresentante: db.notificacionesRepresentante.length,
-        logsAuditoria: db.auditLogs.length,
-        suscripcionesPush: db.pushSubscriptions.length,
-        hitosDespachados: db.milestoneDispatches.length,
-      },
-    },
     data,
+    pagination: {
+      page,
+      limit,
+      totalCount,
+      totalPages,
+      hasNextPage: page < totalPages,
+      hasPrevPage: page > 1,
+    },
   };
+}
+
+export async function readBackupFileByLogId(
+  logId: number
+): Promise<{ filename: string; content: string; log: BackupLog }> {
+  const db = await readDb();
+  const log = db.backupLogs.find((b) => b.id === Number(logId));
+  if (!log) {
+    const err = new Error('Registro de respaldo no encontrado en el historial.') as Error & {
+      statusCode?: number;
+    };
+    err.statusCode = 404;
+    throw err;
+  }
+  if (!log.archivoNombre || !CIERRE_BACKUP_FILENAME_RE.test(log.archivoNombre)) {
+    const err = new Error(
+      'Este respaldo fue descargado directamente en el navegador y no posee copia archivada en disco del servidor.'
+    ) as Error & { statusCode?: number };
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const resolved = resolveConfinedBackupPath(log.archivoNombre);
+  if (!fs.existsSync(resolved)) {
+    const err = new Error(
+      'El archivo de respaldo ya no se encuentra disponible en el disco del servidor.'
+    ) as Error & { statusCode?: number };
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const content = await fs.promises.readFile(resolved, 'utf-8');
+  return { filename: log.archivoNombre, content, log };
+}
+
+export async function createFullDatabaseBackup(authorInfo?: {
+  id?: number;
+  email?: string;
+  nombre?: string;
+  rol?: string;
+  ipOrigen?: string | null;
+  userAgent?: string | null;
+}) {
+  return withWriteLock((db) => {
+    const nowIso = new Date().toISOString();
+    const archivoSugerido = `backup_eduasist_${nowIso.slice(0, 10)}_${Date.now()}.json`;
+
+    const data = structuredClone({
+      configuracionInstitucional: db.configuracionInstitucional,
+      recesosInstitucionales: db.recesosInstitucionales,
+      salidasInstitucionales: db.salidasInstitucionales,
+      lapsosEscolares: db.lapsosEscolares,
+      diasNoLaborables: db.diasNoLaborables,
+      anosEscolares: db.anosEscolares,
+      secciones: db.secciones,
+      materias: db.materias,
+      docenteMaterias: db.docenteMaterias,
+      representantes: db.representantes,
+      estudiantes: db.estudiantes,
+      asistencia: db.asistencia,
+      resumenesAsistencia: db.resumenesAsistencia,
+      horarios: db.horarios,
+      users: db.users,
+      notificacionesRepresentante: db.notificacionesRepresentante,
+      auditLogs: db.auditLogs,
+      backupLogs: db.backupLogs,
+      pushSubscriptions: db.pushSubscriptions,
+      milestoneDispatches: db.milestoneDispatches,
+    });
+    const checksumSha256 = computeBackupChecksum(data);
+
+    const resumenConteos = {
+      configuracion: data.configuracionInstitucional.length,
+      recesos: data.recesosInstitucionales.length,
+      salidas: data.salidasInstitucionales.length,
+      lapsosEscolares: data.lapsosEscolares.length,
+      diasNoLaborables: data.diasNoLaborables.length,
+      anosEscolares: data.anosEscolares.length,
+      secciones: data.secciones.length,
+      materias: data.materias.length,
+      asignacionesDocentes: data.docenteMaterias.length,
+      representantes: data.representantes.length,
+      estudiantes: data.estudiantes.length,
+      asistencias: data.asistencia.length,
+      resumenesAsistencia: data.resumenesAsistencia.length,
+      horarios: data.horarios.length,
+      usuariosPersonal: data.users.length,
+      notificacionesRepresentante: data.notificacionesRepresentante.length,
+      logsAuditoria: data.auditLogs.length,
+      logsBackups: data.backupLogs.length,
+      suscripcionesPush: data.pushSubscriptions.length,
+      hitosDespachados: data.milestoneDispatches.length,
+    };
+
+    const totalRegistros = Object.values(resumenConteos).reduce((acc, n) => acc + n, 0);
+
+    const backupPayload = {
+      metadata: {
+        sistema: 'EduAsist - Sistema de Control de Asistencia Escolar',
+        version: '1.1.0',
+        fechaGeneracion: nowIso,
+        archivoSugerido,
+        generadoPor: {
+          id: authorInfo?.id,
+          email: authorInfo?.email || 'director@eduasist.edu',
+          rol: authorInfo?.rol || 'director',
+        },
+        checksumSha256,
+        resumenConteos,
+      },
+      data,
+    };
+
+    const tamanoBytes = Buffer.byteLength(JSON.stringify(backupPayload, null, 2), 'utf8');
+
+    const backupLogEntry = appendBackupLogInMemory(db, {
+      fechaHora: nowIso,
+      usuarioId: authorInfo?.id ?? null,
+      usuarioNombre: resolveBackupAuthorName(db, authorInfo),
+      usuarioEmail: authorInfo?.email ?? null,
+      tipo: 'completo',
+      origen: 'manual',
+      estado: 'exitoso',
+      tamanoBytes,
+      totalRegistros,
+      checksum: checksumSha256,
+      archivoNombre: archivoSugerido,
+    });
+
+    appendAuditLogInMemory(db, {
+      idUsuario: authorInfo?.id ?? null,
+      emailOCedula: authorInfo?.email ?? null,
+      rol: authorInfo?.rol ?? 'director',
+      ipOrigen: authorInfo?.ipOrigen ?? null,
+      userAgent: authorInfo?.userAgent ?? null,
+      accion: 'BACKUP_BASE_DATOS_EXPORTADO',
+      entidad: 'DATABASE',
+      idEntidad: 'full_backup',
+      detalles: {
+        backupLogId: backupLogEntry.id,
+        archivoNombre: archivoSugerido,
+        tamanoBytes,
+        totalRegistros,
+        checksumSha256,
+        conteos: resumenConteos,
+      },
+    });
+
+    return backupPayload;
+  });
 }
 
 export async function restoreFullDatabaseBackup(
@@ -3993,6 +4313,7 @@ export async function restoreFullDatabaseBackup(
     const normalized = await normalizeAndEnsureIntegrity({
       ...backupPayload.data,
       auditLogs: backupPayload.data.auditLogs ?? db.auditLogs,
+      backupLogs: backupPayload.data.backupLogs ?? db.backupLogs,
       pushSubscriptions: backupPayload.data.pushSubscriptions ?? db.pushSubscriptions,
       milestoneDispatches: backupPayload.data.milestoneDispatches ?? db.milestoneDispatches,
       notificacionesRepresentante:
@@ -4762,7 +5083,13 @@ const CIERRE_BACKUP_FILENAME_RE = /^cierre-[a-zA-Z0-9._-]+\.json$/;
 
 function resolveConfinedBackupPath(filename: string): string {
   const safeName = String(filename || '').trim();
-  if (!CIERRE_BACKUP_FILENAME_RE.test(safeName)) {
+  if (
+    !safeName ||
+    safeName.includes('..') ||
+    safeName.includes('/') ||
+    safeName.includes('\\') ||
+    !CIERRE_BACKUP_FILENAME_RE.test(safeName)
+  ) {
     throw new Error('Nombre de archivo de respaldo de cierre inválido.');
   }
   const baseDir = path.resolve(BACKUPS_DIR);
@@ -4776,12 +5103,14 @@ function resolveConfinedBackupPath(filename: string): string {
 async function writeCierreBackupFileAtomic(
   filename: string,
   snapshot: CierreAnioEscolarSnapshot
-): Promise<void> {
+): Promise<number> {
   const resolved = resolveConfinedBackupPath(filename);
   await fs.promises.mkdir(BACKUPS_DIR, { recursive: true });
+  const serialized = JSON.stringify(snapshot, null, 2);
   const tmpPath = `${resolved}.${process.pid}.${Date.now()}.tmp`;
-  await fs.promises.writeFile(tmpPath, JSON.stringify(snapshot, null, 2), 'utf-8');
+  await fs.promises.writeFile(tmpPath, serialized, 'utf-8');
   await fs.promises.rename(tmpPath, resolved);
+  return Buffer.byteLength(serialized, 'utf8');
 }
 
 export async function listCierreBackups(): Promise<RespaldoCierreArchivoMeta[]> {
@@ -4824,6 +5153,7 @@ export async function ejecutarCierreAnioEscolar(
   authorInfo?: {
     id?: number;
     email?: string;
+    nombre?: string;
     rol?: string;
     ipOrigen?: string | null;
     userAgent?: string | null;
@@ -5145,10 +5475,35 @@ export async function ejecutarCierreAnioEscolar(
         ''
       );
       const backupFilename = `cierre-${safeAnioTag || 'historico'}-${Date.now()}.json`;
-      await writeCierreBackupFileAtomic(backupFilename, respaldoSnapshot);
+      const backupSizeBytes = await writeCierreBackupFileAtomic(backupFilename, respaldoSnapshot);
       respaldoArchivoId = backupFilename;
+      const closureChecksum = computeBackupChecksum(
+        respaldoSnapshot.data as unknown as Record<string, unknown>
+      );
+      const totalRegistrosCierre =
+        estudiantesInvolucrados.length +
+        lapsosInvolucrados.length +
+        materiasInvolucradas.length +
+        seccionesInvolucradas.length +
+        generatedSummaries.length +
+        asistenciasRespaldadas.length;
 
-      // 2. Aplicar resúmenes consolidados y depurar filas detalladas únicamente después de persistir el respaldo
+      // 2. Registrar en backupLogs dentro de la misma transacción consolidada
+      const cierreBackupLog = appendBackupLogInMemory(db, {
+        fechaHora: nowIso,
+        usuarioId: authorInfo?.id ?? null,
+        usuarioNombre: resolveBackupAuthorName(db, authorInfo),
+        usuarioEmail: authorInfo?.email ?? null,
+        tipo: 'cierre_anio',
+        origen: 'previo_cierre',
+        estado: 'exitoso',
+        tamanoBytes: backupSizeBytes,
+        totalRegistros: totalRegistrosCierre,
+        checksum: closureChecksum,
+        archivoNombre: backupFilename,
+      });
+
+      // 3. Aplicar resúmenes consolidados y depurar filas detalladas únicamente después de persistir el respaldo
       for (const item of pendingUpdates) {
         if (item.existingIdx !== undefined) {
           db.resumenesAsistencia[item.existingIdx] = item.record;
@@ -5161,7 +5516,7 @@ export async function ejecutarCierreAnioEscolar(
         db.asistencia = db.asistencia.filter((a) => !purgedIds.has(a.idAsistencia));
       }
 
-      // 3. Si se especificó un nuevo año lectivo, cerrar lapsos del año saliente y actualizar configuración
+      // 4. Si se especificó un nuevo año lectivo, cerrar lapsos del año saliente y actualizar configuración
       if (isClosingActiveYear && nuevoAnoLectivo) {
         const closingNorm = normalizeAnioLabel(anoLectivoActual);
         db.lapsosEscolares = db.lapsosEscolares.map((l) =>
@@ -5191,6 +5546,9 @@ export async function ejecutarCierreAnioEscolar(
           anoLectivoDespues,
           respaldoGenerado: Boolean(respaldoSnapshot),
           respaldoArchivoId: respaldoArchivoId ?? null,
+          backupLogId: cierreBackupLog.id,
+          tamanoBytes: backupSizeBytes,
+          checksumSha256: closureChecksum,
           asistenciasCompactadas: asistenciasADepurar,
           asistenciasDepuradas: asistenciasADepurar,
           asistenciasConservadas,
@@ -5249,7 +5607,25 @@ export async function ejecutarCierreAnioEscolar(
     throw new Error('Debe confirmar explícitamente la operación antes de ejecutar la compactación.');
   }
 
-  return withWriteLock((db) => runComputation(db, true));
+  try {
+    return await withWriteLock((db) => runComputation(db, true));
+  } catch (err: any) {
+    await recordBackupLogOutcome({
+      usuarioId: authorInfo?.id ?? null,
+      usuarioNombre: authorInfo?.nombre ?? null,
+      usuarioEmail: authorInfo?.email ?? null,
+      rol: authorInfo?.rol ?? 'director',
+      ipOrigen: authorInfo?.ipOrigen ?? null,
+      userAgent: authorInfo?.userAgent ?? null,
+      tipo: 'cierre_anio',
+      origen: 'previo_cierre',
+      estado: 'fallido',
+      tamanoBytes: 0,
+      totalRegistros: 0,
+      detalleError: err?.message || 'Error al generar el respaldo previo al cierre de año escolar.',
+    });
+    throw err;
+  }
 }
 
 export async function limpiarDatosAntiguos(
