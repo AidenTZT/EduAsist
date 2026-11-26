@@ -511,6 +511,8 @@ export interface CierreAnioEscolarSnapshot {
     conteos: {
       estudiantesInvolucrados: number;
       lapsosInvolucrados: number;
+      materiasInvolucradas?: number;
+      seccionesInvolucradas?: number;
       resumenesGenerados: number;
       asistenciasRespaldadas: number;
     };
@@ -518,9 +520,18 @@ export interface CierreAnioEscolarSnapshot {
   data: {
     estudiantesInvolucrados: Estudiante[];
     lapsosInvolucrados: LapsoEscolar[];
+    anosEscolares?: AnoEscolar[];
+    seccionesInvolucradas?: Seccion[];
+    materiasInvolucradas?: Materia[];
     resumenesGenerados: ResumenAsistenciaConsolidado[];
     asistenciasRespaldadas: RegistroAsistencia[];
   };
+}
+
+export interface RespaldoCierreArchivoMeta {
+  filename: string;
+  sizeBytes: number;
+  createdAt: string;
 }
 
 export interface CierreAnioEscolarResponse {
@@ -532,6 +543,7 @@ export interface CierreAnioEscolarResponse {
   lapsosDisponibles: LapsoEscolar[];
   resumenesGenerados: ResumenAsistenciaConsolidado[];
   respaldoSnapshot?: CierreAnioEscolarSnapshot | null;
+  respaldoArchivoId?: string | null;
 }
 
 export interface LimpiezaAntiguosRequest {
@@ -540,6 +552,7 @@ export interface LimpiezaAntiguosRequest {
   limpiarPush?: boolean;
   limpiarLogs?: boolean;
   dryRun?: boolean;
+  confirmado?: boolean;
 }
 
 export interface LimpiezaAntiguosResponse {

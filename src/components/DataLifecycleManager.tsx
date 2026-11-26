@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Archive,
   Download,
@@ -14,18 +14,22 @@ import {
   Layers,
   Lock,
   Sparkles,
+  HardDriveDownload,
 } from 'lucide-react';
 import type {
   Usuario,
   ResumenAsistenciaConsolidado,
   CierreAnioEscolarResponse,
   CierreAnioEscolarSnapshot,
+  RespaldoCierreArchivoMeta,
   LimpiezaAntiguosResponse,
 } from '../types.ts';
 import {
   fetchResumenesAsistencia,
   ejecutarCierreAnioEscolar,
   limpiarDatosAntiguos,
+  fetchCierreBackups,
+  fetchCierreBackupSnapshot,
 } from '../lib/api.ts';
 
 interface DataLifecycleManagerProps {
@@ -45,13 +49,20 @@ function downloadJsonFile(data: unknown, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
+function normalizeAnioCanonical(val: string): string {
+  return String(val || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s*[-–—/]\s*/g, '-')
+    .replace(/\s+/g, ' ');
+}
+
 export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
   currentUser,
   onDataChanged,
 }) => {
   const isDirector = currentUser?.rol === 'director';
 
-  // Feedback global del módulo
   const [feedback, setFeedback] = useState<{
     type: 'success' | 'error' | 'info';
     text: string;
@@ -67,6 +78,7 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
   const [nuevoAnoLectivo, setNuevoAnoLectivo] = useState<string>('');
 
   const [previewClosure, setPreviewClosure] = useState<CierreAnioEscolarResponse | null>(null);
+  const [previewClosureKey, setPreviewClosureKey] = useState<string>('');
   const [loadingClosurePreview, setLoadingClosurePreview] = useState<boolean>(false);
   const [executingClosure, setExecutingClosure] = useState<boolean>(false);
   const [showClosureModal, setShowClosureModal] = useState<boolean>(false);
@@ -75,6 +87,39 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
     filename: string;
     snapshot: CierreAnioEscolarSnapshot;
   } | null>(null);
+  const [serverBackups, setServerBackups] = useState<RespaldoCierreArchivoMeta[]>([]);
+  const [downloadingBackupName, setDownloadingBackupName] = useState<string | null>(null);
+
+  const closureReqIdRef = useRef<number>(0);
+
+  const closureParamsKey = useMemo(
+    () =>
+      JSON.stringify({
+        anioObjetivo,
+        selectedLapsoIds: [...selectedLapsoIds].sort((a, b) => a - b),
+        incluirInactivosAniosAnteriores,
+        incluirLapsosCerrados,
+        nuevoAnoLectivo: nuevoAnoLectivo.trim(),
+      }),
+    [
+      anioObjetivo,
+      selectedLapsoIds,
+      incluirInactivosAniosAnteriores,
+      incluirLapsosCerrados,
+      nuevoAnoLectivo,
+    ]
+  );
+
+  const isClosurePreviewSynced = Boolean(
+    previewClosure && previewClosureKey === closureParamsKey && !loadingClosurePreview
+  );
+
+  const isNuevoAnoSameAsActive = useMemo(() => {
+    const trimmed = nuevoAnoLectivo.trim();
+    const active = previewClosure?.metricas.anoLectivoActivoActual;
+    if (!trimmed || !active) return false;
+    return normalizeAnioCanonical(trimmed) === normalizeAnioCanonical(active);
+  }, [nuevoAnoLectivo, previewClosure]);
 
   // =========================================================================
   // 2. ESTADO DE RETENCIÓN Y LIMPIEZA DE DATOS ANTIGUOS
@@ -85,9 +130,27 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
   const [limpiarLogs, setLimpiarLogs] = useState<boolean>(true);
 
   const [previewRetention, setPreviewRetention] = useState<LimpiezaAntiguosResponse | null>(null);
+  const [previewRetentionKey, setPreviewRetentionKey] = useState<string>('');
   const [loadingRetentionPreview, setLoadingRetentionPreview] = useState<boolean>(false);
   const [executingRetention, setExecutingRetention] = useState<boolean>(false);
   const [showRetentionModal, setShowRetentionModal] = useState<boolean>(false);
+
+  const retentionReqIdRef = useRef<number>(0);
+
+  const retentionParamsKey = useMemo(
+    () =>
+      JSON.stringify({
+        diasRetencionPush: Math.min(3650, Math.max(7, Number(diasRetencionPush) || 90)),
+        diasRetencionLogs: Math.min(3650, Math.max(30, Number(diasRetencionLogs) || 180)),
+        limpiarPush,
+        limpiarLogs,
+      }),
+    [diasRetencionPush, diasRetencionLogs, limpiarPush, limpiarLogs]
+  );
+
+  const isRetentionPreviewSynced = Boolean(
+    previewRetention && previewRetentionKey === retentionParamsKey && !loadingRetentionPreview
+  );
 
   // =========================================================================
   // 3. HISTÓRICO DE RESÚMENES CONSOLIDADOS
@@ -99,6 +162,8 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
 
   const loadClosurePreview = useCallback(async () => {
     if (!isDirector) return;
+    const reqId = ++closureReqIdRef.current;
+    const keySnapshot = closureParamsKey;
     setLoadingClosurePreview(true);
     try {
       const res = await ejecutarCierreAnioEscolar({
@@ -110,17 +175,25 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
         dryRun: true,
         confirmado: false,
       });
-      setPreviewClosure(res);
+      if (reqId === closureReqIdRef.current) {
+        setPreviewClosure(res);
+        setPreviewClosureKey(keySnapshot);
+      }
     } catch (err: any) {
-      setFeedback({
-        type: 'error',
-        text: err?.message || 'Error al calcular la vista previa de compactación.',
-      });
+      if (reqId === closureReqIdRef.current) {
+        setFeedback({
+          type: 'error',
+          text: err?.message || 'Error al calcular la vista previa de compactación.',
+        });
+      }
     } finally {
-      setLoadingClosurePreview(false);
+      if (reqId === closureReqIdRef.current) {
+        setLoadingClosurePreview(false);
+      }
     }
   }, [
     isDirector,
+    closureParamsKey,
     anioObjetivo,
     selectedLapsoIds,
     incluirInactivosAniosAnteriores,
@@ -130,25 +203,42 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
 
   const loadRetentionPreview = useCallback(async () => {
     if (!isDirector) return;
+    const reqId = ++retentionReqIdRef.current;
+    const keySnapshot = retentionParamsKey;
     setLoadingRetentionPreview(true);
     try {
       const res = await limpiarDatosAntiguos({
-        diasRetencionPush: Math.max(7, Number(diasRetencionPush) || 90),
-        diasRetencionLogs: Math.max(30, Number(diasRetencionLogs) || 180),
+        diasRetencionPush: Math.min(3650, Math.max(7, Number(diasRetencionPush) || 90)),
+        diasRetencionLogs: Math.min(3650, Math.max(30, Number(diasRetencionLogs) || 180)),
         limpiarPush,
         limpiarLogs,
         dryRun: true,
+        confirmado: false,
       });
-      setPreviewRetention(res);
+      if (reqId === retentionReqIdRef.current) {
+        setPreviewRetention(res);
+        setPreviewRetentionKey(keySnapshot);
+      }
     } catch (err: any) {
-      setFeedback({
-        type: 'error',
-        text: err?.message || 'Error al analizar registros obsoletos.',
-      });
+      if (reqId === retentionReqIdRef.current) {
+        setFeedback({
+          type: 'error',
+          text: err?.message || 'Error al analizar registros obsoletos.',
+        });
+      }
     } finally {
-      setLoadingRetentionPreview(false);
+      if (reqId === retentionReqIdRef.current) {
+        setLoadingRetentionPreview(false);
+      }
     }
-  }, [isDirector, diasRetencionPush, diasRetencionLogs, limpiarPush, limpiarLogs]);
+  }, [
+    isDirector,
+    retentionParamsKey,
+    diasRetencionPush,
+    diasRetencionLogs,
+    limpiarPush,
+    limpiarLogs,
+  ]);
 
   const loadResumenes = useCallback(async () => {
     if (!isDirector) return;
@@ -166,12 +256,40 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
     }
   }, [isDirector]);
 
+  const loadServerBackups = useCallback(async () => {
+    if (!isDirector) return;
+    try {
+      const list = await fetchCierreBackups();
+      setServerBackups(list);
+    } catch {
+      // Silencioso si aún no hay carpeta
+    }
+  }, [isDirector]);
+
+  // Carga inicial de resúmenes y respaldos guardados en servidor
   useEffect(() => {
     if (!isDirector) return;
-    loadClosurePreview();
-    loadRetentionPreview();
     loadResumenes();
-  }, [isDirector]);
+    loadServerBackups();
+  }, [isDirector, loadResumenes, loadServerBackups]);
+
+  // Recalcular vista previa de cierre/compactación automáticamente (debounce 350ms) al cambiar parámetros
+  useEffect(() => {
+    if (!isDirector) return;
+    const timer = window.setTimeout(() => {
+      void loadClosurePreview();
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [isDirector, closureParamsKey, loadClosurePreview]);
+
+  // Recalcular vista previa de retención automáticamente (debounce 350ms) al cambiar parámetros
+  useEffect(() => {
+    if (!isDirector) return;
+    const timer = window.setTimeout(() => {
+      void loadRetentionPreview();
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [isDirector, retentionParamsKey, loadRetentionPreview]);
 
   const closedLapsos = useMemo(() => {
     const all = previewClosure?.lapsosDisponibles || [];
@@ -184,7 +302,40 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
     );
   };
 
+  const handleDownloadServerBackup = async (filename: string) => {
+    setDownloadingBackupName(filename);
+    try {
+      const snapshot = await fetchCierreBackupSnapshot(filename);
+      downloadJsonFile(snapshot, filename);
+      setFeedback({
+        type: 'success',
+        text: `Respaldo de cierre descargado desde el servidor (${filename}).`,
+      });
+    } catch (err: any) {
+      setFeedback({
+        type: 'error',
+        text: err?.message || 'No se pudo descargar el archivo de respaldo del servidor.',
+      });
+    } finally {
+      setDownloadingBackupName(null);
+    }
+  };
+
   const handleConfirmClosure = async () => {
+    if (!isClosurePreviewSynced) {
+      setFeedback({
+        type: 'error',
+        text: 'La vista previa está recalculándose o desactualizada. Espere a que coincida con los parámetros actuales.',
+      });
+      return;
+    }
+    if (isNuevoAnoSameAsActive) {
+      setFeedback({
+        type: 'error',
+        text: 'El nuevo año lectivo coincide con el año activo actual. Indique un período distinto o déjelo vacío.',
+      });
+      return;
+    }
     if (closureConfirmText.trim().toUpperCase() !== 'COMPACTAR') {
       setFeedback({
         type: 'error',
@@ -207,10 +358,9 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
       });
 
       if (res.respaldoSnapshot) {
-        const dateTag = new Date().toISOString().split('T')[0];
-        const safeAnio = (anioObjetivo || res.metricas.anoLectivoActivoActual || 'historico')
-          .replace(/[^a-zA-Z0-9_-]/g, '-');
-        const filename = `cierre_anio_eduasist_${safeAnio}_${dateTag}.json`;
+        const filename =
+          res.respaldoArchivoId ||
+          `cierre_anio_eduasist_${(anioObjetivo || res.metricas.anoLectivoActivoActual || 'historico').replace(/[^a-zA-Z0-9_-]/g, '-')}_${new Date().toISOString().split('T')[0]}.json`;
         downloadJsonFile(res.respaldoSnapshot, filename);
         setLastSnapshot({ filename, snapshot: res.respaldoSnapshot });
       }
@@ -221,10 +371,10 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
       setSelectedLapsoIds([]);
       setFeedback({
         type: 'success',
-        text: `${res.mensaje} Se descargó automáticamente el paquete de respaldo previo en formato JSON.`,
+        text: `${res.mensaje} Se guardó copia de seguridad en servidor y se descargó el JSON al equipo.`,
       });
 
-      await Promise.all([loadClosurePreview(), loadResumenes()]);
+      await Promise.all([loadClosurePreview(), loadResumenes(), loadServerBackups()]);
       onDataChanged?.();
     } catch (err: any) {
       setFeedback({
@@ -237,15 +387,24 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
   };
 
   const handleConfirmRetentionCleanup = async () => {
+    if (!isRetentionPreviewSynced) {
+      setFeedback({
+        type: 'error',
+        text: 'La vista previa de retención aún no está sincronizada con los parámetros actuales.',
+      });
+      return;
+    }
+
     setExecutingRetention(true);
     setFeedback(null);
     try {
       const res = await limpiarDatosAntiguos({
-        diasRetencionPush: Math.max(7, Number(diasRetencionPush) || 90),
-        diasRetencionLogs: Math.max(30, Number(diasRetencionLogs) || 180),
+        diasRetencionPush: Math.min(3650, Math.max(7, Number(diasRetencionPush) || 90)),
+        diasRetencionLogs: Math.min(3650, Math.max(30, Number(diasRetencionLogs) || 180)),
         limpiarPush,
         limpiarLogs,
         dryRun: false,
+        confirmado: true,
       });
       setShowRetentionModal(false);
       setFeedback({
@@ -347,9 +506,9 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
                 <h3 className="text-base font-bold text-slate-900 dark:text-[#F4F4F5]">
                   Cierre de Año Lectivo y Compactación de Asistencias
                 </h3>
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
                   <Lock className="w-3 h-3" />
-                  Respaldo JSON Obligatorio Previo
+                  Respaldo en Servidor + JSON Previo
                 </span>
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
@@ -366,7 +525,7 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
             className="self-start md:self-auto px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-100 dark:bg-[#181818] hover:bg-slate-200 dark:hover:bg-[#202024] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-[#27272A] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loadingClosurePreview ? 'animate-spin' : ''}`} />
-            <span>Calcular Vista Previa</span>
+            <span>{loadingClosurePreview ? 'Sincronizando...' : 'Recalcular Vista Previa'}</span>
           </button>
         </div>
 
@@ -398,14 +557,20 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
               </label>
               <input
                 type="text"
-                placeholder="Ej: 2026-2027 (dejar vacío para no cambiar)"
+                placeholder="Ej: 2027 - 2028 (dejar vacío para no cambiar)"
                 value={nuevoAnoLectivo}
                 onChange={(e) => setNuevoAnoLectivo(e.target.value)}
                 className="w-full bg-white dark:bg-[#121212] border border-slate-200 dark:border-[#27272A] rounded-xl px-3 py-2 text-xs font-mono text-slate-900 dark:text-[#F4F4F5] focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                Si ingresa un nuevo año lectivo, se desactivarán los lapsos salientes para cerrar oficialmente el ciclo actual.
-              </p>
+              {isNuevoAnoSameAsActive ? (
+                <p className="text-[11px] font-semibold text-rose-600 dark:text-rose-400 mt-1">
+                  El período ingresado equivale al año lectivo activo actual ({previewClosure?.metricas.anoLectivoActivoActual}). Indique un nuevo período distinto.
+                </p>
+              ) : (
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                  Si ingresa un nuevo año lectivo, se desactivarán los lapsos salientes para cerrar oficialmente el ciclo actual.
+                </p>
+              )}
             </div>
           </div>
 
@@ -463,9 +628,23 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
           </div>
         </div>
 
+        {/* Estado de sincronización de Vista Previa */}
+        {!isClosurePreviewSynced && (
+          <div className="px-3.5 py-2 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/60 text-xs font-semibold text-amber-800 dark:text-amber-300 flex items-center gap-2">
+            <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
+            <span>
+              Sincronizando vista previa con los parámetros seleccionados... La ejecución se habilitará al finalizar el cálculo.
+            </span>
+          </div>
+        )}
+
         {/* Métricas de Vista Previa */}
         {previewClosure && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div
+            className={`grid grid-cols-2 sm:grid-cols-4 gap-3 transition-opacity ${
+              isClosurePreviewSynced ? 'opacity-100' : 'opacity-60'
+            }`}
+          >
             <div className="bg-indigo-50/70 dark:bg-indigo-950/30 p-3.5 rounded-xl border border-indigo-200/80 dark:border-indigo-900/60">
               <span className="text-[10px] font-bold uppercase text-indigo-700 dark:text-indigo-400">
                 Asistencias a Compactar
@@ -507,7 +686,7 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
             <strong className="font-mono text-slate-900 dark:text-[#F4F4F5]">
               {previewClosure?.metricas.anoLectivoActivoActual || 'N/D'}
             </strong>
-            {nuevoAnoLectivo.trim() && (
+            {nuevoAnoLectivo.trim() && !isNuevoAnoSameAsActive && (
               <>
                 {' '}→ Nuevo:{' '}
                 <strong className="font-mono text-indigo-600 dark:text-indigo-400">
@@ -537,7 +716,8 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
               }}
               disabled={
                 executingClosure ||
-                loadingClosurePreview ||
+                !isClosurePreviewSynced ||
+                isNuevoAnoSameAsActive ||
                 !previewClosure ||
                 (previewClosure.metricas.asistenciasACompactar === 0 && !nuevoAnoLectivo.trim())
               }
@@ -548,6 +728,43 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Respaldos de Cierre Almacenados en Servidor (Recuperación ante fallo de descarga) */}
+        {serverBackups.length > 0 && (
+          <div className="pt-3 border-t border-slate-100 dark:border-[#27272A] space-y-2">
+            <div className="flex items-center gap-2 text-xs font-bold text-slate-700 dark:text-zinc-300">
+              <HardDriveDownload className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+              <span>Respaldos de Cierre Guardados en Servidor ({serverBackups.length})</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {serverBackups.slice(0, 6).map((b) => (
+                <div
+                  key={b.filename}
+                  className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-slate-50 dark:bg-[#181818] border border-slate-200/80 dark:border-[#27272A] text-xs"
+                >
+                  <div className="min-w-0">
+                    <p className="font-mono font-semibold text-slate-800 dark:text-zinc-200 truncate">
+                      {b.filename}
+                    </p>
+                    <p className="text-[11px] font-mono text-slate-500 dark:text-zinc-400">
+                      {(b.sizeBytes / 1024).toFixed(1)} KB ·{' '}
+                      {new Date(b.createdAt).toLocaleString('es-VE')}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadServerBackup(b.filename)}
+                    disabled={downloadingBackupName === b.filename}
+                    className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold flex items-center gap-1 shrink-0 cursor-pointer disabled:opacity-50"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>{downloadingBackupName === b.filename ? '...' : 'Descargar'}</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* =================================================================== */}
@@ -577,7 +794,7 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
             className="self-start md:self-auto px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-100 dark:bg-[#181818] hover:bg-slate-200 dark:hover:bg-[#202024] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-[#27272A] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loadingRetentionPreview ? 'animate-spin' : ''}`} />
-            <span>Analizar Registros Obsoletos</span>
+            <span>{loadingRetentionPreview ? 'Analizando...' : 'Analizar Registros Obsoletos'}</span>
           </button>
         </div>
 
@@ -597,7 +814,9 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
                 </span>
               </label>
               <span className="text-[11px] font-mono font-bold text-amber-600 dark:text-amber-400">
-                {previewRetention ? `${previewRetention.pushEliminadas} por depurar` : '--'}
+                {isRetentionPreviewSynced && previewRetention
+                  ? `${previewRetention.pushEliminadas} por depurar`
+                  : 'Calculando...'}
               </span>
             </div>
 
@@ -638,7 +857,9 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
                 </span>
               </label>
               <span className="text-[11px] font-mono font-bold text-amber-600 dark:text-amber-400">
-                {previewRetention ? `${previewRetention.logsEliminados} por depurar` : '--'}
+                {isRetentionPreviewSynced && previewRetention
+                  ? `${previewRetention.logsEliminados} por depurar`
+                  : 'Calculando...'}
               </span>
             </div>
 
@@ -665,6 +886,15 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
           </div>
         </div>
 
+        {!isRetentionPreviewSynced && (
+          <div className="px-3.5 py-2 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/60 text-xs font-semibold text-amber-800 dark:text-amber-300 flex items-center gap-2">
+            <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
+            <span>
+              Recalculando vista previa de retención según los nuevos umbrales...
+            </span>
+          </div>
+        )}
+
         {previewRetention && Object.keys(previewRetention.desgloseLogsPorAccion || {}).length > 0 && (
           <div className="bg-amber-50/50 dark:bg-amber-950/20 p-3.5 rounded-xl border border-amber-200/70 dark:border-amber-900/50 space-y-2">
             <span className="text-[11px] font-bold text-amber-800 dark:text-amber-300 uppercase tracking-wider">
@@ -689,7 +919,7 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
             onClick={() => setShowRetentionModal(true)}
             disabled={
               executingRetention ||
-              loadingRetentionPreview ||
+              !isRetentionPreviewSynced ||
               !previewRetention ||
               (previewRetention.pushEliminadas === 0 && previewRetention.logsEliminados === 0)
             }
@@ -843,9 +1073,8 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
 
             <div className="text-xs text-slate-600 dark:text-slate-400 space-y-2 leading-relaxed">
               <p>
-                Antes de depurar registros diarios, el sistema descargará automáticamente un{' '}
-                <strong>respaldo completo en JSON</strong> del período afectado y consolidará los totales en{' '}
-                <code className="font-mono">resumenesAsistencia</code>.
+                Antes de depurar registros diarios, el sistema guardará un{' '}
+                <strong>respaldo de seguridad en el servidor</strong> (con catálogo de años, secciones y materias) y descargará automáticamente el paquete JSON.
               </p>
               <div className="bg-slate-50 dark:bg-[#181818] p-3.5 rounded-2xl border border-slate-200 dark:border-[#27272A] font-mono text-[11px] space-y-1 text-slate-700 dark:text-slate-300">
                 <p>• Asistencias a compactar y depurar: {previewClosure.metricas.asistenciasACompactar}</p>
@@ -885,7 +1114,12 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
               <button
                 type="button"
                 onClick={handleConfirmClosure}
-                disabled={executingClosure || closureConfirmText.trim().toUpperCase() !== 'COMPACTAR'}
+                disabled={
+                  executingClosure ||
+                  !isClosurePreviewSynced ||
+                  isNuevoAnoSameAsActive ||
+                  closureConfirmText.trim().toUpperCase() !== 'COMPACTAR'
+                }
                 className="px-5 py-2.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs flex items-center space-x-2 cursor-pointer disabled:opacity-40"
               >
                 <Download className="w-4 h-4" />
@@ -928,7 +1162,7 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
               <button
                 type="button"
                 onClick={handleConfirmRetentionCleanup}
-                disabled={executingRetention}
+                disabled={executingRetention || !isRetentionPreviewSynced}
                 className="px-5 py-2.5 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white shadow-xs cursor-pointer disabled:opacity-45"
               >
                 {executingRetention ? 'Depurando...' : 'Confirmar Limpieza'}

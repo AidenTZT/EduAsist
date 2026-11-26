@@ -45,6 +45,9 @@ import {
   cierreAnioEscolarSchema,
   limpiarAntiguosSchema,
   resumenesAsistenciaQuerySchema,
+  restoreBackupSchema,
+  resetDatabaseSchema,
+  cierreBackupFilenameSchema,
 } from './validation.ts';
 import type { EstadoAsistencia } from '../types.ts';
 import {
@@ -2421,6 +2424,7 @@ apiRouter.post(
   '/backup/restore',
   requireAuth,
   requireRole('director'),
+  validateBody(restoreBackupSchema),
   async (req: Request, res: Response) => {
     try {
       const result = await db.restoreFullDatabaseBackup(req.body);
@@ -2442,6 +2446,7 @@ apiRouter.post(
   '/backup/reset',
   requireAuth,
   requireRole('director'),
+  validateBody(resetDatabaseSchema),
   async (req: Request, res: Response) => {
     try {
       const result = await db.resetDatabaseToMasterSeed();
@@ -2480,6 +2485,49 @@ apiRouter.get(
   }
 );
 
+apiRouter.get(
+  '/mantenimiento/cierre-anio-escolar/respaldos',
+  requireAuth,
+  requireRole('director'),
+  async (_req: Request, res: Response) => {
+    try {
+      res.json(await db.listCierreBackups());
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || 'Error al listar respaldos de cierre.' });
+    }
+  }
+);
+
+apiRouter.get(
+  '/mantenimiento/cierre-anio-escolar/respaldos/:filename',
+  requireAuth,
+  requireRole('director'),
+  async (req: Request, res: Response) => {
+    try {
+      const parsed = cierreBackupFilenameSchema.safeParse(req.params.filename);
+      if (!parsed.success) {
+        res.status(400).json({
+          error: parsed.error.issues[0]?.message || 'Nombre de archivo de respaldo inválido.',
+        });
+        return;
+      }
+      const snapshot = await db.readCierreBackupFile(parsed.data);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'BACKUP_CIERRE_DESCARGADO',
+        entidad: 'resumenes_asistencia',
+        idEntidad: parsed.data,
+        detalles: { filename: parsed.data },
+      });
+      res.setHeader('Content-Disposition', `attachment; filename="${parsed.data}"`);
+      res.json(snapshot);
+    } catch (e: any) {
+      const status = e?.statusCode === 404 ? 404 : 400;
+      res.status(status).json({ error: e.message || 'No se pudo descargar el respaldo.' });
+    }
+  }
+);
+
 apiRouter.post(
   '/mantenimiento/cierre-anio-escolar',
   requireAuth,
@@ -2502,6 +2550,7 @@ apiRouter.post(
             anoLectivoAntes: result.metricas.anoLectivoActivoActual,
             anoLectivoDespues: result.metricas.anoLectivoActivoDespues,
             respaldoGenerado: Boolean(result.respaldoSnapshot),
+            respaldoArchivoId: result.respaldoArchivoId ?? null,
             asistenciasCompactadas: result.metricas.asistenciasACompactar,
             asistenciasDepuradas: result.metricas.asistenciasADepurar,
             asistenciasConservadas: result.metricas.asistenciasConservadas,

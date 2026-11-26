@@ -33,6 +33,8 @@ import type {
   ResumenAsistenciaConsolidado,
   CierreAnioEscolarRequest,
   CierreAnioEscolarResponse,
+  CierreAnioEscolarSnapshot,
+  RespaldoCierreArchivoMeta,
   LimpiezaAntiguosRequest,
   LimpiezaAntiguosResponse,
 } from '../types.ts';
@@ -847,7 +849,10 @@ export async function resetDatabaseToMaster(): Promise<{
   success: boolean;
   mensaje: string;
 }> {
-  return apiFetch('/backup/reset', { method: 'POST' });
+  return apiFetch('/backup/reset', {
+    method: 'POST',
+    body: JSON.stringify({ confirmacion: 'CONFIRMAR' }),
+  });
 }
 
 // -------------------------------------------------------------
@@ -1025,6 +1030,18 @@ export async function ejecutarCierreAnioEscolar(
     method: 'POST',
     body: JSON.stringify(payload),
   });
+}
+
+export async function fetchCierreBackups(): Promise<RespaldoCierreArchivoMeta[]> {
+  return apiFetch<RespaldoCierreArchivoMeta[]>('/mantenimiento/cierre-anio-escolar/respaldos');
+}
+
+export async function fetchCierreBackupSnapshot(
+  filename: string
+): Promise<CierreAnioEscolarSnapshot> {
+  return apiFetch<CierreAnioEscolarSnapshot>(
+    `/mantenimiento/cierre-anio-escolar/respaldos/${encodeURIComponent(filename)}`
+  );
 }
 
 export async function limpiarDatosAntiguos(

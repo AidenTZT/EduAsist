@@ -43,6 +43,7 @@ import type {
   CierreAnioEscolarRequest,
   CierreAnioEscolarResponse,
   CierreAnioEscolarSnapshot,
+  RespaldoCierreArchivoMeta,
   LimpiezaAntiguosRequest,
   LimpiezaAntiguosResponse,
 } from '../types.ts';
@@ -51,6 +52,7 @@ import type {
 // Persistencia Atómica en Archivo JSON Local (Server-Side Repository)
 // ---------------------------------------------------------------------------
 const DB_DIR = path.resolve(process.cwd(), 'data');
+const BACKUPS_DIR = path.join(DB_DIR, 'backups');
 const DB_FILE = path.join(DB_DIR, 'eduasist-db.json');
 const LEGACY_DB_FILE = path.join(DB_DIR, 'educontrol-db.json');
 const SEED_BACKUP_FILE = path.resolve(
@@ -4284,7 +4286,11 @@ export async function markTodasNotificacionesLeidas(
 // 11. COMPACTACIÓN, CIERRE DE AÑO LECTIVO Y POLÍTICAS DE RETENCIÓN
 // ---------------------------------------------------------------------------
 function normalizeAnioLabel(val: string): string {
-  return String(val || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  return String(val || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s*[-–—/]\s*/g, '-')
+    .replace(/\s+/g, ' ');
 }
 
 function inferAnioLectivoFromDate(
@@ -4358,18 +4364,89 @@ export async function getResumenesAsistencia(filters?: {
   );
 }
 
+const CIERRE_BACKUP_FILENAME_RE = /^cierre-[a-zA-Z0-9._-]+\.json$/;
+
+function resolveConfinedBackupPath(filename: string): string {
+  const safeName = String(filename || '').trim();
+  if (!CIERRE_BACKUP_FILENAME_RE.test(safeName)) {
+    throw new Error('Nombre de archivo de respaldo de cierre inválido.');
+  }
+  const baseDir = path.resolve(BACKUPS_DIR);
+  const resolved = path.resolve(baseDir, safeName);
+  if (!resolved.startsWith(baseDir + path.sep)) {
+    throw new Error('Ruta de archivo de respaldo fuera del directorio permitido.');
+  }
+  return resolved;
+}
+
+async function writeCierreBackupFileAtomic(
+  filename: string,
+  snapshot: CierreAnioEscolarSnapshot
+): Promise<void> {
+  const resolved = resolveConfinedBackupPath(filename);
+  await fs.promises.mkdir(BACKUPS_DIR, { recursive: true });
+  const tmpPath = `${resolved}.${process.pid}.${Date.now()}.tmp`;
+  await fs.promises.writeFile(tmpPath, JSON.stringify(snapshot, null, 2), 'utf-8');
+  await fs.promises.rename(tmpPath, resolved);
+}
+
+export async function listCierreBackups(): Promise<RespaldoCierreArchivoMeta[]> {
+  try {
+    if (!fs.existsSync(BACKUPS_DIR)) return [];
+    const entries = await fs.promises.readdir(BACKUPS_DIR, { withFileTypes: true });
+    const items: RespaldoCierreArchivoMeta[] = [];
+    for (const entry of entries) {
+      if (!entry.isFile() || !CIERRE_BACKUP_FILENAME_RE.test(entry.name)) continue;
+      const fullPath = resolveConfinedBackupPath(entry.name);
+      const stat = await fs.promises.stat(fullPath);
+      items.push({
+        filename: entry.name,
+        sizeBytes: stat.size,
+        createdAt: stat.mtime.toISOString(),
+      });
+    }
+    return items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  } catch (err) {
+    console.warn('[LocalDB] Error listando respaldos de cierre:', err);
+    return [];
+  }
+}
+
+export async function readCierreBackupFile(filename: string): Promise<CierreAnioEscolarSnapshot> {
+  const resolved = resolveConfinedBackupPath(filename);
+  if (!fs.existsSync(resolved)) {
+    const err = new Error('El archivo de respaldo de cierre solicitado no existe.') as Error & {
+      statusCode?: number;
+    };
+    err.statusCode = 404;
+    throw err;
+  }
+  const raw = await fs.promises.readFile(resolved, 'utf-8');
+  return JSON.parse(raw) as CierreAnioEscolarSnapshot;
+}
+
 export async function ejecutarCierreAnioEscolar(
   params: CierreAnioEscolarRequest,
   authorInfo?: { id?: number; email?: string; rol?: string }
 ): Promise<CierreAnioEscolarResponse> {
-  const runComputation = (db: DatabaseState, mutate: boolean): CierreAnioEscolarResponse => {
+  const runComputation = async (
+    db: DatabaseState,
+    mutate: boolean
+  ): Promise<CierreAnioEscolarResponse> => {
     const nowIso = new Date().toISOString();
     const anoLectivoActual =
       db.configuracionInstitucional.find((c) => c.clave === 'ano_lectivo')?.valor || '2025 - 2026';
     const nuevoAnoLectivo = params.nuevoAnoLectivo?.trim() || undefined;
-    const isClosingActiveYear = Boolean(
-      nuevoAnoLectivo && normalizeAnioLabel(nuevoAnoLectivo) !== normalizeAnioLabel(anoLectivoActual)
+    const isSameAsActiveYear = Boolean(
+      nuevoAnoLectivo && normalizeAnioLabel(nuevoAnoLectivo) === normalizeAnioLabel(anoLectivoActual)
     );
+    if (mutate && isSameAsActiveYear) {
+      throw new Error(
+        `El nuevo año lectivo indicado ("${nuevoAnoLectivo}") coincide con el año lectivo activo actual ("${anoLectivoActual}"). Indique un período distinto para ejecutar el cierre.`
+      );
+    }
+
+    const isClosingActiveYear = Boolean(nuevoAnoLectivo && !isSameAsActiveYear);
     const anoLectivoDespues = isClosingActiveYear ? nuevoAnoLectivo! : anoLectivoActual;
 
     const incluirInactivos = params.incluirInactivosAniosAnteriores !== false;
@@ -4381,8 +4458,20 @@ export async function ejecutarCierreAnioEscolar(
 
     const estMap = new Map(db.estudiantes.map((e) => [e.idEstudiante, e]));
     const matMap = new Map(db.materias.map((m) => [m.idMateria, m]));
+    const secMap = new Map(db.secciones.map((s) => [s.idSeccion, s]));
     const anoMap = new Map(db.anosEscolares.map((a) => [a.idAno, a.nombreNivel]));
     const lapsoMap = new Map(db.lapsosEscolares.map((l) => [l.id, l]));
+
+    if (selectedLapsoIds.size > 0 && !isClosingActiveYear) {
+      for (const lapsoId of selectedLapsoIds) {
+        const lapsoSel = lapsoMap.get(lapsoId);
+        if (lapsoSel?.activo) {
+          throw new Error(
+            `El lapso "${lapsoSel.nombre}" (${lapsoSel.anioEscolar}) aún se encuentra activo. Desactívelo o indique un nuevo año lectivo para cerrar el período.`
+          );
+        }
+      }
+    }
 
     const anosDisponiblesSet = new Set<string>([anoLectivoActual]);
     for (const l of db.lapsosEscolares) {
@@ -4476,6 +4565,8 @@ export async function ejecutarCierreAnioEscolar(
     const studentIdsInvolved = new Set<number>();
     const inactiveStudentIdsInvolved = new Set<number>();
     const lapsoIdsInvolved = new Set<number>();
+    const materiaIdsInvolved = new Set<number>();
+    const seccionIdsInvolved = new Set<number>();
     const purgedIds = new Set<number>();
 
     for (const item of candidates) {
@@ -4513,6 +4604,12 @@ export async function ejecutarCierreAnioEscolar(
       if (isStudentInactive(est)) {
         inactiveStudentIdsInvolved.add(rec.idEstudiante);
       }
+      if (est?.idSeccion) {
+        seccionIdsInvolved.add(est.idSeccion);
+      }
+      if (rec.idMateria) {
+        materiaIdsInvolved.add(rec.idMateria);
+      }
       if (lapsoId != null) {
         lapsoIdsInvolved.add(lapsoId);
       }
@@ -4523,6 +4620,7 @@ export async function ejecutarCierreAnioEscolar(
     let resumenesNuevosCount = 0;
     let resumenesActualizadosCount = 0;
     const generatedSummaries: ResumenAsistenciaConsolidado[] = [];
+    const pendingUpdates: Array<{ existingIdx: number | undefined; record: ResumenAsistenciaConsolidado }> = [];
     const existingIndexByKey = new Map<string, number>();
 
     db.resumenesAsistencia.forEach((r, idx) => {
@@ -4541,7 +4639,8 @@ export async function ejecutarCierreAnioEscolar(
       const reposoMedico = (prev?.reposoMedico || 0) + b.reposoMedico;
       const porcentajeAsistencia =
         totalRegistros > 0
-          ? Math.round(((presentes + tardes + justificados + reposoMedico) / totalRegistros) * 100)
+          ? Math.round(((presentes + tardes + justificados + reposoMedico) / totalRegistros) * 1000) /
+            10
           : 0;
 
       const summaryRecord: ResumenAsistenciaConsolidado = {
@@ -4575,16 +4674,11 @@ export async function ejecutarCierreAnioEscolar(
 
       if (prev) {
         resumenesActualizadosCount++;
-        if (mutate && existingIdx !== undefined) {
-          db.resumenesAsistencia[existingIdx] = summaryRecord;
-        }
       } else {
         resumenesNuevosCount++;
-        if (mutate) {
-          db.resumenesAsistencia.push(summaryRecord);
-        }
       }
 
+      pendingUpdates.push({ existingIdx, record: summaryRecord });
       generatedSummaries.push(summaryRecord);
     }
 
@@ -4593,14 +4687,22 @@ export async function ejecutarCierreAnioEscolar(
     const asistenciasConservadas = totalAsistenciasAntes - asistenciasADepurar;
 
     let respaldoSnapshot: CierreAnioEscolarSnapshot | null = null;
+    let respaldoArchivoId: string | null = null;
+
     if (mutate) {
-      // 1. Generar paquete de respaldo JSON estructurado ANTES de depurar filas detalladas
+      // 1. Generar y persistir en disco paquete de respaldo JSON estructurado (incluyendo catálogo referenciado) ANTES de mutar/depurar
       const estudiantesInvolucrados = Array.from(studentIdsInvolved)
         .map((id) => estMap.get(id))
         .filter((e): e is Estudiante => Boolean(e));
       const lapsosInvolucrados = Array.from(lapsoIdsInvolved)
         .map((id) => lapsoMap.get(id))
         .filter((l): l is LapsoEscolar => Boolean(l));
+      const materiasInvolucradas = Array.from(materiaIdsInvolved)
+        .map((id) => matMap.get(id))
+        .filter((m): m is Materia => Boolean(m));
+      const seccionesInvolucradas = Array.from(seccionIdsInvolved)
+        .map((id) => secMap.get(id))
+        .filter((s): s is Seccion => Boolean(s));
       const asistenciasRespaldadas = candidates.map((c) => c.rec);
 
       respaldoSnapshot = {
@@ -4621,6 +4723,8 @@ export async function ejecutarCierreAnioEscolar(
           conteos: {
             estudiantesInvolucrados: estudiantesInvolucrados.length,
             lapsosInvolucrados: lapsosInvolucrados.length,
+            materiasInvolucradas: materiasInvolucradas.length,
+            seccionesInvolucradas: seccionesInvolucradas.length,
             resumenesGenerados: generatedSummaries.length,
             asistenciasRespaldadas: asistenciasRespaldadas.length,
           },
@@ -4628,12 +4732,31 @@ export async function ejecutarCierreAnioEscolar(
         data: {
           estudiantesInvolucrados,
           lapsosInvolucrados,
+          anosEscolares: db.anosEscolares,
+          seccionesInvolucradas,
+          materiasInvolucradas,
           resumenesGenerados: generatedSummaries,
           asistenciasRespaldadas,
         },
       };
 
-      // 2. Depurar únicamente las filas detalladas compactadas (conservando el año lectivo activo)
+      const safeAnioTag = normalizeAnioLabel(params.anioLectivo || anoLectivoActual).replace(
+        /[^a-zA-Z0-9_-]/g,
+        ''
+      );
+      const backupFilename = `cierre-${safeAnioTag || 'historico'}-${Date.now()}.json`;
+      await writeCierreBackupFileAtomic(backupFilename, respaldoSnapshot);
+      respaldoArchivoId = backupFilename;
+
+      // 2. Aplicar resúmenes consolidados y depurar filas detalladas únicamente después de persistir el respaldo
+      for (const item of pendingUpdates) {
+        if (item.existingIdx !== undefined) {
+          db.resumenesAsistencia[item.existingIdx] = item.record;
+        } else {
+          db.resumenesAsistencia.push(item.record);
+        }
+      }
+
       if (purgedIds.size > 0) {
         db.asistencia = db.asistencia.filter((a) => !purgedIds.has(a.idAsistencia));
       }
@@ -4665,7 +4788,7 @@ export async function ejecutarCierreAnioEscolar(
         : isClosingActiveYear
         ? `Vista previa: se cerrará el año lectivo ${anoLectivoActual} y se activará ${anoLectivoDespues} (sin registros históricos elegibles para depurar).`
         : 'No se encontraron registros históricos elegibles para compactar con los filtros actuales. Los registros del año lectivo activo permanecen protegidos.'
-      : `Cierre y compactación completados: ${asistenciasADepurar} asistencia(s) respaldadas y depuradas en ${generatedSummaries.length} resumen(es) consolidado(s). Se conservaron ${asistenciasConservadas} registro(s) vigentes.`;
+      : `Cierre y compactación completados: ${asistenciasADepurar} asistencia(s) respaldadas en servidor (${respaldoArchivoId}) y depuradas en ${generatedSummaries.length} resumen(es) consolidado(s). Se conservaron ${asistenciasConservadas} registro(s) vigentes.`;
 
     return {
       success: true,
@@ -4689,6 +4812,7 @@ export async function ejecutarCierreAnioEscolar(
       lapsosDisponibles,
       resumenesGenerados: generatedSummaries,
       respaldoSnapshot,
+      respaldoArchivoId,
     };
   };
 
@@ -4726,6 +4850,12 @@ export async function limpiarDatosAntiguos(
   const limpiarPush = params.limpiarPush !== false;
   const limpiarLogs = params.limpiarLogs !== false;
   const dryRun = Boolean(params.dryRun);
+
+  if (!dryRun && params.confirmado !== true) {
+    throw new Error(
+      'Debe confirmar explícitamente la limpieza de datos antiguos (confirmado: true) antes de ejecutar.'
+    );
+  }
 
   const evaluateCleanup = (db: DatabaseState, mutate: boolean): LimpiezaAntiguosResponse => {
     const nowMs = Date.now();

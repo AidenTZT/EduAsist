@@ -709,15 +709,60 @@ export const limpiarAntiguosSchema = z
     limpiarPush: z.boolean().optional().default(true),
     limpiarLogs: z.boolean().optional().default(true),
     dryRun: z.boolean().optional().default(false),
+    confirmado: z.boolean().optional().default(false),
   })
-  .optional()
-  .default({
-    diasRetencionPush: 90,
-    diasRetencionLogs: 180,
-    limpiarPush: true,
-    limpiarLogs: true,
-    dryRun: false,
+  .refine((data) => data.dryRun || data.confirmado === true, {
+    message:
+      'Debe confirmar explícitamente la limpieza de datos antiguos (confirmado: true) antes de ejecutar.',
+    path: ['confirmado'],
   });
+
+const backupArrayField = z.array(z.record(z.string(), z.unknown()));
+
+export const restoreBackupSchema = z.object({
+  metadata: z
+    .object({
+      sistema: z.string().max(200).optional(),
+      version: z.string().max(50).optional(),
+      fechaGeneracion: z.string().max(100).optional(),
+    })
+    .passthrough()
+    .optional(),
+  data: z
+    .object({
+      configuracionInstitucional: backupArrayField,
+      recesosInstitucionales: backupArrayField.optional(),
+      salidasInstitucionales: backupArrayField.optional(),
+      lapsosEscolares: backupArrayField.optional(),
+      diasNoLaborables: backupArrayField.optional(),
+      anosEscolares: backupArrayField,
+      secciones: backupArrayField,
+      materias: backupArrayField,
+      docenteMaterias: backupArrayField.optional(),
+      representantes: backupArrayField,
+      estudiantes: backupArrayField,
+      asistencia: backupArrayField,
+      resumenesAsistencia: backupArrayField.optional(),
+      horarios: backupArrayField.optional(),
+      users: backupArrayField,
+      notificacionesRepresentante: backupArrayField.optional(),
+      auditLogs: backupArrayField.optional(),
+      pushSubscriptions: backupArrayField.optional(),
+      milestoneDispatches: backupArrayField.optional(),
+    })
+    .passthrough(),
+});
+
+export const resetDatabaseSchema = z.object({
+  confirmacion: z.literal('CONFIRMAR', {
+    message: 'Debe enviar confirmacion exactamente igual a "CONFIRMAR" para reiniciar la base de datos.',
+  }),
+});
+
+export const cierreBackupFilenameSchema = z
+  .string()
+  .trim()
+  .regex(/^cierre-[a-zA-Z0-9._-]+\.json$/, 'Nombre de archivo de respaldo inválido.');
 
 export const resumenesAsistenciaQuerySchema = z.object({
   anioLectivo: z.preprocess(emptyToUndefined, z.string().trim().max(40).optional()),
