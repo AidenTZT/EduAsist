@@ -34,6 +34,7 @@ import { StaffManager } from './components/StaffManager.tsx';
 import { ScheduleManager } from './components/ScheduleManager.tsx';
 import { ParentPortal } from './components/ParentPortal.tsx';
 import { BackupRestoreManager } from './components/BackupRestoreManager.tsx';
+import { TeacherTodaySubjects } from './components/TeacherTodaySubjects.tsx';
 import {
   fetchAnosEscolares,
   fetchSecciones,
@@ -330,17 +331,24 @@ export default function App() {
     idAno?: number;
     idSeccion?: number;
     idMateria?: number;
+    fecha?: string;
     timestamp: number;
   } | null>(null);
 
-  const handleGoToAttendanceFromSchedule = (materiaId?: number, seccionId?: number) => {
-    if (materiaId || seccionId) {
+  const handleGoToAttendanceFromSchedule = (
+    materiaId?: number,
+    seccionId?: number,
+    fechaStr?: string,
+    anoId?: number
+  ) => {
+    if (materiaId || seccionId || fechaStr || anoId) {
       const secObj = secciones.find((s) => s.idSeccion === seccionId);
       const matObj = materias.find((m) => m.idMateria === materiaId);
       setAttendanceTarget({
-        idAno: secObj?.idAno || matObj?.idAno,
+        idAno: anoId || secObj?.idAno || matObj?.idAno,
         idSeccion: seccionId,
         idMateria: materiaId,
+        ...(fechaStr ? { fecha: fechaStr } : {}),
         timestamp: Date.now(),
       });
     }
@@ -420,15 +428,36 @@ export default function App() {
               <div className="transition-all space-y-6">
                 {/* Sub-Tabs Components */}
                 {activeDocenteTab === 'horarios' && (
-                  <ScheduleManager
-                    anos={anos}
-                    secciones={secciones}
-                    materias={materias}
-                    docenteMaterias={docenteMaterias}
-                    staffUsers={staffUsers}
-                    currentUser={activeStaffUser}
-                    onGoToAttendance={handleGoToAttendanceFromSchedule}
-                  />
+                  <div className="space-y-6">
+                    {activeStaffUser.rol === 'docente' && (
+                      <TeacherTodaySubjects
+                        currentUser={activeStaffUser}
+                        anos={anos}
+                        secciones={secciones}
+                        materias={materias}
+                        docenteMaterias={docenteMaterias}
+                        estudiantes={estudiantes}
+                        onSelectClassForAttendance={({ materiaId, seccionId, anoId, fecha }) =>
+                          handleGoToAttendanceFromSchedule(materiaId, seccionId, fecha, anoId)
+                        }
+                        onViewFullSchedule={() => {
+                          const el = document.getElementById('teacher-full-schedule');
+                          el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }}
+                      />
+                    )}
+                    <div id="teacher-full-schedule">
+                      <ScheduleManager
+                        anos={anos}
+                        secciones={secciones}
+                        materias={materias}
+                        docenteMaterias={docenteMaterias}
+                        staffUsers={staffUsers}
+                        currentUser={activeStaffUser}
+                        onGoToAttendance={handleGoToAttendanceFromSchedule}
+                      />
+                    </div>
+                  </div>
                 )}
 
                 {activeDocenteTab === 'asistencia' && (

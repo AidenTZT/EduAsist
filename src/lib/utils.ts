@@ -47,3 +47,34 @@ export function getLocalTodayDateString(): string {
   }
 }
 
+export function getLocalTodayDayName(dateStr?: string): string {
+  const targetDate = dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)
+    ? dateStr
+    : getLocalTodayDateString();
+  const dayIndex = new Date(`${targetDate}T12:00:00Z`).getUTCDay();
+  const daysMap: Record<number, string> = {
+    0: 'Domingo',
+    1: 'Lunes',
+    2: 'Martes',
+    3: 'Miércoles',
+    4: 'Jueves',
+    5: 'Viernes',
+    6: 'Sábado',
+  };
+  return daysMap[dayIndex] || 'Lunes';
+}
+
+export function getLocalNowTimeHHMM(): string {
+  try {
+    const formatted = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'America/Caracas',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(new Date());
+    return formatted.slice(0, 5);
+  } catch (_) {
+    const now = new Date();
+    return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  }
+}

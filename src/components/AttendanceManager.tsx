@@ -58,6 +58,7 @@ interface AttendanceManagerProps {
     idAno?: number;
     idSeccion?: number;
     idMateria?: number;
+    fecha?: string;
     timestamp?: number;
   } | null;
 }
@@ -72,10 +73,18 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
   onRefreshData,
   preselectedTarget,
 }) => {
-  const [selectedAnoId, setSelectedAnoId] = useState<number>(anos[0]?.idAno || 1);
-  const [selectedSeccionId, setSelectedSeccionId] = useState<number>(0);
-  const [selectedMateriaId, setSelectedMateriaId] = useState<number>(0);
-  const [fecha, setFecha] = useState<string>(() => getLocalTodayDateString());
+  const [selectedAnoId, setSelectedAnoId] = useState<number>(
+    () => preselectedTarget?.idAno || anos[0]?.idAno || 1
+  );
+  const [selectedSeccionId, setSelectedSeccionId] = useState<number>(
+    () => preselectedTarget?.idSeccion ?? 0
+  );
+  const [selectedMateriaId, setSelectedMateriaId] = useState<number>(
+    () => preselectedTarget?.idMateria ?? 0
+  );
+  const [fecha, setFecha] = useState<string>(
+    () => preselectedTarget?.fecha || getLocalTodayDateString()
+  );
 
   // Modo de vista persistente en localStorage (Tabla predeterminada)
   const [viewMode, setViewMode] = useState<AttendanceViewMode>(() => {
@@ -170,12 +179,25 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
 
   // Sincronizar año por defecto cuando el catálogo cargue desde el backend
   useEffect(() => {
-    if (anos.length > 0 && !anos.some((a) => a.idAno === selectedAnoId)) {
+    if (anos.length === 0) return;
+    if (!anos.some((a) => a.idAno === selectedAnoId)) {
       setSelectedAnoId(anos[0].idAno);
+      return;
     }
-  }, [anos, selectedAnoId]);
+    if (isDocente && assignedMateriaIds && assignedMateriaIds.length > 0 && !preselectedTarget?.idAno) {
+      const hasMatInCurrent = materias.some(
+        (m) => m.idAno === selectedAnoId && assignedMateriaIds.includes(m.idMateria)
+      );
+      if (!hasMatInCurrent) {
+        const firstMatchingMat = materias.find((m) => assignedMateriaIds.includes(m.idMateria));
+        if (firstMatchingMat) {
+          setSelectedAnoId(firstMatchingMat.idAno);
+        }
+      }
+    }
+  }, [anos, selectedAnoId, isDocente, assignedMateriaIds, materias, preselectedTarget]);
 
-  // Aplicar preselección directa desde el módulo "Horarios & En Clase Ahora"
+  // Aplicar preselección directa desde "Mis Materias de Hoy" o "Horarios & En Clase Ahora"
   useEffect(() => {
     if (!preselectedTarget) return;
     if (preselectedTarget.idAno) {
@@ -186,6 +208,9 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
     }
     if (preselectedTarget.idMateria) {
       setSelectedMateriaId(preselectedTarget.idMateria);
+    }
+    if (preselectedTarget.fecha) {
+      setFecha(preselectedTarget.fecha);
     }
   }, [preselectedTarget]);
 
