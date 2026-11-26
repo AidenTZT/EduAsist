@@ -34,6 +34,8 @@ import type {
   VerificarDiaNoLaborableResult,
   PromocionMasivaPayload,
   PromocionMasivaResult,
+  PromocionCicloAuditItem,
+  EstadoPromocionesCicloResponse,
   NotificacionRepresentante,
   TipoNotificacionRepresentante,
   EstadoAcademicoEstudiante,
@@ -2147,6 +2149,103 @@ export async function deleteEstudiante(idEstudiante: number): Promise<void> {
   });
 }
 
+export class PromotionConfirmationError extends Error {
+  code = 'PROMOTION_DOUBLE_CONFIRM_REQUIRED';
+  statusCode = 409;
+  warnings: string[];
+
+  constructor(warnings: string[]) {
+    super(warnings[0] || 'Se requiere confirmación doble para ejecutar esta promoción.');
+    this.name = 'PromotionConfirmationError';
+    this.warnings = warnings;
+  }
+}
+
+function getCicloLectivoActual(db: DatabaseState): string {
+  return (
+    db.configuracionInstitucional.find((c) => c.clave === 'ano_lectivo')?.valor?.trim() ||
+    '2025 - 2026'
+  );
+}
+
+function extractCyclePromotions(db: DatabaseState, cicloActual: string): PromocionCicloAuditItem[] {
+  const anoMap = new Map(db.anosEscolares.map((a) => [a.idAno, a.nombreNivel]));
+  const secMap = new Map(db.secciones.map((s) => [s.idSeccion, s.nombreSeccion]));
+  const items: PromocionCicloAuditItem[] = [];
+
+  for (const log of db.auditLogs) {
+    if (log.accion !== 'PROMOCION_MASIVA_ESTUDIANTES') continue;
+    const d =
+      log.detalles && typeof log.detalles === 'object' && !Array.isArray(log.detalles)
+        ? (log.detalles as Record<string, any>)
+        : null;
+    if (!d) continue;
+    const logCiclo = typeof d.cicloLectivo === 'string' ? d.cicloLectivo.trim() : '';
+    if (logCiclo && logCiclo !== cicloActual) continue;
+    if (!logCiclo) continue;
+
+    const anioOrigenId = Number(d.anioOrigenId || 0);
+    if (!anioOrigenId) continue;
+    const seccionOrigenId = d.seccionOrigenId != null ? Number(d.seccionOrigenId) : null;
+    const anioDestinoId: number | 'EGRESADO' =
+      d.anioDestinoId === 'EGRESADO' ? 'EGRESADO' : Number(d.anioDestinoId || 0);
+    const seccionDestinoId = d.seccionDestinoId != null ? Number(d.seccionDestinoId) : null;
+
+    items.push({
+      idLog: log.idLog,
+      fecha: log.createdAt,
+      cicloLectivo: logCiclo,
+      anioOrigenId,
+      anioOrigenNombre:
+        (typeof d.anioOrigenNombre === 'string' && d.anioOrigenNombre) ||
+        anoMap.get(anioOrigenId) ||
+        `Año #${anioOrigenId}`,
+      seccionOrigenId,
+      seccionOrigenNombre:
+        (typeof d.seccionOrigenNombre === 'string' && d.seccionOrigenNombre) ||
+        (seccionOrigenId ? secMap.get(seccionOrigenId) || `Sección #${seccionOrigenId}` : null),
+      anioDestinoId,
+      seccionDestinoId,
+      destinoLabel: String(d.destinoLabel || ''),
+      promovidosCount: Number(d.promovidosCount || 0),
+      usuario: log.emailOCedula || 'Sistema',
+      confirmarDoble: Boolean(d.confirmarDoble),
+    });
+  }
+
+  return items;
+}
+
+export async function getEstadoPromocionesCiclo(): Promise<EstadoPromocionesCicloResponse> {
+  const db = await readDb();
+  const cicloActual = getCicloLectivoActual(db);
+  const promociones = extractCyclePromotions(db, cicloActual);
+
+  const origenesSet = new Set<string>();
+  const destinosAnosSet = new Set<number>();
+  const destinosKeysSet = new Set<string>();
+
+  for (const p of promociones) {
+    if (p.anioOrigenId && p.seccionOrigenId) {
+      origenesSet.add(`${p.anioOrigenId}-${p.seccionOrigenId}`);
+    }
+    if (p.anioDestinoId !== 'EGRESADO') {
+      destinosAnosSet.add(p.anioDestinoId);
+      if (p.seccionDestinoId) {
+        destinosKeysSet.add(`${p.anioDestinoId}-${p.seccionDestinoId}`);
+      }
+    }
+  }
+
+  return {
+    cicloActual,
+    promociones: promociones.slice(0, 50),
+    origenesPromovidosKeys: Array.from(origenesSet),
+    destinosConPromocionesAnos: Array.from(destinosAnosSet),
+    destinosConPromocionesKeys: Array.from(destinosKeysSet),
+  };
+}
+
 export async function promoverEstudiantesMasivo(
   payload: PromocionMasivaPayload
 ): Promise<PromocionMasivaResult> {
@@ -2156,12 +2255,16 @@ export async function promoverEstudiantesMasivo(
       throw new Error('El año escolar de origen especificado no existe.');
     }
 
-    const origenSeccion = payload.seccionOrigenId
-      ? db.secciones.find(
-          (s) => s.idSeccion === Number(payload.seccionOrigenId) && s.idAno === origenAno.idAno
-        )
-      : null;
-    if (payload.seccionOrigenId && !origenSeccion) {
+    if (!payload.seccionOrigenId || Number(payload.seccionOrigenId) <= 0) {
+      throw new Error(
+        'Debe seleccionar estrictamente 1 año y 1 sección de origen. No está permitido promover múltiples secciones a la vez.'
+      );
+    }
+
+    const origenSeccion = db.secciones.find(
+      (s) => s.idSeccion === Number(payload.seccionOrigenId) && s.idAno === origenAno.idAno
+    );
+    if (!origenSeccion) {
       throw new Error('La sección de origen no pertenece al año escolar seleccionado.');
     }
 
@@ -2180,31 +2283,111 @@ export async function promoverEstudiantesMasivo(
           ) || null
         : null;
       if (!destinoSeccion) {
-        throw new Error('Debe seleccionar una sección válida dentro del año escolar destino.');
+        throw new Error('Debe seleccionar una única sección válida dentro del año escolar destino.');
       }
       if (
         origenAno.idAno === destinoAno.idAno &&
-        origenSeccion &&
         origenSeccion.idSeccion === destinoSeccion.idSeccion
       ) {
         throw new Error('El año y sección de destino deben ser diferentes al origen.');
       }
     }
 
+    // Verificación de Orden Inverso Obligatorio y Prevención de Cascada en el mismo ciclo
+    const cicloActual = getCicloLectivoActual(db);
+    const cyclePromotions = extractCyclePromotions(db, cicloActual);
+    const warnings: string[] = [];
+
+    const higherPendingYears = [...db.anosEscolares]
+      .filter((a) => a.idAno > origenAno.idAno)
+      .sort((a, b) => b.idAno - a.idAno)
+      .filter((a) =>
+        db.estudiantes.some(
+          (e) => e.estadoAcademico === 'ACTIVO' && e.idAnoActual === a.idAno
+        )
+      );
+
+    if (higherPendingYears.length > 0) {
+      const names = higherPendingYears.map((a) => a.nombreNivel).join(', ');
+      warnings.push(
+        `Orden inverso recomendado: ${names} aún tiene(n) estudiantes activos sin promover. Inicie siempre desde el último año hacia 1er Año para evitar promociones múltiples en cascada.`
+      );
+    }
+
+    const origenAlreadyPromoted = cyclePromotions.some(
+      (p) =>
+        p.anioOrigenId === origenAno.idAno && p.seccionOrigenId === origenSeccion.idSeccion
+    );
+    if (origenAlreadyPromoted) {
+      warnings.push(
+        `La sección de origen (${origenAno.nombreNivel} — Sección "${origenSeccion.nombreSeccion}") ya ejecutó una promoción durante el ciclo ${cicloActual}.`
+      );
+    }
+
+    const origenAlreadyReceived = cyclePromotions.some(
+      (p) =>
+        p.anioDestinoId === origenAno.idAno &&
+        (p.seccionDestinoId === origenSeccion.idSeccion || p.seccionDestinoId == null)
+    );
+    if (origenAlreadyReceived) {
+      warnings.push(
+        `Riesgo de doble promoción en cascada: ${origenAno.nombreNivel} — Sección "${origenSeccion.nombreSeccion}" ya recibió alumnos promovidos en este mismo ciclo (${cicloActual}).`
+      );
+    }
+
+    if (!isEgreso && destinoAno && destinoSeccion) {
+      if (destinoAno.idAno < origenAno.idAno) {
+        warnings.push(
+          `El año de destino (${destinoAno.nombreNivel}) es inferior al año de origen (${origenAno.nombreNivel}).`
+        );
+      }
+
+      const destAlreadyReceived = cyclePromotions.some(
+        (p) =>
+          p.anioDestinoId === destinoAno!.idAno &&
+          p.seccionDestinoId === destinoSeccion!.idSeccion
+      );
+      if (destAlreadyReceived) {
+        warnings.push(
+          `La sección de destino (${destinoAno.nombreNivel} — Sección "${destinoSeccion.nombreSeccion}") ya recibió alumnos promovidos en este ciclo (${cicloActual}).`
+        );
+      }
+
+      const destActiveCount = db.estudiantes.filter(
+        (e) =>
+          e.estadoAcademico === 'ACTIVO' &&
+          e.idAnoActual === destinoAno!.idAno &&
+          e.idSeccion === destinoSeccion!.idSeccion
+      ).length;
+      if (destActiveCount > 0) {
+        warnings.push(
+          `La sección de destino (${destinoAno.nombreNivel} — Sección "${destinoSeccion.nombreSeccion}") aún contiene ${destActiveCount} estudiante(s) activo(s) sin promover.`
+        );
+      }
+    }
+
+    if (warnings.length > 0 && !payload.confirmarDoble) {
+      throw new PromotionConfirmationError(warnings);
+    }
+
     const uniqueIds = Array.from(new Set(payload.estudiantesIds.map((id) => Number(id))));
     const idSet = new Set(uniqueIds);
 
-    // Validación atómica previa: todos los estudiantes seleccionados deben pertenecer al origen y estar activos
+    // Validación atómica previa: todos los estudiantes seleccionados deben pertenecer estrictamente a la sección de origen y estar activos
     const indicesToUpdate: number[] = [];
     for (let i = 0; i < db.estudiantes.length; i++) {
       const est = db.estudiantes[i];
       if (!idSet.has(est.idEstudiante)) continue;
-      if (est.estadoAcademico === 'EGRESADO' || est.estadoAcademico === 'RETIRADO' || est.idAnoActual !== origenAno.idAno) {
+      if (
+        est.estadoAcademico === 'EGRESADO' ||
+        est.estadoAcademico === 'RETIRADO' ||
+        est.idAnoActual !== origenAno.idAno
+      ) {
         throw new Error(
           `El estudiante ${est.apellidos}, ${est.nombres} no pertenece al año escolar de origen seleccionado.`
         );
       }
-      if (origenSeccion && est.idSeccion !== origenSeccion.idSeccion) {
+      if (est.idSeccion !== origenSeccion.idSeccion) {
         throw new Error(
           `El estudiante ${est.apellidos}, ${est.nombres} no pertenece a la sección de origen "${origenSeccion.nombreSeccion}".`
         );
@@ -2250,9 +2433,13 @@ export async function promoverEstudiantesMasivo(
       estadoDestino: isEgreso ? 'EGRESADO' : 'ACTIVO',
       destinoLabel,
       estudiantesPromovidos: promotedIds,
+      cicloLectivo: cicloActual,
+      anioOrigenNombre: origenAno.nombreNivel,
+      seccionOrigenNombre: origenSeccion.nombreSeccion,
+      advertenciasAplicadas: warnings,
       message: isEgreso
-        ? `${promotedIds.length} estudiante(s) promovido(s) a estado EGRESADO preservando su historial académico.`
-        : `${promotedIds.length} estudiante(s) promovido(s) exitosamente a ${destinoLabel}.`,
+        ? `${promotedIds.length} estudiante(s) de ${origenAno.nombreNivel} Sección "${origenSeccion.nombreSeccion}" promovido(s) a estado EGRESADO preservando su historial académico.`
+        : `${promotedIds.length} estudiante(s) de ${origenAno.nombreNivel} Sección "${origenSeccion.nombreSeccion}" promovido(s) exitosamente a ${destinoLabel}.`,
     };
   });
 }

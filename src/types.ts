@@ -215,10 +215,11 @@ export interface VerificarDiaNoLaborableResult {
 
 export interface PromocionMasivaPayload {
   anioOrigenId: number;
-  seccionOrigenId?: number | null;
+  seccionOrigenId: number;
   anioDestinoId: number | 'EGRESADO';
   seccionDestinoId?: number | null;
   estudiantesIds: number[];
+  confirmarDoble?: boolean;
 }
 
 export interface PromocionMasivaResult {
@@ -227,7 +228,35 @@ export interface PromocionMasivaResult {
   estadoDestino: EstadoAcademicoEstudiante;
   destinoLabel: string;
   estudiantesPromovidos: number[];
+  cicloLectivo: string;
+  anioOrigenNombre: string;
+  seccionOrigenNombre: string;
+  advertenciasAplicadas?: string[];
   message: string;
+}
+
+export interface PromocionCicloAuditItem {
+  idLog: number;
+  fecha: string;
+  cicloLectivo: string;
+  anioOrigenId: number;
+  anioOrigenNombre: string;
+  seccionOrigenId: number | null;
+  seccionOrigenNombre: string | null;
+  anioDestinoId: number | 'EGRESADO';
+  seccionDestinoId: number | null;
+  destinoLabel: string;
+  promovidosCount: number;
+  usuario: string;
+  confirmarDoble?: boolean;
+}
+
+export interface EstadoPromocionesCicloResponse {
+  cicloActual: string;
+  promociones: PromocionCicloAuditItem[];
+  origenesPromovidosKeys: string[];
+  destinosConPromocionesAnos: number[];
+  destinosConPromocionesKeys: string[];
 }
 
 export interface RegistroAsistencia {

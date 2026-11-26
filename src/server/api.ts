@@ -1613,6 +1613,19 @@ apiRouter.delete(
   }
 );
 
+apiRouter.get(
+  '/estudiantes/promover/estado',
+  requireAuth,
+  requireRole('director', 'coordinador'),
+  async (_req: Request, res: Response) => {
+    try {
+      res.json(await db.getEstadoPromocionesCiclo());
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  }
+);
+
 apiRouter.post(
   '/estudiantes/promover',
   requireAuth,
@@ -1627,18 +1640,32 @@ apiRouter.post(
         entidad: 'estudiantes',
         idEntidad: String(req.body.anioDestinoId),
         detalles: {
+          cicloLectivo: result.cicloLectivo,
+          fechaPromocion: new Date().toISOString(),
           anioOrigenId: req.body.anioOrigenId,
-          seccionOrigenId: req.body.seccionOrigenId ?? null,
+          anioOrigenNombre: result.anioOrigenNombre,
+          seccionOrigenId: req.body.seccionOrigenId,
+          seccionOrigenNombre: result.seccionOrigenNombre,
           anioDestinoId: req.body.anioDestinoId,
           seccionDestinoId: req.body.seccionDestinoId ?? null,
           promovidosCount: result.promovidosCount,
           estadoDestino: result.estadoDestino,
           destinoLabel: result.destinoLabel,
+          confirmarDoble: Boolean(req.body.confirmarDoble),
+          advertenciasAplicadas: result.advertenciasAplicadas || [],
           estudiantesIds: result.estudiantesPromovidos,
         },
       });
       res.json(result);
     } catch (e: any) {
+      if (e?.code === 'PROMOTION_DOUBLE_CONFIRM_REQUIRED' || e?.statusCode === 409) {
+        res.status(409).json({
+          error: e.message,
+          code: e.code || 'PROMOTION_DOUBLE_CONFIRM_REQUIRED',
+          warnings: Array.isArray(e.warnings) ? e.warnings : [e.message],
+        });
+        return;
+      }
       res.status(400).json({ error: e.message });
     }
   }

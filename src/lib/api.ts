@@ -28,6 +28,7 @@ import type {
   VerificarDiaNoLaborableResult,
   PromocionMasivaPayload,
   PromocionMasivaResult,
+  EstadoPromocionesCicloResponse,
   NotificacionRepresentante,
   ResumenAsistenciaConsolidado,
   CierreAnioEscolarRequest,
@@ -107,9 +108,13 @@ async function apiFetch<T>(
     const err = new Error(data?.error || data?.mensaje || `Error HTTP ${res.status}`) as Error & {
       status?: number;
       code?: string;
+      warnings?: string[];
     };
     err.status = res.status;
     err.code = data?.code;
+    if (Array.isArray(data?.warnings)) {
+      err.warnings = data.warnings;
+    }
     throw err;
   }
 
@@ -919,6 +924,10 @@ export async function triggerMilestonePush(data: {
 // -------------------------------------------------------------
 // 9. PROMOCIÓN MASIVA DE ESTUDIANTES
 // -------------------------------------------------------------
+export async function fetchEstadoPromocionesCiclo(): Promise<EstadoPromocionesCicloResponse> {
+  return apiFetch('/estudiantes/promover/estado');
+}
+
 export async function promoverEstudiantes(
   payload: PromocionMasivaPayload
 ): Promise<PromocionMasivaResult> {

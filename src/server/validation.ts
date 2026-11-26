@@ -533,10 +533,10 @@ export const auditLogsQuerySchema = z
 export const promoverEstudiantesSchema = z
   .object({
     anioOrigenId: z.coerce.number().int().positive('Debe seleccionar el año escolar de origen.'),
-    seccionOrigenId: z.preprocess(
-      (v) => (v === '' || v === null || v === undefined || Number(v) === 0 ? null : Number(v)),
-      z.number().int().positive().nullable().optional()
-    ),
+    seccionOrigenId: z.coerce
+      .number()
+      .int()
+      .positive('Debe seleccionar estrictamente una única sección de origen (no se permite promover múltiples secciones a la vez).'),
     anioDestinoId: z.union([
       z.literal('EGRESADO'),
       z.coerce.number().int().positive('Debe seleccionar un año destino válido o EGRESADO.'),
@@ -548,6 +548,7 @@ export const promoverEstudiantesSchema = z
     estudiantesIds: z
       .array(z.coerce.number().int().positive('ID de estudiante inválido.'))
       .min(1, 'Debe seleccionar al menos un estudiante para ejecutar la promoción.'),
+    confirmarDoble: z.boolean().optional(),
   })
   .refine(
     (data) => {
@@ -563,7 +564,6 @@ export const promoverEstudiantesSchema = z
     (data) => {
       if (data.anioDestinoId === 'EGRESADO') return true;
       if (data.anioOrigenId !== data.anioDestinoId) return true;
-      if (!data.seccionOrigenId) return true;
       return data.seccionOrigenId !== data.seccionDestinoId;
     },
     {
