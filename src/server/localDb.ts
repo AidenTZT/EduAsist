@@ -10,6 +10,7 @@ import type {
   Seccion,
   Materia,
   DocenteMateria,
+  SuplenciaDocente,
   Representante,
   Estudiante,
   Usuario,
@@ -55,14 +56,20 @@ import type {
 // ---------------------------------------------------------------------------
 // Persistencia Atómica en Archivo JSON Local (Server-Side Repository)
 // ---------------------------------------------------------------------------
-const DB_DIR = path.resolve(process.cwd(), 'data');
+const DB_DIR = path.resolve(
+  process.env.EDUASIST_DATA_DIR?.trim() || path.resolve(process.cwd(), 'data')
+);
 const BACKUPS_DIR = path.join(DB_DIR, 'backups');
 const DB_FILE = path.join(DB_DIR, 'eduasist-db.json');
 const LEGACY_DB_FILE = path.join(DB_DIR, 'educontrol-db.json');
 const SEED_BACKUP_FILE = path.resolve(
   process.cwd(),
-  'public/assets/aistudio/backup_educontrol_2026-11-07_1794081780485_32e75f23.json'
+  'src/server/seeds/backup_educontrol_2026-11-07_1794081780485_32e75f23.json'
 );
+
+export function getDataDir(): string {
+  return DB_DIR;
+}
 
 export interface StoredUser extends Usuario {
   passwordHash: string;
@@ -93,6 +100,7 @@ export interface DatabaseState {
   secciones: Seccion[];
   materias: Materia[];
   docenteMaterias: DocenteMateria[];
+  suplenciasDocentes: SuplenciaDocente[];
   representantes: StoredRepresentante[];
   estudiantes: Estudiante[];
   asistencia: RegistroAsistencia[];
@@ -108,6 +116,7 @@ export interface DatabaseState {
 }
 
 let cachedDb: DatabaseState | null = null;
+let cachedDbMtimeMs: number | null = null;
 let initPromise: Promise<DatabaseState> | null = null;
 let writeQueue: Promise<unknown> = Promise.resolve();
 
@@ -146,12 +155,33 @@ function nextNumericId<T>(items: T[], getId: (item: T) => number): number {
   return maxId + 1;
 }
 
+function normalizeAnosAsignados(raw: unknown): number[] {
+  if (!Array.isArray(raw)) return [];
+  const unique = new Set<number>();
+  for (const item of raw) {
+    const n = Number(item);
+    if (Number.isInteger(n) && n > 0) unique.add(n);
+  }
+  return Array.from(unique).sort((a, b) => a - b);
+}
+
+export function isSuplenciaVigente(s: SuplenciaDocente, fechaYmd?: string): boolean {
+  if (s.activo === false) return false;
+  const targetDate = fechaYmd || getLocalTodayDateString();
+  if (s.fechaInicio && targetDate < s.fechaInicio) return false;
+  if (s.fechaFin && targetDate > s.fechaFin) return false;
+  return true;
+}
+
 export function sanitizeUser(u: StoredUser): Usuario {
   const { passwordHash: _ignored, ...safe } = u;
   return {
     ...safe,
     usuario: safe.usuario ?? null,
     activo: typeof safe.activo === 'boolean' ? safe.activo : true,
+    ...(safe.rol === 'coordinador_seccional'
+      ? { anosAsignados: normalizeAnosAsignados(safe.anosAsignados) }
+      : { anosAsignados: undefined }),
   };
 }
 
@@ -203,6 +233,34 @@ async function normalizeAndEnsureIntegrity(raw: Partial<DatabaseState>): Promise
     secciones: Array.isArray(raw.secciones) ? raw.secciones : [],
     materias: Array.isArray(raw.materias) ? raw.materias : [],
     docenteMaterias: Array.isArray(raw.docenteMaterias) ? raw.docenteMaterias : [],
+    suplenciasDocentes: Array.isArray(raw.suplenciasDocentes)
+      ? raw.suplenciasDocentes.map((s, idx) => {
+          const idMateriaVal =
+            s.idMateria != null && Number(s.idMateria) > 0 ? Number(s.idMateria) : null;
+          const alcanceCompleto =
+            typeof s.alcanceCompleto === 'boolean'
+              ? s.alcanceCompleto
+              : idMateriaVal === null;
+          return {
+            idSuplencia: Number(s.idSuplencia) || idx + 1,
+            idSuplente: Number(s.idSuplente),
+            idDocenteTitular: Number(s.idDocenteTitular),
+            alcanceCompleto,
+            idDocenteMateria:
+              !alcanceCompleto && s.idDocenteMateria != null && Number(s.idDocenteMateria) > 0
+                ? Number(s.idDocenteMateria)
+                : null,
+            idMateria: alcanceCompleto ? null : idMateriaVal,
+            idAno: s.idAno != null && Number(s.idAno) > 0 ? Number(s.idAno) : null,
+            idSeccion: s.idSeccion != null && Number(s.idSeccion) > 0 ? Number(s.idSeccion) : null,
+            activo: typeof s.activo === 'boolean' ? s.activo : true,
+            fechaInicio: s.fechaInicio ? String(s.fechaInicio).trim() : null,
+            fechaFin: s.fechaFin ? String(s.fechaFin).trim() : null,
+            motivo: s.motivo ? String(s.motivo).trim() : null,
+            createdAt: s.createdAt || new Date().toISOString(),
+          };
+        })
+      : [],
     representantes: Array.isArray(raw.representantes) ? (raw.representantes as StoredRepresentante[]) : [],
     estudiantes: Array.isArray(raw.estudiantes)
       ? raw.estudiantes.map((e) => {
@@ -305,7 +363,7 @@ async function normalizeAndEnsureIntegrity(raw: Partial<DatabaseState>): Promise
       const plain =
         typeof rawHash === 'string' && rawHash.trim().length > 0
           ? rawHash.trim()
-          : u.rol === 'director' || u.rol === 'coordinador'
+          : u.rol === 'director' || u.rol === 'coordinador' || u.rol === 'coordinador_seccional'
           ? 'admin1234'
           : 'docente123';
       hash = await bcrypt.hash(plain, 10);
@@ -332,6 +390,9 @@ async function normalizeAndEnsureIntegrity(raw: Partial<DatabaseState>): Promise
       usuario: defaultUsuario,
       activo: typeof u.activo === 'boolean' ? u.activo : true,
       passwordHash: hash,
+      ...(u.rol === 'coordinador_seccional'
+        ? { anosAsignados: normalizeAnosAsignados(u.anosAsignados) }
+        : { anosAsignados: undefined }),
     };
   }
 
@@ -502,31 +563,144 @@ async function persistDbAtomic(state: DatabaseState): Promise<void> {
   await fs.promises.mkdir(DB_DIR, { recursive: true });
   const tmpFile = path.join(DB_DIR, `eduasist-db.${process.pid}.${Date.now()}.tmp`);
   // Formato compacto en disco para minimizar tamaño y tiempo de serialización en escrituras frecuentes
-  await fs.promises.writeFile(tmpFile, JSON.stringify(state), 'utf-8');
-  await fs.promises.rename(tmpFile, DB_FILE);
+  const serialized = JSON.stringify(state);
+  let fh: fs.promises.FileHandle | null = null;
+  try {
+    fh = await fs.promises.open(tmpFile, 'w');
+    await fh.writeFile(serialized, 'utf-8');
+    await fh.sync();
+    await fh.close();
+    fh = null;
+    await fs.promises.rename(tmpFile, DB_FILE);
+    try {
+      const stat = await fs.promises.stat(DB_FILE);
+      cachedDbMtimeMs = stat.mtimeMs;
+    } catch {
+      cachedDbMtimeMs = null;
+    }
+  } catch (err) {
+    if (fh) {
+      await fh.close().catch(() => {});
+    }
+    await fs.promises.unlink(tmpFile).catch(() => {});
+    throw err;
+  }
+}
+
+async function tryRecoverFullBackupFromDisk(): Promise<Partial<DatabaseState> | null> {
+  const candidateDirs = [BACKUPS_DIR, DB_DIR];
+  const candidates: Array<{ filePath: string; mtimeMs: number }> = [];
+
+  for (const dir of candidateDirs) {
+    try {
+      if (!fs.existsSync(dir)) continue;
+      const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+        if (
+          entry.name === path.basename(DB_FILE) ||
+          entry.name.includes('.corrupt.') ||
+          entry.name.startsWith('cierre-')
+        ) {
+          continue;
+        }
+        const filePath = path.join(dir, entry.name);
+        const stat = await fs.promises.stat(filePath).catch(() => null);
+        if (stat) {
+          candidates.push({ filePath, mtimeMs: stat.mtimeMs });
+        }
+      }
+    } catch {
+      // Continuar con siguiente directorio candidato
+    }
+  }
+
+  candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  for (const candidate of candidates) {
+    try {
+      const raw = await fs.promises.readFile(candidate.filePath, 'utf-8');
+      const parsed = JSON.parse(raw);
+      const dataObj = parsed?.data && typeof parsed.data === 'object' ? parsed.data : parsed;
+      if (dataObj && Array.isArray(dataObj.users) && Array.isArray(dataObj.estudiantes)) {
+        console.warn(`[LocalDB] Recuperando base de datos desde respaldo válido: ${candidate.filePath}`);
+        return dataObj as Partial<DatabaseState>;
+      }
+    } catch {
+      // Ignorar candidato inválido
+    }
+  }
+  return null;
 }
 
 async function loadOrInitializeDb(): Promise<DatabaseState> {
-  if (cachedDb) return cachedDb;
+  if (cachedDb && !initPromise) {
+    const currentCached = cachedDb;
+    try {
+      const stat = await fs.promises.stat(DB_FILE);
+      if (cachedDbMtimeMs !== null && stat.mtimeMs === cachedDbMtimeMs) {
+        return currentCached;
+      }
+      // Recargar si el archivo fue modificado externamente en disco
+      cachedDb = null;
+    } catch (err: any) {
+      if (err?.code === 'ENOENT') {
+        cachedDb = null;
+      } else {
+        return currentCached;
+      }
+    }
+  }
   if (initPromise) return initPromise;
 
   initPromise = (async () => {
-    try {
-      if (fs.existsSync(DB_FILE)) {
+    let corruptQuarantined = false;
+
+    if (fs.existsSync(DB_FILE)) {
+      try {
+        const stat = await fs.promises.stat(DB_FILE);
         const rawText = await fs.promises.readFile(DB_FILE, 'utf-8');
         const parsed = JSON.parse(rawText) as Partial<DatabaseState>;
         cachedDb = await normalizeAndEnsureIntegrity(parsed);
+        cachedDbMtimeMs = stat.mtimeMs;
+        return cachedDb;
+      } catch (err) {
+        console.error('[LocalDB] ERROR CRÍTICO leyendo/normalizando DB_FILE existente:', err);
+        const quarantinePath = path.join(DB_DIR, `eduasist-db.corrupt.${Date.now()}.json`);
+        try {
+          await fs.promises.rename(DB_FILE, quarantinePath);
+          corruptQuarantined = true;
+          console.error(`[LocalDB] Archivo dañado puesto en cuarentena en: ${quarantinePath}`);
+        } catch (quarantineErr) {
+          try {
+            await fs.promises.copyFile(DB_FILE, quarantinePath);
+            corruptQuarantined = true;
+            console.error(`[LocalDB] Copia de respaldo del archivo dañado guardada en: ${quarantinePath}`);
+          } catch (copyErr) {
+            console.error('[LocalDB] No se pudo respaldar el archivo dañado antes de recuperar:', quarantineErr, copyErr);
+          }
+        }
+      }
+    }
+
+    if (corruptQuarantined) {
+      const recovered = await tryRecoverFullBackupFromDisk();
+      if (recovered) {
+        cachedDb = await normalizeAndEnsureIntegrity(recovered);
+        await persistDbAtomic(cachedDb);
         return cachedDb;
       }
-      if (fs.existsSync(LEGACY_DB_FILE)) {
+    }
+
+    if (fs.existsSync(LEGACY_DB_FILE)) {
+      try {
         const legacyText = await fs.promises.readFile(LEGACY_DB_FILE, 'utf-8');
         const parsed = JSON.parse(legacyText) as Partial<DatabaseState>;
         cachedDb = await normalizeAndEnsureIntegrity(parsed);
         await persistDbAtomic(cachedDb);
         return cachedDb;
+      } catch (err) {
+        console.warn('[LocalDB] Archivo legado ilegible:', err);
       }
-    } catch (err) {
-      console.warn('[LocalDB] Archivo de base de datos ilegible, reconstruyendo desde semilla:', err);
     }
 
     let seedData: Partial<DatabaseState> = {};
@@ -557,9 +731,11 @@ async function loadOrInitializeDb(): Promise<DatabaseState> {
 
 async function withWriteLock<T>(fn: (db: DatabaseState) => Promise<T> | T): Promise<T> {
   const run = async () => {
-    const db = await loadOrInitializeDb();
-    const result = await fn(db);
-    await persistDbAtomic(db);
+    const currentDb = await loadOrInitializeDb();
+    const draftDb = structuredClone(currentDb);
+    const result = await fn(draftDb);
+    await persistDbAtomic(draftDb);
+    cachedDb = draftDb;
     return result;
   };
   const next = writeQueue.then(run, run);
@@ -770,11 +946,27 @@ export async function getUserByEmailOrCedula(emailOrCedula: string): Promise<Usu
   return found ? sanitizeUser(found) : null;
 }
 
-export async function getUsers(rol?: RolUsuario): Promise<Usuario[]> {
+export async function getUsers(
+  rol?: RolUsuario,
+  viewer?: { id: number; rol: RolUsuario }
+): Promise<Usuario[]> {
   const db = await readDb();
   let list = db.users.map(sanitizeUser);
   if (rol) {
     list = list.filter((u) => u.rol === rol);
+  }
+  if (viewer?.rol === 'docente' || viewer?.rol === 'docente_suplente') {
+    list = list.map((u) =>
+      u.id === viewer.id
+        ? u
+        : {
+            ...u,
+            email: '',
+            usuario: null,
+            cedula: null,
+            telefono: null,
+          }
+    );
   }
   return list.sort((a, b) => a.id - b.id);
 }
@@ -787,6 +979,7 @@ export async function createUser(data: {
   cedula?: string;
   telefono?: string;
   rol: RolUsuario;
+  anosAsignados?: number[];
   password?: string;
   activo?: boolean;
 }): Promise<Usuario> {
@@ -807,10 +1000,21 @@ export async function createUser(data: {
       throw new Error(`El nombre de usuario "${usuarioClean}" ya está en uso.`);
     }
 
+    const validAnosSet = new Set(db.anosEscolares.map((a) => a.idAno));
+    const anosAsignadosClean =
+      data.rol === 'coordinador_seccional'
+        ? normalizeAnosAsignados(data.anosAsignados).filter((idAno) => {
+            if (!validAnosSet.has(idAno)) {
+              throw new Error(`El año escolar #${idAno} asignado al coordinador seccional no existe.`);
+            }
+            return true;
+          })
+        : undefined;
+
     const plainPass =
       data.password && data.password.trim().length > 0
         ? data.password.trim()
-        : data.rol === 'director' || data.rol === 'coordinador'
+        : data.rol === 'director' || data.rol === 'coordinador' || data.rol === 'coordinador_seccional'
         ? 'admin1234'
         : 'docente123';
     const passwordHash = await bcrypt.hash(plainPass, 10);
@@ -826,6 +1030,7 @@ export async function createUser(data: {
       telefono: data.telefono?.trim() || null,
       rol: data.rol,
       activo: typeof data.activo === 'boolean' ? data.activo : true,
+      ...(anosAsignadosClean !== undefined ? { anosAsignados: anosAsignadosClean } : {}),
       passwordHash,
       createdAt: new Date().toISOString(),
     };
@@ -845,6 +1050,7 @@ export async function updateUser(
     cedula?: string | null;
     telefono?: string | null;
     rol?: RolUsuario;
+    anosAsignados?: number[];
     password?: string;
     activo?: boolean;
   }
@@ -901,6 +1107,22 @@ export async function updateUser(
       nextHash = await bcrypt.hash(data.password.trim(), 10);
     }
 
+    const nextRol = data.rol || target.rol;
+    const validAnosSet = new Set(db.anosEscolares.map((a) => a.idAno));
+    let nextAnosAsignados: number[] | undefined;
+    if (nextRol === 'coordinador_seccional') {
+      const candidate =
+        data.anosAsignados !== undefined ? data.anosAsignados : target.anosAsignados || [];
+      nextAnosAsignados = normalizeAnosAsignados(candidate).filter((idAno) => {
+        if (!validAnosSet.has(idAno)) {
+          throw new Error(`El año escolar #${idAno} asignado al coordinador seccional no existe.`);
+        }
+        return true;
+      });
+    } else {
+      nextAnosAsignados = undefined;
+    }
+
     const updated: StoredUser = {
       ...target,
       usuario: nextUsuario,
@@ -909,10 +1131,28 @@ export async function updateUser(
       apellidos: data.apellidos ? data.apellidos.trim() : target.apellidos,
       cedula: data.cedula !== undefined ? (data.cedula?.trim() || null) : target.cedula,
       telefono: data.telefono !== undefined ? (data.telefono?.trim() || null) : target.telefono,
-      rol: data.rol || target.rol,
+      rol: nextRol,
       activo: data.activo !== undefined ? Boolean(data.activo) : target.activo,
+      anosAsignados: nextAnosAsignados,
       passwordHash: nextHash,
     };
+
+    if (target.rol === 'docente' && nextRol !== 'docente') {
+      const removedAsignacionIds = new Set(
+        db.docenteMaterias
+          .filter((dm) => dm.idUsuario === target.id)
+          .map((dm) => dm.idAsignacion)
+      );
+      db.docenteMaterias = db.docenteMaterias.filter((dm) => dm.idUsuario !== target.id);
+      db.suplenciasDocentes = db.suplenciasDocentes.filter(
+        (s) =>
+          s.idDocenteTitular !== target.id &&
+          !(s.idDocenteMateria != null && removedAsignacionIds.has(s.idDocenteMateria))
+      );
+    }
+    if (target.rol === 'docente_suplente' && nextRol !== 'docente_suplente') {
+      db.suplenciasDocentes = db.suplenciasDocentes.filter((s) => s.idSuplente !== target.id);
+    }
 
     db.users[idx] = updated;
     return sanitizeUser(updated);
@@ -942,6 +1182,9 @@ export async function deleteUser(id: number): Promise<void> {
 
     db.users.splice(idx, 1);
     db.docenteMaterias = db.docenteMaterias.filter((dm) => dm.idUsuario !== Number(id));
+    db.suplenciasDocentes = db.suplenciasDocentes.filter(
+      (s) => s.idSuplente !== Number(id) && s.idDocenteTitular !== Number(id)
+    );
   });
 }
 
@@ -1614,9 +1857,14 @@ export async function deleteDiaNoLaborable(id: number): Promise<DiaNoLaborable> 
 // ---------------------------------------------------------------------------
 // 3. AÑOS ESCOLARES, SECCIONES, MATERIAS & ASIGNACIONES
 // ---------------------------------------------------------------------------
-export async function getAnosEscolares(): Promise<AnoEscolar[]> {
+export async function getAnosEscolares(allowedAnos?: number[]): Promise<AnoEscolar[]> {
   const db = await readDb();
-  return [...db.anosEscolares].sort((a, b) => a.idAno - b.idAno);
+  let list = [...db.anosEscolares];
+  if (allowedAnos !== undefined) {
+    const allowedSet = new Set(allowedAnos.map(Number));
+    list = list.filter((a) => allowedSet.has(a.idAno));
+  }
+  return list.sort((a, b) => a.idAno - b.idAno);
 }
 
 export async function createAnoEscolar(nombreNivel: string, activo: boolean = true): Promise<AnoEscolar> {
@@ -1650,13 +1898,42 @@ export async function updateAnoEscolar(
 
 export async function deleteAnoEscolar(idAno: number): Promise<void> {
   return withWriteLock((db) => {
-    db.anosEscolares = db.anosEscolares.filter((a) => a.idAno !== Number(idAno));
-    db.secciones = db.secciones.filter((s) => s.idAno !== Number(idAno));
-    db.materias = db.materias.filter((m) => m.idAno !== Number(idAno));
+    const targetId = Number(idAno);
+    const linkedStudents = db.estudiantes.filter((e) => e.idAnoActual === targetId).length;
+    if (linkedStudents > 0) {
+      throw new Error(
+        `No se puede eliminar el año escolar porque tiene ${linkedStudents} estudiante(s) activo(s) vinculado(s). Promueva o reubique a los estudiantes primero.`
+      );
+    }
+    const removedMateriaIds = new Set(
+      db.materias.filter((m) => m.idAno === targetId).map((m) => m.idMateria)
+    );
+    const linkedAsistencias = db.asistencia.filter((a) =>
+      removedMateriaIds.has(a.idMateria)
+    ).length;
+    if (linkedAsistencias > 0) {
+      throw new Error(
+        `No se puede eliminar el año escolar porque existen ${linkedAsistencias} registro(s) de asistencia vinculados a sus materias. Ejecute el Cierre de Año Escolar antes de eliminarlo.`
+      );
+    }
+
+    db.anosEscolares = db.anosEscolares.filter((a) => a.idAno !== targetId);
+    db.secciones = db.secciones.filter((s) => s.idAno !== targetId);
+    db.materias = db.materias.filter((m) => m.idAno !== targetId);
+    db.docenteMaterias = db.docenteMaterias.filter((dm) => !removedMateriaIds.has(dm.idMateria));
+    db.horarios = db.horarios.filter((h) => h.idAno !== targetId);
+    db.suplenciasDocentes = db.suplenciasDocentes.filter(
+      (s) => s.idAno !== targetId && !(s.idMateria != null && removedMateriaIds.has(s.idMateria))
+    );
+    for (const u of db.users) {
+      if (u.rol === 'coordinador_seccional' && Array.isArray(u.anosAsignados)) {
+        u.anosAsignados = u.anosAsignados.filter((id) => id !== targetId);
+      }
+    }
   });
 }
 
-export async function getSecciones(idAno?: number): Promise<Seccion[]> {
+export async function getSecciones(idAno?: number, allowedAnos?: number[]): Promise<Seccion[]> {
   const db = await readDb();
   const anoMap = new Map(db.anosEscolares.map((a) => [a.idAno, a.nombreNivel]));
   let list = db.secciones.map((s) => ({
@@ -1664,8 +1941,17 @@ export async function getSecciones(idAno?: number): Promise<Seccion[]> {
     nombreNivel: anoMap.get(s.idAno),
     totalEstudiantes: db.estudiantes.filter((e) => e.idSeccion === s.idSeccion).length,
   }));
+  if (allowedAnos !== undefined) {
+    const allowedSet = new Set(allowedAnos.map(Number));
+    list = list.filter((s) => allowedSet.has(s.idAno));
+  }
   if (idAno) list = list.filter((s) => s.idAno === Number(idAno));
   return list.sort((a, b) => a.idAno - b.idAno || a.nombreSeccion.localeCompare(b.nombreSeccion));
+}
+
+export async function getSeccionById(idSeccion: number): Promise<Seccion | null> {
+  const db = await readDb();
+  return db.secciones.find((s) => s.idSeccion === Number(idSeccion)) || null;
 }
 
 export async function createSeccion(idAno: number, nombreSeccion: string): Promise<Seccion> {
@@ -1699,11 +1985,24 @@ export async function updateSeccion(
 
 export async function deleteSeccion(idSeccion: number): Promise<void> {
   return withWriteLock((db) => {
-    db.secciones = db.secciones.filter((s) => s.idSeccion !== Number(idSeccion));
+    const targetId = Number(idSeccion);
+    const linkedStudents = db.estudiantes.filter((e) => e.idSeccion === targetId).length;
+    if (linkedStudents > 0) {
+      throw new Error(
+        `No se puede eliminar la sección porque tiene ${linkedStudents} estudiante(s) asignado(s). Reasigne los estudiantes a otra sección primero.`
+      );
+    }
+    db.secciones = db.secciones.filter((s) => s.idSeccion !== targetId);
+    db.horarios = db.horarios.filter((h) => h.idSeccion !== targetId);
+    db.suplenciasDocentes = db.suplenciasDocentes.filter((s) => s.idSeccion !== targetId);
   });
 }
 
-export async function getMaterias(idAno?: number): Promise<Materia[]> {
+export async function getMaterias(
+  idAno?: number,
+  includeTeacherEmail: boolean = true,
+  allowedAnos?: number[]
+): Promise<Materia[]> {
   const db = await readDb();
   const anoMap = new Map(db.anosEscolares.map((a) => [a.idAno, a.nombreNivel]));
   const userMap = new Map(db.users.map((u) => [u.id, u]));
@@ -1719,14 +2018,23 @@ export async function getMaterias(idAno?: number): Promise<Materia[]> {
             idUsuario: teacher.id,
             nombre: teacher.nombre,
             apellidos: teacher.apellidos,
-            email: teacher.email,
+            email: includeTeacherEmail ? teacher.email : '',
           }
         : null,
     };
   });
 
+  if (allowedAnos !== undefined) {
+    const allowedSet = new Set(allowedAnos.map(Number));
+    list = list.filter((m) => allowedSet.has(m.idAno));
+  }
   if (idAno) list = list.filter((m) => m.idAno === Number(idAno));
   return list.sort((a, b) => a.idAno - b.idAno || a.nombreMateria.localeCompare(b.nombreMateria));
+}
+
+export async function getMateriaById(idMateria: number): Promise<Materia | null> {
+  const db = await readDb();
+  return db.materias.find((m) => m.idMateria === Number(idMateria)) || null;
 }
 
 export async function createMateria(idAno: number, nombreMateria: string): Promise<Materia> {
@@ -1760,15 +2068,24 @@ export async function updateMateria(
 
 export async function deleteMateria(idMateria: number): Promise<void> {
   return withWriteLock((db) => {
-    db.materias = db.materias.filter((m) => m.idMateria !== Number(idMateria));
-    db.docenteMaterias = db.docenteMaterias.filter((dm) => dm.idMateria !== Number(idMateria));
-    db.horarios = db.horarios.filter((h) => h.idMateria !== Number(idMateria));
+    const targetId = Number(idMateria);
+    const linkedAsistencias = db.asistencia.filter((a) => a.idMateria === targetId).length;
+    if (linkedAsistencias > 0) {
+      throw new Error(
+        `No se puede eliminar la materia porque posee ${linkedAsistencias} registro(s) de asistencia históricos. Renómbrela o ejecute el Cierre de Año Escolar antes de eliminarla.`
+      );
+    }
+    db.materias = db.materias.filter((m) => m.idMateria !== targetId);
+    db.docenteMaterias = db.docenteMaterias.filter((dm) => dm.idMateria !== targetId);
+    db.horarios = db.horarios.filter((h) => h.idMateria !== targetId);
+    db.suplenciasDocentes = db.suplenciasDocentes.filter((s) => s.idMateria !== targetId);
   });
 }
 
 export async function getDocenteMaterias(
   idUsuario?: number,
-  idMateria?: number
+  idMateria?: number,
+  allowedAnos?: number[]
 ): Promise<DocenteMateria[]> {
   const db = await readDb();
   const userMap = new Map(db.users.map((u) => [u.id, u]));
@@ -1789,6 +2106,10 @@ export async function getDocenteMaterias(
     };
   });
 
+  if (allowedAnos !== undefined) {
+    const allowedSet = new Set(allowedAnos.map(Number));
+    list = list.filter((dm) => dm.idAno != null && allowedSet.has(dm.idAno));
+  }
   if (idUsuario) list = list.filter((dm) => dm.idUsuario === Number(idUsuario));
   if (idMateria) list = list.filter((dm) => dm.idMateria === Number(idMateria));
   return list;
@@ -1809,6 +2130,23 @@ export async function assignDocenteMateria(
   idMateria: number
 ): Promise<DocenteMateria> {
   return withWriteLock((db) => {
+    const user = db.users.find((u) => u.id === Number(idUsuario));
+    if (!user) {
+      throw new Error('El usuario seleccionado no existe.');
+    }
+    if (user.rol === 'docente_suplente') {
+      throw new Error(
+        'Un Docente Suplente no requiere ni admite asignaciones en Docente-Materia; gestione su alcance exclusivamente en el Panel de Suplencias.'
+      );
+    }
+    if (user.rol !== 'docente') {
+      throw new Error('Solo se pueden asignar materias de pensum a usuarios con rol Docente titular.');
+    }
+    const materia = db.materias.find((m) => m.idMateria === Number(idMateria));
+    if (!materia) {
+      throw new Error('La materia seleccionada no existe.');
+    }
+
     const existing = db.docenteMaterias.find(
       (dm) => dm.idUsuario === Number(idUsuario) && dm.idMateria === Number(idMateria)
     );
@@ -1828,18 +2166,42 @@ export async function assignDocenteMateriasBatch(
   idMaterias: number[]
 ): Promise<{ success: boolean; count: number; assignments: DocenteMateria[] }> {
   return withWriteLock((db) => {
+    const targetUserId = Number(idUsuario);
+    const user = db.users.find((u) => u.id === targetUserId);
+    if (!user) {
+      throw new Error('El usuario seleccionado no existe.');
+    }
+    if (user.rol === 'docente_suplente') {
+      throw new Error(
+        'Un Docente Suplente no requiere ni admite asignaciones en Docente-Materia; gestione su alcance exclusivamente en el Panel de Suplencias.'
+      );
+    }
+    if (user.rol !== 'docente') {
+      throw new Error('Solo se pueden asignar materias de pensum a usuarios con rol Docente titular.');
+    }
+
+    const uniqueMateriaIds = Array.from(
+      new Set(idMaterias.map(Number).filter((id) => Number.isInteger(id) && id > 0))
+    );
+    // Validar todas las materias antes de aplicar cualquier mutación
+    for (const idMat of uniqueMateriaIds) {
+      if (!db.materias.some((m) => m.idMateria === idMat)) {
+        throw new Error(`La materia ID ${idMat} no existe.`);
+      }
+    }
+
     const created: DocenteMateria[] = [];
-    for (const idMat of idMaterias) {
+    for (const idMat of uniqueMateriaIds) {
       const exists = db.docenteMaterias.find(
-        (dm) => dm.idUsuario === Number(idUsuario) && dm.idMateria === Number(idMat)
+        (dm) => dm.idUsuario === targetUserId && dm.idMateria === idMat
       );
       if (exists) {
         created.push(exists);
       } else {
         const entry: DocenteMateria = {
           idAsignacion: nextNumericId(db.docenteMaterias, (d) => d.idAsignacion),
-          idUsuario: Number(idUsuario),
-          idMateria: Number(idMat),
+          idUsuario: targetUserId,
+          idMateria: idMat,
         };
         db.docenteMaterias.push(entry);
         created.push(entry);
@@ -1849,20 +2211,639 @@ export async function assignDocenteMateriasBatch(
   });
 }
 
-export async function removeDocenteMateria(idAsignacion: number): Promise<void> {
+export async function replaceDocenteMaterias(
+  idUsuario: number,
+  idMaterias: number[],
+  allowedAnos?: number[]
+): Promise<{
+  success: boolean;
+  count: number;
+  addedCount: number;
+  removedCount: number;
+  assignments: DocenteMateria[];
+}> {
   return withWriteLock((db) => {
-    db.docenteMaterias = db.docenteMaterias.filter((dm) => dm.idAsignacion !== Number(idAsignacion));
+    const targetUserId = Number(idUsuario);
+    const user = db.users.find((u) => u.id === targetUserId);
+    if (!user) {
+      throw new Error('El usuario seleccionado no existe.');
+    }
+    if (user.rol === 'docente_suplente') {
+      throw new Error(
+        'Un Docente Suplente no requiere ni admite asignaciones en Docente-Materia; gestione su alcance exclusivamente en el Panel de Suplencias.'
+      );
+    }
+    if (user.rol !== 'docente') {
+      throw new Error('Solo se pueden asignar materias de pensum a usuarios con rol Docente titular.');
+    }
+
+    const matMap = new Map(db.materias.map((m) => [m.idMateria, m]));
+    const allowedSet = allowedAnos !== undefined ? new Set(allowedAnos.map(Number)) : null;
+
+    const uniqueMateriaIds = Array.from(
+      new Set(idMaterias.map(Number).filter((id) => Number.isInteger(id) && id > 0))
+    );
+    for (const idMat of uniqueMateriaIds) {
+      const mat = matMap.get(idMat);
+      if (!mat) {
+        throw new Error(`La materia ID ${idMat} no existe.`);
+      }
+      if (allowedSet && !allowedSet.has(mat.idAno)) {
+        throw new Error(
+          `Acceso denegado: la materia "${mat.nombreMateria}" está fuera de sus años escolares asignados.`
+        );
+      }
+    }
+
+    const targetSet = new Set(uniqueMateriaIds);
+    const toRemove = db.docenteMaterias.filter((dm) => {
+      if (dm.idUsuario !== targetUserId) return false;
+      if (allowedSet) {
+        const mat = matMap.get(dm.idMateria);
+        if (!mat || !allowedSet.has(mat.idAno)) return false;
+      }
+      return !targetSet.has(dm.idMateria);
+    });
+
+    const removedAsignacionIds = new Set(toRemove.map((dm) => dm.idAsignacion));
+    if (removedAsignacionIds.size > 0) {
+      db.docenteMaterias = db.docenteMaterias.filter(
+        (dm) => !removedAsignacionIds.has(dm.idAsignacion)
+      );
+      db.suplenciasDocentes = db.suplenciasDocentes.filter(
+        (s) => !(s.idDocenteMateria != null && removedAsignacionIds.has(s.idDocenteMateria))
+      );
+    }
+
+    const keptIds = new Set(
+      db.docenteMaterias
+        .filter((dm) => dm.idUsuario === targetUserId)
+        .map((dm) => dm.idMateria)
+    );
+
+    let addedCount = 0;
+    let nextId = nextNumericId(db.docenteMaterias, (d) => d.idAsignacion);
+    for (const idMat of uniqueMateriaIds) {
+      if (!keptIds.has(idMat)) {
+        db.docenteMaterias.push({
+          idAsignacion: nextId++,
+          idUsuario: targetUserId,
+          idMateria: idMat,
+        });
+        addedCount++;
+      }
+    }
+
+    const finalAssignments = db.docenteMaterias.filter((dm) => {
+      if (dm.idUsuario !== targetUserId) return false;
+      if (allowedSet) {
+        const mat = matMap.get(dm.idMateria);
+        return Boolean(mat && allowedSet.has(mat.idAno));
+      }
+      return true;
+    });
+
+    return {
+      success: true,
+      count: finalAssignments.length,
+      addedCount,
+      removedCount: toRemove.length,
+      assignments: finalAssignments,
+    };
+  });
+}
+
+export async function removeDocenteMateria(idAsignacion: number): Promise<DocenteMateria | null> {
+  return withWriteLock((db) => {
+    const idx = db.docenteMaterias.findIndex((dm) => dm.idAsignacion === Number(idAsignacion));
+    if (idx === -1) return null;
+    const [removed] = db.docenteMaterias.splice(idx, 1);
+    db.suplenciasDocentes = db.suplenciasDocentes.filter(
+      (s) => s.idDocenteMateria !== removed.idAsignacion
+    );
+    return removed;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 3B. SUPLENCIAS DOCENTES
+// ---------------------------------------------------------------------------
+export function resolveSuplenciaScopeInDb(
+  s: SuplenciaDocente,
+  db: DatabaseState
+): {
+  alcanceCompleto: boolean;
+  materiaIds: number[];
+  anoIds: number[];
+  materiasDetalle: Array<{
+    idMateria: number;
+    nombreMateria: string;
+    idAno: number;
+    nombreNivel?: string;
+  }>;
+} {
+  const matMap = new Map(db.materias.map((m) => [m.idMateria, m]));
+  const anoMap = new Map(db.anosEscolares.map((a) => [a.idAno, a.nombreNivel]));
+  const seccion = s.idSeccion ? db.secciones.find((sec) => sec.idSeccion === s.idSeccion) : undefined;
+  const isFullTitular = Boolean(s.alcanceCompleto || s.idMateria == null);
+
+  if (isFullTitular) {
+    const titularAssignments = db.docenteMaterias.filter(
+      (dm) => dm.idUsuario === s.idDocenteTitular
+    );
+    const seenMatIds = new Set<number>();
+    const materiasDetalle: Array<{
+      idMateria: number;
+      nombreMateria: string;
+      idAno: number;
+      nombreNivel?: string;
+    }> = [];
+
+    for (const dm of titularAssignments) {
+      if (seenMatIds.has(dm.idMateria)) continue;
+      const mat = matMap.get(dm.idMateria);
+      if (!mat) continue;
+      if (seccion && mat.idAno !== seccion.idAno) continue;
+      seenMatIds.add(mat.idMateria);
+      materiasDetalle.push({
+        idMateria: mat.idMateria,
+        nombreMateria: mat.nombreMateria,
+        idAno: mat.idAno,
+        nombreNivel: anoMap.get(mat.idAno),
+      });
+    }
+
+    const materiaIds = materiasDetalle.map((m) => m.idMateria);
+    const anoIds = Array.from(new Set(materiasDetalle.map((m) => m.idAno)));
+    return { alcanceCompleto: true, materiaIds, anoIds, materiasDetalle };
+  }
+
+  const mat = s.idMateria != null ? matMap.get(s.idMateria) : undefined;
+  const materiasDetalle = mat
+    ? [
+        {
+          idMateria: mat.idMateria,
+          nombreMateria: mat.nombreMateria,
+          idAno: mat.idAno,
+          nombreNivel: anoMap.get(mat.idAno),
+        },
+      ]
+    : [];
+  const materiaIds = s.idMateria != null ? [s.idMateria] : [];
+  const anoIds = mat ? [mat.idAno] : s.idAno != null ? [s.idAno] : [];
+  return { alcanceCompleto: false, materiaIds, anoIds, materiasDetalle };
+}
+
+function enrichSuplenciaInDb(
+  s: SuplenciaDocente,
+  db: DatabaseState,
+  includeEmails: boolean = true
+): SuplenciaDocente {
+  const suplente = db.users.find((u) => u.id === s.idSuplente);
+  const titular = db.users.find((u) => u.id === s.idDocenteTitular);
+  const seccion = s.idSeccion ? db.secciones.find((sec) => sec.idSeccion === s.idSeccion) : undefined;
+  const scope = resolveSuplenciaScopeInDb(s, db);
+
+  let nombreMateria: string | undefined;
+  let nombreNivel: string | undefined;
+  let resolvedIdAno = s.idAno ?? null;
+
+  if (scope.alcanceCompleto) {
+    nombreMateria =
+      scope.materiasDetalle.length > 0
+        ? `Todas las materias del titular (${scope.materiasDetalle.length})`
+        : 'Todas las materias del titular (sin carga asignada)';
+    if (seccion) {
+      const secAno = db.anosEscolares.find((a) => a.idAno === seccion.idAno);
+      nombreNivel = secAno?.nombreNivel;
+      resolvedIdAno = seccion.idAno;
+    } else if (scope.anoIds.length === 1) {
+      const ano = db.anosEscolares.find((a) => a.idAno === scope.anoIds[0]);
+      nombreNivel = ano?.nombreNivel;
+      resolvedIdAno = scope.anoIds[0];
+    } else if (scope.anoIds.length > 1) {
+      nombreNivel = `${scope.anoIds.length} años escolares`;
+      resolvedIdAno = null;
+    } else {
+      nombreNivel = 'Según carga del titular';
+      resolvedIdAno = null;
+    }
+  } else {
+    const materia = s.idMateria != null ? db.materias.find((m) => m.idMateria === s.idMateria) : undefined;
+    const anoId = materia?.idAno ?? s.idAno ?? null;
+    const ano = anoId != null ? db.anosEscolares.find((a) => a.idAno === anoId) : undefined;
+    nombreMateria = materia?.nombreMateria;
+    nombreNivel = ano?.nombreNivel;
+    resolvedIdAno = anoId;
+  }
+
+  return {
+    ...s,
+    alcanceCompleto: scope.alcanceCompleto,
+    idMateria: scope.alcanceCompleto ? null : s.idMateria ?? null,
+    idAno: resolvedIdAno,
+    suplenteNombre: suplente?.nombre,
+    suplenteApellidos: suplente?.apellidos,
+    suplenteEmail: includeEmails ? suplente?.email : '',
+    titularNombre: titular?.nombre,
+    titularApellidos: titular?.apellidos,
+    titularEmail: includeEmails ? titular?.email : '',
+    nombreMateria,
+    nombreNivel,
+    nombreSeccion: seccion?.nombreSeccion ?? null,
+    materiasTitularResumen: scope.materiasDetalle,
+  };
+}
+
+export async function getSuplenciasDocentes(filters?: {
+  idSuplente?: number;
+  idDocenteTitular?: number;
+  idMateria?: number;
+  idAno?: number;
+  allowedAnos?: number[];
+  soloVigentes?: boolean;
+  fecha?: string;
+  includeEmails?: boolean;
+}): Promise<SuplenciaDocente[]> {
+  const db = await readDb();
+  const includeEmails = filters?.includeEmails !== false;
+  let list = db.suplenciasDocentes;
+
+  if (filters?.allowedAnos !== undefined) {
+    const allowedSet = new Set(filters.allowedAnos.map(Number));
+    list = list.filter((s) => {
+      const scope = resolveSuplenciaScopeInDb(s, db);
+      return scope.anoIds.some((anoId) => allowedSet.has(anoId));
+    });
+  }
+  if (filters?.idSuplente) {
+    list = list.filter((s) => s.idSuplente === Number(filters.idSuplente));
+  }
+  if (filters?.idDocenteTitular) {
+    list = list.filter((s) => s.idDocenteTitular === Number(filters.idDocenteTitular));
+  }
+  if (filters?.idMateria) {
+    const targetMat = Number(filters.idMateria);
+    list = list.filter((s) => resolveSuplenciaScopeInDb(s, db).materiaIds.includes(targetMat));
+  }
+  if (filters?.idAno) {
+    const targetAno = Number(filters.idAno);
+    list = list.filter((s) => resolveSuplenciaScopeInDb(s, db).anoIds.includes(targetAno));
+  }
+  if (filters?.soloVigentes) {
+    list = list.filter((s) => isSuplenciaVigente(s, filters.fecha));
+  }
+
+  return list
+    .map((s) => enrichSuplenciaInDb(s, db, includeEmails))
+    .sort((a, b) => b.idSuplencia - a.idSuplencia);
+}
+
+export async function getSuplenciaById(idSuplencia: number): Promise<SuplenciaDocente | null> {
+  const db = await readDb();
+  const found = db.suplenciasDocentes.find((s) => s.idSuplencia === Number(idSuplencia));
+  return found ? enrichSuplenciaInDb(found, db, true) : null;
+}
+
+export async function getActiveSuplenciasForUser(
+  idSuplente: number,
+  fechaYmd?: string,
+  idMateria?: number
+): Promise<SuplenciaDocente[]> {
+  const db = await readDb();
+  const suplenteUser = db.users.find((u) => u.id === Number(idSuplente));
+  if (!suplenteUser || suplenteUser.activo === false || suplenteUser.rol !== 'docente_suplente') {
+    return [];
+  }
+  return db.suplenciasDocentes
+    .filter((s) => {
+      if (s.idSuplente !== Number(idSuplente) || !isSuplenciaVigente(s, fechaYmd)) {
+        return false;
+      }
+      if (idMateria !== undefined) {
+        const scope = resolveSuplenciaScopeInDb(s, db);
+        return scope.materiaIds.includes(Number(idMateria));
+      }
+      return true;
+    })
+    .map((s) => enrichSuplenciaInDb(s, db, false));
+}
+
+export async function createSuplenciaDocente(data: {
+  idSuplente: number;
+  idDocenteTitular: number;
+  alcanceCompleto?: boolean;
+  idDocenteMateria?: number | null;
+  idMateria?: number | null;
+  idSeccion?: number | null;
+  activo?: boolean;
+  fechaInicio?: string | null;
+  fechaFin?: string | null;
+  motivo?: string | null;
+}): Promise<SuplenciaDocente> {
+  return withWriteLock((db) => {
+    const suplente = db.users.find((u) => u.id === Number(data.idSuplente));
+    if (!suplente) throw new Error('Docente suplente no encontrado.');
+    if (suplente.rol !== 'docente_suplente') {
+      throw new Error('El usuario seleccionado debe tener rol "Docente Suplente".');
+    }
+    if (suplente.activo === false) {
+      throw new Error('El docente suplente seleccionado se encuentra inactivo.');
+    }
+
+    const titular = db.users.find((u) => u.id === Number(data.idDocenteTitular));
+    if (!titular) throw new Error('Docente titular no encontrado.');
+    if (titular.rol !== 'docente') {
+      throw new Error('El docente a sustituir debe tener rol "Docente" titular.');
+    }
+    if (titular.id === suplente.id) {
+      throw new Error('El docente suplente no puede ser el mismo usuario que el docente titular.');
+    }
+
+    const isFullTitular = Boolean(data.alcanceCompleto || data.idMateria == null);
+    let resolvedIdSeccion: number | null =
+      data.idSeccion != null && Number(data.idSeccion) > 0 ? Number(data.idSeccion) : null;
+    const seccionObj =
+      resolvedIdSeccion !== null
+        ? db.secciones.find((s) => s.idSeccion === resolvedIdSeccion)
+        : undefined;
+    if (resolvedIdSeccion !== null && !seccionObj) {
+      throw new Error('La sección seleccionada no existe.');
+    }
+
+    if (isFullTitular) {
+      const titularAssignments = db.docenteMaterias.filter((d) => d.idUsuario === titular.id);
+      if (titularAssignments.length === 0) {
+        throw new Error(
+          'El docente titular seleccionado no tiene materias asignadas aún. Asígnele al menos una materia o seleccione una materia específica.'
+        );
+      }
+      if (seccionObj) {
+        const hasMatInSecAno = titularAssignments.some((dm) => {
+          const m = db.materias.find((mat) => mat.idMateria === dm.idMateria);
+          return m?.idAno === seccionObj.idAno;
+        });
+        if (!hasMatInSecAno) {
+          throw new Error(
+            'El docente titular no tiene materias asignadas en el año escolar de la sección seleccionada.'
+          );
+        }
+      }
+
+      const duplicateFull = db.suplenciasDocentes.find(
+        (s) =>
+          s.activo &&
+          s.idSuplente === suplente.id &&
+          s.idDocenteTitular === titular.id &&
+          Boolean(s.alcanceCompleto || s.idMateria == null) &&
+          (s.idSeccion ?? null) === resolvedIdSeccion
+      );
+      if (duplicateFull && (data.activo ?? true)) {
+        throw new Error(
+          'Ya existe una suplencia activa que cubre todas las materias de este docente titular para la sección indicada.'
+        );
+      }
+
+      const created: SuplenciaDocente = {
+        idSuplencia: nextNumericId(db.suplenciasDocentes, (s) => s.idSuplencia),
+        idSuplente: suplente.id,
+        idDocenteTitular: titular.id,
+        idDocenteMateria: null,
+        alcanceCompleto: true,
+        idMateria: null,
+        idAno: seccionObj ? seccionObj.idAno : null,
+        idSeccion: resolvedIdSeccion,
+        activo: typeof data.activo === 'boolean' ? data.activo : true,
+        fechaInicio: data.fechaInicio ? data.fechaInicio.trim() : null,
+        fechaFin: data.fechaFin ? data.fechaFin.trim() : null,
+        motivo: data.motivo ? data.motivo.trim() : null,
+        createdAt: new Date().toISOString(),
+      };
+      db.suplenciasDocentes.push(created);
+      return enrichSuplenciaInDb(created, db, true);
+    }
+
+    const materia = db.materias.find((m) => m.idMateria === Number(data.idMateria));
+    if (!materia) throw new Error('La materia seleccionada no existe.');
+
+    let resolvedIdDocenteMateria: number | null =
+      data.idDocenteMateria != null ? Number(data.idDocenteMateria) : null;
+    if (resolvedIdDocenteMateria) {
+      const dm = db.docenteMaterias.find((d) => d.idAsignacion === resolvedIdDocenteMateria);
+      if (!dm || dm.idUsuario !== titular.id || dm.idMateria !== materia.idMateria) {
+        throw new Error('La asignación titular-materia indicada no coincide con el docente y materia.');
+      }
+    } else {
+      const matchedDm = db.docenteMaterias.find(
+        (d) => d.idUsuario === titular.id && d.idMateria === materia.idMateria
+      );
+      resolvedIdDocenteMateria = matchedDm ? matchedDm.idAsignacion : null;
+    }
+
+    if (seccionObj && seccionObj.idAno !== materia.idAno) {
+      throw new Error('La sección seleccionada no pertenece al año escolar de la materia.');
+    }
+
+    const duplicate = db.suplenciasDocentes.find(
+      (s) =>
+        s.activo &&
+        !s.alcanceCompleto &&
+        s.idSuplente === suplente.id &&
+        s.idMateria === materia.idMateria &&
+        (s.idSeccion ?? null) === resolvedIdSeccion
+    );
+    if (duplicate && (data.activo ?? true)) {
+      throw new Error(
+        'Ya existe una suplencia activa para este docente suplente en la misma materia y sección.'
+      );
+    }
+
+    const created: SuplenciaDocente = {
+      idSuplencia: nextNumericId(db.suplenciasDocentes, (s) => s.idSuplencia),
+      idSuplente: suplente.id,
+      idDocenteTitular: titular.id,
+      idDocenteMateria: resolvedIdDocenteMateria,
+      alcanceCompleto: false,
+      idMateria: materia.idMateria,
+      idAno: materia.idAno,
+      idSeccion: resolvedIdSeccion,
+      activo: typeof data.activo === 'boolean' ? data.activo : true,
+      fechaInicio: data.fechaInicio ? data.fechaInicio.trim() : null,
+      fechaFin: data.fechaFin ? data.fechaFin.trim() : null,
+      motivo: data.motivo ? data.motivo.trim() : null,
+      createdAt: new Date().toISOString(),
+    };
+
+    db.suplenciasDocentes.push(created);
+    return enrichSuplenciaInDb(created, db, true);
+  });
+}
+
+export async function updateSuplenciaDocente(
+  idSuplencia: number,
+  data: {
+    idDocenteTitular?: number;
+    alcanceCompleto?: boolean;
+    idDocenteMateria?: number | null;
+    idMateria?: number | null;
+    idSeccion?: number | null;
+    activo?: boolean;
+    fechaInicio?: string | null;
+    fechaFin?: string | null;
+    motivo?: string | null;
+  }
+): Promise<SuplenciaDocente> {
+  return withWriteLock((db) => {
+    const idx = db.suplenciasDocentes.findIndex((s) => s.idSuplencia === Number(idSuplencia));
+    if (idx === -1) throw new Error('Suplencia no encontrada.');
+    const curr = db.suplenciasDocentes[idx];
+
+    const nextTitularId = data.idDocenteTitular ?? curr.idDocenteTitular;
+    if (nextTitularId === curr.idSuplente) {
+      throw new Error('El docente suplente no puede ser el mismo usuario que el docente titular.');
+    }
+    const titular = db.users.find((u) => u.id === Number(nextTitularId));
+    if (!titular) throw new Error('Docente titular no encontrado.');
+    if (titular.rol !== 'docente') {
+      throw new Error('El docente a sustituir debe tener rol "Docente" titular.');
+    }
+
+    const nextSeccionId =
+      data.idSeccion !== undefined
+        ? data.idSeccion != null && Number(data.idSeccion) > 0
+          ? Number(data.idSeccion)
+          : null
+        : curr.idSeccion ?? null;
+
+    const seccionObj =
+      nextSeccionId !== null ? db.secciones.find((s) => s.idSeccion === nextSeccionId) : undefined;
+    if (nextSeccionId !== null && !seccionObj) {
+      throw new Error('La sección indicada no existe.');
+    }
+
+    const nextFechaInicio = data.fechaInicio !== undefined ? data.fechaInicio : curr.fechaInicio ?? null;
+    const nextFechaFin = data.fechaFin !== undefined ? data.fechaFin : curr.fechaFin ?? null;
+    if (nextFechaInicio && nextFechaFin && nextFechaInicio > nextFechaFin) {
+      throw new Error('La fecha de inicio no puede ser posterior a la fecha de fin.');
+    }
+
+    const nextAlcanceCompleto =
+      data.alcanceCompleto !== undefined
+        ? Boolean(data.alcanceCompleto)
+        : Boolean(curr.alcanceCompleto || curr.idMateria == null);
+
+    if (nextAlcanceCompleto) {
+      const titularAssignments = db.docenteMaterias.filter((d) => d.idUsuario === nextTitularId);
+      if (titularAssignments.length === 0) {
+        throw new Error(
+          'El docente titular seleccionado no tiene materias asignadas aún para cubrir todas sus materias.'
+        );
+      }
+      if (seccionObj) {
+        const hasMatInSecAno = titularAssignments.some((dm) => {
+          const m = db.materias.find((mat) => mat.idMateria === dm.idMateria);
+          return m?.idAno === seccionObj.idAno;
+        });
+        if (!hasMatInSecAno) {
+          throw new Error(
+            'El docente titular no tiene materias asignadas en el año escolar de la sección indicada.'
+          );
+        }
+      }
+
+      const updated: SuplenciaDocente = {
+        ...curr,
+        idDocenteTitular: nextTitularId,
+        idDocenteMateria: null,
+        alcanceCompleto: true,
+        idMateria: null,
+        idAno: seccionObj ? seccionObj.idAno : null,
+        idSeccion: nextSeccionId,
+        activo: data.activo !== undefined ? Boolean(data.activo) : curr.activo,
+        fechaInicio: nextFechaInicio,
+        fechaFin: nextFechaFin,
+        motivo: data.motivo !== undefined ? (data.motivo ? data.motivo.trim() : null) : curr.motivo ?? null,
+      };
+      db.suplenciasDocentes[idx] = updated;
+      return enrichSuplenciaInDb(updated, db, true);
+    }
+
+    const nextMateriaId = data.idMateria ?? curr.idMateria;
+    if (!nextMateriaId) {
+      throw new Error('Debe seleccionar una materia válida.');
+    }
+    const materia = db.materias.find((m) => m.idMateria === Number(nextMateriaId));
+    if (!materia) throw new Error('Materia no encontrada.');
+
+    if (seccionObj && seccionObj.idAno !== materia.idAno) {
+      throw new Error('La sección indicada no pertenece al año escolar de la materia.');
+    }
+
+    const matchedDm = db.docenteMaterias.find(
+      (d) => d.idUsuario === nextTitularId && d.idMateria === nextMateriaId
+    );
+
+    const updated: SuplenciaDocente = {
+      ...curr,
+      idDocenteTitular: nextTitularId,
+      idDocenteMateria:
+        data.idDocenteMateria !== undefined
+          ? data.idDocenteMateria
+          : matchedDm
+          ? matchedDm.idAsignacion
+          : null,
+      alcanceCompleto: false,
+      idMateria: nextMateriaId,
+      idAno: materia.idAno,
+      idSeccion: nextSeccionId,
+      activo: data.activo !== undefined ? Boolean(data.activo) : curr.activo,
+      fechaInicio: nextFechaInicio,
+      fechaFin: nextFechaFin,
+      motivo: data.motivo !== undefined ? (data.motivo ? data.motivo.trim() : null) : curr.motivo ?? null,
+    };
+
+    db.suplenciasDocentes[idx] = updated;
+    return enrichSuplenciaInDb(updated, db, true);
+  });
+}
+
+export async function toggleSuplenciaDocente(idSuplencia: number): Promise<SuplenciaDocente> {
+  return withWriteLock((db) => {
+    const idx = db.suplenciasDocentes.findIndex((s) => s.idSuplencia === Number(idSuplencia));
+    if (idx === -1) throw new Error('Suplencia no encontrada.');
+    db.suplenciasDocentes[idx] = {
+      ...db.suplenciasDocentes[idx],
+      activo: !db.suplenciasDocentes[idx].activo,
+    };
+    return enrichSuplenciaInDb(db.suplenciasDocentes[idx], db, true);
+  });
+}
+
+export async function deleteSuplenciaDocente(idSuplencia: number): Promise<SuplenciaDocente> {
+  return withWriteLock((db) => {
+    const idx = db.suplenciasDocentes.findIndex((s) => s.idSuplencia === Number(idSuplencia));
+    if (idx === -1) throw new Error('Suplencia no encontrada.');
+    const [removed] = db.suplenciasDocentes.splice(idx, 1);
+    return removed;
   });
 }
 
 // ---------------------------------------------------------------------------
 // 4. REPRESENTANTES & ESTUDIANTES
 // ---------------------------------------------------------------------------
-export async function getRepresentantes(): Promise<Representante[]> {
+export async function getRepresentantes(allowedAnos?: number[]): Promise<Representante[]> {
   const db = await readDb();
-  return db.representantes
-    .map(sanitizeRepresentante)
-    .sort((a, b) => a.apellidos.localeCompare(b.apellidos));
+  let list = db.representantes.map(sanitizeRepresentante);
+  if (allowedAnos !== undefined) {
+    const allowedSet = new Set(allowedAnos.map(Number));
+    const repIdsInScope = new Set(
+      db.estudiantes
+        .filter((e) => e.idAnoActual != null && allowedSet.has(e.idAnoActual))
+        .map((e) => e.idRepresentante)
+    );
+    list = list.filter((r) => repIdsInScope.has(r.idRepresentante));
+  }
+  return list.sort((a, b) => a.apellidos.localeCompare(b.apellidos));
 }
 
 export async function getRepresentanteById(id: number): Promise<Representante | null> {
@@ -2033,10 +3014,88 @@ export async function deleteRepresentante(id: number): Promise<void> {
 }
 
 export async function getEstudiantes(
-  filters?: { idAno?: number; idSeccion?: number; idRepresentante?: number },
+  filters?: {
+    idAno?: number;
+    idSeccion?: number;
+    idRepresentante?: number;
+    idDocenteScope?: number;
+    idSuplenteScope?: number;
+    fechaSuplencia?: string;
+    allowedAnos?: number[];
+  },
   includeRepContact: boolean = true
 ): Promise<Estudiante[]> {
   const db = await readDb();
+
+  let allowedAnoSeccionPairs: Set<string> | null = null;
+  let allowedFallbackAnos: Set<number> | null = null;
+
+  if (filters?.idDocenteScope) {
+    const assignedMateriaIds = new Set(
+      db.docenteMaterias
+        .filter((dm) => dm.idUsuario === Number(filters.idDocenteScope))
+        .map((dm) => dm.idMateria)
+    );
+    if (assignedMateriaIds.size === 0) {
+      return [];
+    }
+
+    allowedAnoSeccionPairs = new Set<string>();
+    allowedFallbackAnos = new Set<number>();
+    const matMap = new Map(db.materias.map((m) => [m.idMateria, m]));
+
+    for (const idMat of assignedMateriaIds) {
+      const horariosMateria = db.horarios.filter((h) => h.idMateria === idMat);
+      if (horariosMateria.length > 0) {
+        for (const h of horariosMateria) {
+          allowedAnoSeccionPairs.add(`${h.idAno}-${h.idSeccion}`);
+        }
+      } else {
+        const mat = matMap.get(idMat);
+        if (mat) {
+          allowedFallbackAnos.add(mat.idAno);
+        }
+      }
+    }
+  } else if (filters?.idSuplenteScope) {
+    const suplenteUser = db.users.find((u) => u.id === Number(filters.idSuplenteScope));
+    if (!suplenteUser || suplenteUser.activo === false || suplenteUser.rol !== 'docente_suplente') {
+      return [];
+    }
+    const activeSups = db.suplenciasDocentes.filter(
+      (s) => s.idSuplente === Number(filters.idSuplenteScope) && isSuplenciaVigente(s, filters.fechaSuplencia)
+    );
+    if (activeSups.length === 0) {
+      return [];
+    }
+
+    allowedAnoSeccionPairs = new Set<string>();
+    allowedFallbackAnos = new Set<number>();
+
+    for (const s of activeSups) {
+      const scope = resolveSuplenciaScopeInDb(s, db);
+      if (s.idSeccion != null) {
+        const secObj = db.secciones.find((sec) => sec.idSeccion === s.idSeccion);
+        if (secObj) {
+          allowedAnoSeccionPairs.add(`${secObj.idAno}-${s.idSeccion}`);
+        } else if (s.idAno != null) {
+          allowedAnoSeccionPairs.add(`${s.idAno}-${s.idSeccion}`);
+        }
+      } else {
+        for (const matDetalle of scope.materiasDetalle) {
+          const horariosMateria = db.horarios.filter((h) => h.idMateria === matDetalle.idMateria);
+          if (horariosMateria.length > 0) {
+            for (const h of horariosMateria) {
+              allowedAnoSeccionPairs.add(`${h.idAno}-${h.idSeccion}`);
+            }
+          } else {
+            allowedFallbackAnos.add(matDetalle.idAno);
+          }
+        }
+      }
+    }
+  }
+
   const anoMap = new Map(db.anosEscolares.map((a) => [a.idAno, a.nombreNivel]));
   const secMap = new Map(db.secciones.map((s) => [s.idSeccion, s.nombreSeccion]));
   const repMap = new Map(db.representantes.map((r) => [r.idRepresentante, r]));
@@ -2078,6 +3137,21 @@ export async function getEstudiantes(
     };
   });
 
+  if (allowedAnoSeccionPairs && allowedFallbackAnos) {
+    list = list.filter((e) => {
+      if (e.estadoAcademico !== 'ACTIVO' || e.idAnoActual == null) return false;
+      if (allowedFallbackAnos!.has(e.idAnoActual)) return true;
+      if (e.idSeccion != null && allowedAnoSeccionPairs!.has(`${e.idAnoActual}-${e.idSeccion}`)) {
+        return true;
+      }
+      return false;
+    });
+  }
+
+  if (filters?.allowedAnos !== undefined) {
+    const allowedSet = new Set(filters.allowedAnos.map(Number));
+    list = list.filter((e) => e.idAnoActual != null && allowedSet.has(e.idAnoActual));
+  }
   if (filters?.idAno) list = list.filter((e) => e.idAnoActual === Number(filters.idAno));
   if (filters?.idSeccion) list = list.filter((e) => e.idSeccion === Number(filters.idSeccion));
   if (filters?.idRepresentante) list = list.filter((e) => e.idRepresentante === Number(filters.idRepresentante));
@@ -2106,13 +3180,32 @@ export async function createEstudiante(data: {
   assertNoNumbersInName(data.apellidos, 'Apellidos del estudiante');
 
   return withWriteLock((db) => {
+    const idAno = Number(data.idAnoActual);
+    if (!db.anosEscolares.some((a) => a.idAno === idAno)) {
+      throw new Error('El año escolar seleccionado no existe.');
+    }
+    if (!db.representantes.some((r) => r.idRepresentante === Number(data.idRepresentante))) {
+      throw new Error('El representante seleccionado no existe.');
+    }
+    let resolvedSeccion: number | null = null;
+    if (data.idSeccion != null && Number(data.idSeccion) > 0) {
+      const sec = db.secciones.find((s) => s.idSeccion === Number(data.idSeccion));
+      if (!sec) {
+        throw new Error('La sección seleccionada no existe.');
+      }
+      if (sec.idAno !== idAno) {
+        throw new Error('La sección seleccionada no pertenece al año escolar indicado.');
+      }
+      resolvedSeccion = sec.idSeccion;
+    }
+
     const nuevo: Estudiante = {
       idEstudiante: nextNumericId(db.estudiantes, (e) => e.idEstudiante),
       cedula: data.cedula.trim(),
       nombres: data.nombres.trim(),
       apellidos: data.apellidos.trim(),
-      idAnoActual: Number(data.idAnoActual),
-      idSeccion: data.idSeccion ? Number(data.idSeccion) : null,
+      idAnoActual: idAno,
+      idSeccion: resolvedSeccion,
       idRepresentante: Number(data.idRepresentante),
       estadoAcademico: 'ACTIVO',
     };
@@ -2131,31 +3224,69 @@ export async function updateEstudiante(
   return withWriteLock((db) => {
     const idx = db.estudiantes.findIndex((e) => e.idEstudiante === Number(idEstudiante));
     if (idx === -1) throw new Error('Estudiante no encontrado.');
-    const nextAnoActual =
+    const current = db.estudiantes[idx];
+
+    if (
+      data.idRepresentante !== undefined &&
+      !db.representantes.some((r) => r.idRepresentante === Number(data.idRepresentante))
+    ) {
+      throw new Error('El representante seleccionado no existe.');
+    }
+
+    const nextAnoActual: number | null =
       data.idAnoActual !== undefined
-        ? data.idAnoActual === null
+        ? data.idAnoActual === null || Number(data.idAnoActual) <= 0
           ? null
           : Number(data.idAnoActual)
-        : db.estudiantes[idx].idAnoActual;
-    const nextEstado: EstadoAcademicoEstudiante =
-      data.estadoAcademico !== undefined
-        ? data.estadoAcademico
-        : nextAnoActual === null
-        ? 'EGRESADO'
-        : 'ACTIVO';
+        : current.idAnoActual ?? null;
+
+    let nextEstado: EstadoAcademicoEstudiante;
+    if (data.estadoAcademico !== undefined) {
+      nextEstado = data.estadoAcademico;
+    } else if (nextAnoActual === null) {
+      nextEstado = current.estadoAcademico === 'RETIRADO' ? 'RETIRADO' : 'EGRESADO';
+    } else {
+      nextEstado =
+        current.estadoAcademico === 'EGRESADO' || current.estadoAcademico === 'RETIRADO'
+          ? 'ACTIVO'
+          : current.estadoAcademico || 'ACTIVO';
+    }
+
     const isInactive = nextEstado === 'EGRESADO' || nextEstado === 'RETIRADO';
+    const resolvedAno: number | null = isInactive ? null : nextAnoActual;
+    let resolvedSeccion: number | null = isInactive
+      ? null
+      : data.idSeccion !== undefined
+      ? data.idSeccion === null || Number(data.idSeccion) <= 0
+        ? null
+        : Number(data.idSeccion)
+      : current.idSeccion ?? null;
+
+    if (!isInactive) {
+      if (resolvedAno == null || !db.anosEscolares.some((a) => a.idAno === resolvedAno)) {
+        throw new Error('Debe asignar un año escolar válido para estudiantes en estado ACTIVO.');
+      }
+      if (resolvedSeccion != null) {
+        const sec = db.secciones.find((s) => s.idSeccion === resolvedSeccion);
+        if (!sec) {
+          throw new Error('La sección seleccionada no existe.');
+        }
+        if (sec.idAno !== resolvedAno) {
+          if (data.idSeccion !== undefined) {
+            throw new Error('La sección seleccionada no pertenece al año escolar indicado.');
+          }
+          resolvedSeccion = null;
+        }
+      }
+    }
 
     const updated: Estudiante = {
-      ...db.estudiantes[idx],
+      ...current,
       ...(data.cedula ? { cedula: data.cedula.trim() } : {}),
       ...(data.nombres ? { nombres: data.nombres.trim() } : {}),
       ...(data.apellidos ? { apellidos: data.apellidos.trim() } : {}),
-      idAnoActual: isInactive ? null : nextAnoActual,
-      ...(data.idSeccion !== undefined
-        ? { idSeccion: isInactive ? null : data.idSeccion ? Number(data.idSeccion) : null }
-        : isInactive
-        ? { idSeccion: null }
-        : {}),
+      idAnoActual: resolvedAno,
+      idSeccion: resolvedSeccion,
       ...(data.idRepresentante !== undefined ? { idRepresentante: Number(data.idRepresentante) } : {}),
       estadoAcademico: nextEstado,
     };
@@ -2483,6 +3614,21 @@ function resolveAttendanceLapso(
   return findLapsoByDate(lapsos, record.fecha);
 }
 
+export async function getAsistenciaById(idAsistencia: number): Promise<{
+  registro: RegistroAsistencia;
+  idAno: number | null;
+} | null> {
+  const db = await readDb();
+  const rec = db.asistencia.find((a) => a.idAsistencia === Number(idAsistencia));
+  if (!rec) return null;
+  const mat = db.materias.find((m) => m.idMateria === rec.idMateria);
+  const est = db.estudiantes.find((e) => e.idEstudiante === rec.idEstudiante);
+  return {
+    registro: rec,
+    idAno: mat?.idAno ?? est?.idAnoActual ?? null,
+  };
+}
+
 export async function getAsistencia(filter: {
   fecha?: string;
   mes?: string;
@@ -2496,8 +3642,13 @@ export async function getAsistencia(filter: {
   idSeccion?: number;
   idAno?: number;
   lapsoId?: number;
+  allowedAnos?: number[];
+  suplenciaRestrictions?: Array<{ idMateria: number; idAno: number; idSeccion?: number | null }>;
 }): Promise<RegistroAsistencia[]> {
   if (filter.idMaterias && filter.idMaterias.length === 0) {
+    return [];
+  }
+  if (filter.suplenciaRestrictions && filter.suplenciaRestrictions.length === 0) {
     return [];
   }
 
@@ -2513,30 +3664,42 @@ export async function getAsistencia(filter: {
       ? new Set(filter.idMaterias.map((id) => Number(id)))
       : null;
 
-  let list = db.asistencia
-    .map((a) => {
-      const est = estMap.get(a.idEstudiante);
-      const mat = matMap.get(a.idMateria);
-      if (!est || !mat) return null;
-      const resolvedLapso = resolveAttendanceLapso(a, lapsoMap, db.lapsosEscolares);
-      return {
-        ...a,
-        lapsoId: resolvedLapso?.id ?? a.lapsoId ?? null,
-        lapsoNombre: resolvedLapso?.nombre ?? null,
-        numeroLapso: resolvedLapso?.numeroLapso ?? null,
-        estudianteCedula: est.cedula,
-        estudianteNombres: est.nombres,
-        estudianteApellidos: est.apellidos,
-        nombreMateria: mat.nombreMateria,
-        nombreNivel: anoMap.get(mat.idAno),
-        nombreSeccion: est.idSeccion ? secMap.get(est.idSeccion) || null : null,
-        idRepresentante: est.idRepresentante,
-        _estIdAno: mat.idAno,
-        _estIdSeccion: est.idSeccion,
-      };
-    })
-    .filter((item): item is NonNullable<typeof item> => item !== null);
+  let list = db.asistencia.map((a) => {
+    const est = estMap.get(a.idEstudiante);
+    const mat = matMap.get(a.idMateria);
+    const resolvedAnoId = mat?.idAno ?? est?.idAnoActual ?? null;
+    const resolvedLapso = resolveAttendanceLapso(a, lapsoMap, db.lapsosEscolares);
+    return {
+      ...a,
+      lapsoId: resolvedLapso?.id ?? a.lapsoId ?? null,
+      lapsoNombre: resolvedLapso?.nombre ?? null,
+      numeroLapso: resolvedLapso?.numeroLapso ?? null,
+      estudianteCedula: est?.cedula ?? 'N/D',
+      estudianteNombres: est?.nombres ?? `Estudiante #${a.idEstudiante}`,
+      estudianteApellidos: est?.apellidos ?? '',
+      nombreMateria: mat?.nombreMateria ?? `Materia eliminada (#${a.idMateria})`,
+      nombreNivel: resolvedAnoId != null ? anoMap.get(resolvedAnoId) : undefined,
+      nombreSeccion: est?.idSeccion ? secMap.get(est.idSeccion) || null : null,
+      idRepresentante: est?.idRepresentante,
+      _estIdAno: resolvedAnoId,
+      _estIdSeccion: est?.idSeccion ?? null,
+    };
+  });
 
+  if (filter.allowedAnos !== undefined) {
+    const allowedSet = new Set(filter.allowedAnos.map(Number));
+    list = list.filter((a) => a._estIdAno != null && allowedSet.has(a._estIdAno));
+  }
+  if (filter.suplenciaRestrictions) {
+    list = list.filter((a) =>
+      filter.suplenciaRestrictions!.some(
+        (sup) =>
+          sup.idMateria === a.idMateria &&
+          sup.idAno === a._estIdAno &&
+          (sup.idSeccion == null || sup.idSeccion === a._estIdSeccion)
+      )
+    );
+  }
   if (filter.lapsoId) {
     if (!targetLapso) {
       return [];
@@ -2592,11 +3755,14 @@ export async function getAsistenciaPaginated(filter: {
   idAno?: number;
   lapsoId?: number;
   search?: string;
+  allowedAnos?: number[];
 }): Promise<PaginatedResponse<RegistroAsistencia>> {
   const db = await readDb();
   const page = Math.max(1, Number(filter.page) || 1);
   const limit = Math.min(Math.max(1, Number(filter.limit) || 25), 500);
   const offset = (page - 1) * limit;
+  const allowedSet =
+    filter.allowedAnos !== undefined ? new Set(filter.allowedAnos.map(Number)) : null;
 
   const estMap = new Map(db.estudiantes.map((e) => [e.idEstudiante, e]));
   const matMap = new Map(db.materias.map((m) => [m.idMateria, m]));
@@ -2644,15 +3810,16 @@ export async function getAsistenciaPaginated(filter: {
 
     const est = estMap.get(a.idEstudiante);
     const mat = matMap.get(a.idMateria);
-    if (!est || !mat) continue;
+    const resolvedAnoId = mat?.idAno ?? est?.idAnoActual ?? null;
 
-    if (filter.idSeccion && est.idSeccion !== Number(filter.idSeccion)) continue;
-    if (filter.idAno && mat.idAno !== Number(filter.idAno)) continue;
+    if (allowedSet && (resolvedAnoId == null || !allowedSet.has(resolvedAnoId))) continue;
+    if (filter.idSeccion && est?.idSeccion !== Number(filter.idSeccion)) continue;
+    if (filter.idAno && resolvedAnoId !== Number(filter.idAno)) continue;
 
     if (searchLower) {
-      const fullName = `${est.nombres} ${est.apellidos}`.toLowerCase();
-      const reverseName = `${est.apellidos}, ${est.nombres}`.toLowerCase();
-      const cedula = est.cedula.toLowerCase();
+      const fullName = `${est?.nombres || ''} ${est?.apellidos || ''}`.toLowerCase();
+      const reverseName = `${est?.apellidos || ''}, ${est?.nombres || ''}`.toLowerCase();
+      const cedula = (est?.cedula || '').toLowerCase();
       const motivo = (a.motivoJustificacion || '').toLowerCase();
       const numJust = (a.numeroJustificante || '').toLowerCase();
       if (
@@ -2716,21 +3883,22 @@ export async function getAsistenciaPaginated(filter: {
 
   // LIMIT & OFFSET únicamente sobre el bloque solicitado
   const pageSlice = matchedRaw.slice(offset, offset + limit).map((a) => {
-    const est = estMap.get(a.idEstudiante)!;
-    const mat = matMap.get(a.idMateria)!;
+    const est = estMap.get(a.idEstudiante);
+    const mat = matMap.get(a.idMateria);
+    const resolvedAnoId = mat?.idAno ?? est?.idAnoActual ?? null;
     const resolvedLapso = resolveAttendanceLapso(a, lapsoMap, db.lapsosEscolares);
     return {
       ...a,
       lapsoId: resolvedLapso?.id ?? a.lapsoId ?? null,
       lapsoNombre: resolvedLapso?.nombre ?? null,
       numeroLapso: resolvedLapso?.numeroLapso ?? null,
-      estudianteCedula: est.cedula,
-      estudianteNombres: est.nombres,
-      estudianteApellidos: est.apellidos,
-      nombreMateria: mat.nombreMateria,
-      nombreNivel: anoMap.get(mat.idAno),
-      nombreSeccion: est.idSeccion ? secMap.get(est.idSeccion) || null : null,
-      idRepresentante: est.idRepresentante,
+      estudianteCedula: est?.cedula ?? 'N/D',
+      estudianteNombres: est?.nombres ?? `Estudiante #${a.idEstudiante}`,
+      estudianteApellidos: est?.apellidos ?? '',
+      nombreMateria: mat?.nombreMateria ?? `Materia eliminada (#${a.idMateria})`,
+      nombreNivel: resolvedAnoId != null ? anoMap.get(resolvedAnoId) : undefined,
+      nombreSeccion: est?.idSeccion ? secMap.get(est.idSeccion) || null : null,
+      idRepresentante: est?.idRepresentante,
     };
   });
 
@@ -2837,6 +4005,18 @@ export type AttendanceNotificationFormatter = (params: {
   motivoJustificacion?: string | null;
 }) => { title: string; body: string };
 
+export interface RegistrarAsistenciaBatchResult {
+  records: RegistroAsistencia[];
+  changedRecords: RegistroAsistencia[];
+  updatedCount: number;
+  skippedCount: number;
+  skippedStudents: Array<{
+    idEstudiante: number;
+    nombreCompleto: string;
+    estadoActual: EstadoAsistencia;
+  }>;
+}
+
 export async function registrarAsistenciaBatch(
   idMateria: number,
   fecha: string,
@@ -2845,6 +4025,14 @@ export async function registrarAsistenciaBatch(
     actorId?: number;
     actorNombre?: string;
     actorRol?: RolUsuario;
+    suplenciaInfo?: {
+      idSuplencia: number;
+      idSuplente: number;
+      suplenteNombre: string;
+      idDocenteTitular: number;
+      docenteTitularNombre: string;
+      motivo?: string | null;
+    } | null;
     auditAuthor?: {
       idUsuario?: number | null;
       emailOCedula?: string | null;
@@ -2854,7 +4042,7 @@ export async function registrarAsistenciaBatch(
     };
     buildNotification?: AttendanceNotificationFormatter;
   }
-): Promise<RegistroAsistencia[]> {
+): Promise<RegistrarAsistenciaBatchResult> {
   return withWriteLock((db) => {
     const holidayCheck = evaluateDiaNoLaborable(db.diasNoLaborables, fecha);
     if (holidayCheck.esNoLaborable) {
@@ -2865,7 +4053,18 @@ export async function registrarAsistenciaBatch(
     const serverTime = now.toTimeString().split(' ')[0];
     const nowIso = now.toISOString();
     const results: RegistroAsistencia[] = [];
-    const canJustify = options?.actorRol === 'director' || options?.actorRol === 'coordinador';
+    const changedRecords: RegistroAsistencia[] = [];
+    const skippedStudents: RegistrarAsistenciaBatchResult['skippedStudents'] = [];
+    let updatedCount = 0;
+    let skippedCount = 0;
+
+    const estMap = new Map(db.estudiantes.map((e) => [e.idEstudiante, e]));
+    const canJustify =
+      options?.actorRol === 'director' ||
+      options?.actorRol === 'coordinador' ||
+      options?.actorRol === 'coordinador_seccional';
+    const isTeacherRole =
+      options?.actorRol === 'docente' || options?.actorRol === 'docente_suplente';
     const matchedLapso = findLapsoByDate(db.lapsosEscolares, fecha);
     const lapsoId = matchedLapso ? matchedLapso.id : null;
     let nextAsistenciaId = nextNumericId(db.asistencia, (a) => a.idAsistencia);
@@ -2886,20 +4085,40 @@ export async function registrarAsistenciaBatch(
         const isLockedByCoordination =
           existing.estado === 'Justificado' || existing.estado === 'Reposo Médico';
 
-        // Un docente no puede sobrescribir un registro ya validado/justificado por Coordinación
-        if (options?.actorRol === 'docente' && isLockedByCoordination) {
+        // Un docente (titular o suplente) no puede sobrescribir un registro ya validado/justificado por Coordinación
+        if (isTeacherRole && isLockedByCoordination) {
           results.push(existing);
+          if (r.estado !== existing.estado) {
+            skippedCount++;
+            const est = estMap.get(existing.idEstudiante);
+            skippedStudents.push({
+              idEstudiante: existing.idEstudiante,
+              nombreCompleto: est
+                ? `${est.nombres} ${est.apellidos}`.trim()
+                : `Estudiante #${existing.idEstudiante}`,
+              estadoActual: existing.estado,
+            });
+          }
           continue;
         }
 
+        const clearingSpecialLeave =
+          canJustify && isLockedByCoordination && !isSpecialStatus;
         const shouldStampModifier =
-          canJustify && isSpecialStatus && existing.estado !== r.estado;
+          clearingSpecialLeave || (canJustify && isSpecialStatus && existing.estado !== r.estado);
 
         db.asistencia[existingIdx] = {
           ...existing,
           lapsoId,
           estado: r.estado,
           horaEntrada: hora,
+          ...(clearingSpecialLeave
+            ? {
+                motivoJustificacion: null,
+                numeroJustificante: null,
+                fechaRecepcionDocumento: null,
+              }
+            : {}),
           ...(shouldStampModifier
             ? {
                 modificadoPorId: options?.actorId ?? null,
@@ -2910,6 +4129,8 @@ export async function registrarAsistenciaBatch(
             : {}),
         };
         results.push(db.asistencia[existingIdx]);
+        changedRecords.push(db.asistencia[existingIdx]);
+        updatedCount++;
       } else {
         const shouldStampModifier = canJustify && isSpecialStatus;
         const created: RegistroAsistencia = {
@@ -2931,38 +4152,52 @@ export async function registrarAsistenciaBatch(
         };
         db.asistencia.push(created);
         results.push(created);
+        changedRecords.push(created);
+        updatedCount++;
       }
     }
 
     // Consolidar bitácora de auditoría dentro de la misma transacción atómica
     if (options?.auditAuthor) {
-      const resumenEstados = records.reduce<Record<string, number>>((acc, item) => {
+      const resumenEstados = changedRecords.reduce<Record<string, number>>((acc, item) => {
         acc[item.estado] = (acc[item.estado] || 0) + 1;
         return acc;
       }, {});
 
       appendAuditLogInMemory(db, {
         ...options.auditAuthor,
-        accion: 'ASISTENCIA_REGISTRADA_BATCH',
+        accion: options.suplenciaInfo ? 'ASISTENCIA_REGISTRADA_SUPLENCIA' : 'ASISTENCIA_REGISTRADA_BATCH',
         entidad: 'asistencia',
         idEntidad: idMateria,
         detalles: {
           idMateria,
           fecha,
           totalEstudiantes: records.length,
+          actualizados: updatedCount,
+          omitidosBloqueoCoordinacion: skippedCount,
           resumenEstados,
           responsableId: options.actorId ?? null,
           responsableNombre: options.actorNombre || 'Sistema',
           responsableRol: options.actorRol ?? null,
+          ...(options.suplenciaInfo
+            ? {
+                esSuplencia: true,
+                idSuplencia: options.suplenciaInfo.idSuplencia,
+                idSuplente: options.suplenciaInfo.idSuplente,
+                suplenteNombre: options.suplenciaInfo.suplenteNombre,
+                idDocenteTitular: options.suplenciaInfo.idDocenteTitular,
+                docenteTitularNombre: options.suplenciaInfo.docenteTitularNombre,
+                motivoSuplencia: options.suplenciaInfo.motivo ?? null,
+              }
+            : {}),
         },
       });
     }
 
-    // Consolidar bandeja persistente de representantes dentro de la misma transacción atómica
-    if (options?.buildNotification && results.length > 0) {
+    // Consolidar bandeja persistente de representantes dentro de la misma transacción atómica (solo registros efectivamente actualizados/creados)
+    if (options?.buildNotification && changedRecords.length > 0) {
       const mat = db.materias.find((m) => m.idMateria === Number(idMateria));
       const nombreMateria = mat?.nombreMateria || 'Asignatura';
-      const estMap = new Map(db.estudiantes.map((e) => [e.idEstudiante, e]));
       const activeRepIds = new Set(
         db.representantes.filter((r) => r.activo !== false).map((r) => r.idRepresentante)
       );
@@ -2977,7 +4212,7 @@ export async function registrarAsistenciaBatch(
         metadata?: NotificacionRepresentante['metadata'];
       }> = [];
 
-      for (const rec of results) {
+      for (const rec of changedRecords) {
         const est = estMap.get(Number(rec.idEstudiante));
         if (!est || !activeRepIds.has(est.idRepresentante)) continue;
         const estudianteNombre = `${est.nombres} ${est.apellidos}`.trim();
@@ -3014,7 +4249,13 @@ export async function registrarAsistenciaBatch(
       }
     }
 
-    return results;
+    return {
+      records: results,
+      changedRecords,
+      updatedCount,
+      skippedCount,
+      skippedStudents,
+    };
   });
 }
 
@@ -3153,21 +4394,65 @@ export async function updateAsistenciaJustificacion(
 // ---------------------------------------------------------------------------
 // 6. HORARIOS ESCOLARES & SISTEMA ANTICONFLICTOS
 // ---------------------------------------------------------------------------
+export async function getHorarioById(idHorario: number): Promise<Horario | null> {
+  const db = await readDb();
+  return db.horarios.find((h) => h.idHorario === Number(idHorario)) || null;
+}
+
 export async function getHorarios(filter?: {
   idAno?: number;
   idSeccion?: number;
   diaSemana?: string;
   idMateria?: number;
   idDocente?: number;
+  allowedAnos?: number[];
+  idSuplenteScope?: number;
+  fechaSuplencia?: string;
 }): Promise<Horario[]> {
   const db = await readDb();
   const anoMap = new Map(db.anosEscolares.map((a) => [a.idAno, a.nombreNivel]));
   const secMap = new Map(db.secciones.map((s) => [s.idSeccion, s.nombreSeccion]));
   const matMap = new Map(db.materias.map((m) => [m.idMateria, m.nombreMateria]));
+  const userMap = new Map(db.users.map((u) => [u.id, u]));
   const assignments = await getDocenteMaterias();
 
-  let list = db.horarios.map((h) => {
+  let activeSups: Array<{
+    sup: SuplenciaDocente;
+    scope: ReturnType<typeof resolveSuplenciaScopeInDb>;
+  }> = [];
+  if (filter?.idSuplenteScope) {
+    const suplenteUser = db.users.find((u) => u.id === Number(filter.idSuplenteScope));
+    if (!suplenteUser || suplenteUser.activo === false || suplenteUser.rol !== 'docente_suplente') {
+      return [];
+    }
+    const rawSups = db.suplenciasDocentes.filter(
+      (s) => s.idSuplente === Number(filter.idSuplenteScope) && isSuplenciaVigente(s, filter.fechaSuplencia)
+    );
+    if (rawSups.length === 0) {
+      return [];
+    }
+    activeSups = rawSups.map((sup) => ({ sup, scope: resolveSuplenciaScopeInDb(sup, db) }));
+  }
+
+  let list: Horario[] = db.horarios.map((h) => {
     const assign = assignments.find((a) => a.idMateria === h.idMateria);
+    const matchedEntry =
+      filter?.idSuplenteScope
+        ? activeSups.find(
+            ({ sup, scope }) =>
+              scope.materiaIds.includes(h.idMateria) &&
+              scope.anoIds.includes(h.idAno) &&
+              (sup.idSeccion == null || sup.idSeccion === h.idSeccion)
+          )
+        : undefined;
+    const matchedSup = matchedEntry?.sup;
+    const titularUser = matchedSup ? userMap.get(matchedSup.idDocenteTitular) : undefined;
+    const titularNombreCompleto = titularUser
+      ? `${titularUser.nombre} ${titularUser.apellidos}`
+      : assign
+      ? `${assign.usuarioNombre} ${assign.usuarioApellidos}`
+      : 'Sin asignar';
+
     return {
       ...h,
       nombreNivel: anoMap.get(h.idAno),
@@ -3179,9 +4464,24 @@ export async function getHorarios(filter?: {
       nombreDocente: assign
         ? `${assign.usuarioNombre} ${assign.usuarioApellidos}`
         : 'Sin asignar',
+      ...(matchedSup
+        ? {
+            esSuplencia: true,
+            idSuplencia: matchedSup.idSuplencia,
+            docenteTitularNombre: titularNombreCompleto,
+            motivoSuplencia: matchedSup.motivo ?? null,
+          }
+        : {}),
     };
   });
 
+  if (filter?.idSuplenteScope) {
+    list = list.filter((h) => h.esSuplencia === true);
+  }
+  if (filter?.allowedAnos !== undefined) {
+    const allowedSet = new Set(filter.allowedAnos.map(Number));
+    list = list.filter((h) => allowedSet.has(h.idAno));
+  }
   if (filter?.idAno) list = list.filter((h) => h.idAno === Number(filter.idAno));
   if (filter?.idSeccion) list = list.filter((h) => h.idSeccion === Number(filter.idSeccion));
   if (filter?.diaSemana) list = list.filter((h) => h.diaSemana === filter.diaSemana);
@@ -3191,20 +4491,25 @@ export async function getHorarios(filter?: {
   return list.sort((a, b) => a.idAno - b.idAno || a.idSeccion - b.idSeccion || a.horaInicio.localeCompare(b.horaInicio));
 }
 
-export async function detectHorarioConflict(data: {
-  idHorario?: number;
-  idAno: number;
-  idSeccion: number;
-  idMateria: number;
-  diaSemana: string;
-  horaInicio: string;
-  horaFin: string;
-  aula?: string | null;
-}): Promise<ConflictoHorarioResult> {
+function detectHorarioConflictInDb(
+  db: DatabaseState,
+  data: {
+    idHorario?: number;
+    idAno: number;
+    idSeccion: number;
+    idMateria: number;
+    diaSemana: string;
+    horaInicio: string;
+    horaFin: string;
+    aula?: string | null;
+  }
+): ConflictoHorarioResult {
   const conflicts: ConflictoHorarioItem[] = [];
   const { idHorario, idAno, idSeccion, idMateria, diaSemana, horaInicio, horaFin, aula } = data;
 
-  const activeRecesos = await getRecesos(true);
+  const activeRecesos = db.recesosInstitucionales
+    .filter((r) => r.activo)
+    .sort((a, b) => a.horaInicio.localeCompare(b.horaInicio));
   for (const receso of activeRecesos) {
     if (timeOverlaps(horaInicio, horaFin, receso.horaInicio, receso.horaFin)) {
       conflicts.push({
@@ -3215,9 +4520,12 @@ export async function detectHorarioConflict(data: {
     }
   }
 
-  const activeSalidas = await getSalidas(true);
+  const activeSalidas = db.salidasInstitucionales
+    .filter((s) => s.activo)
+    .sort((a, b) => a.horaSalida.localeCompare(b.horaSalida));
   for (const salida of activeSalidas) {
-    if (salida.idAno && salida.idAno !== Number(idAno)) continue;
+    const salidaIdAno = salida.idAno != null && Number(salida.idAno) > 0 ? Number(salida.idAno) : null;
+    if (salidaIdAno && salidaIdAno !== Number(idAno)) continue;
     if (timeToMinutes(horaFin) > timeToMinutes(salida.horaSalida)) {
       conflicts.push({
         type: 'salida',
@@ -3227,10 +4535,19 @@ export async function detectHorarioConflict(data: {
     }
   }
 
-  const allHorariosDay = await getHorarios({ diaSemana });
-  const otherSchedules = idHorario
-    ? allHorariosDay.filter((h) => h.idHorario !== Number(idHorario))
-    : allHorariosDay;
+  const anoMap = new Map(db.anosEscolares.map((a) => [a.idAno, a.nombreNivel]));
+  const secMap = new Map(db.secciones.map((s) => [s.idSeccion, s.nombreSeccion]));
+  const matMap = new Map(db.materias.map((m) => [m.idMateria, m.nombreMateria]));
+  const userMap = new Map(db.users.map((u) => [u.id, u]));
+
+  const otherSchedules = db.horarios
+    .filter((h) => h.diaSemana === diaSemana && (!idHorario || h.idHorario !== Number(idHorario)))
+    .map((h) => ({
+      ...h,
+      nombreNivel: anoMap.get(h.idAno),
+      nombreSeccion: secMap.get(h.idSeccion),
+      nombreMateria: matMap.get(h.idMateria),
+    }));
 
   for (const s of otherSchedules) {
     if (s.idAno === Number(idAno) && s.idSeccion === Number(idSeccion)) {
@@ -3268,17 +4585,17 @@ export async function detectHorarioConflict(data: {
     }
   }
 
-  const assignments = await getDocenteMaterias();
-  const currentMateriaAssignment = assignments.find((a) => a.idMateria === Number(idMateria));
+  const currentMateriaAssignment = db.docenteMaterias.find((a) => a.idMateria === Number(idMateria));
   if (currentMateriaAssignment && currentMateriaAssignment.idUsuario) {
     const teacherId = currentMateriaAssignment.idUsuario;
-    const teacherName = `${currentMateriaAssignment.usuarioNombre} ${currentMateriaAssignment.usuarioApellidos}`;
-    const teacherMateriaIds = assignments
-      .filter((a) => a.idUsuario === teacherId)
-      .map((a) => a.idMateria);
+    const teacher = userMap.get(teacherId);
+    const teacherName = teacher ? `${teacher.nombre} ${teacher.apellidos}` : `Docente #${teacherId}`;
+    const teacherMateriaIds = new Set(
+      db.docenteMaterias.filter((a) => a.idUsuario === teacherId).map((a) => a.idMateria)
+    );
 
     for (const s of otherSchedules) {
-      if (teacherMateriaIds.includes(s.idMateria)) {
+      if (teacherMateriaIds.has(s.idMateria)) {
         if (timeOverlaps(horaInicio, horaFin, s.horaInicio, s.horaFin)) {
           conflicts.push({
             type: 'docente',
@@ -3296,6 +4613,20 @@ export async function detectHorarioConflict(data: {
   }
 
   return { hasConflict: conflicts.length > 0, conflicts };
+}
+
+export async function detectHorarioConflict(data: {
+  idHorario?: number;
+  idAno: number;
+  idSeccion: number;
+  idMateria: number;
+  diaSemana: string;
+  horaInicio: string;
+  horaFin: string;
+  aula?: string | null;
+}): Promise<ConflictoHorarioResult> {
+  const db = await readDb();
+  return detectHorarioConflictInDb(db, data);
 }
 
 export async function suggestConflictFreeSlots(data: {
@@ -3387,6 +4718,7 @@ export async function autoResolveHorarioConflicts(): Promise<AutoResolveResult> 
       idMateria: number;
       teacherId: number;
       room: string;
+      originalAula: string | null;
       slotIdx: number;
     }
 
@@ -3397,6 +4729,7 @@ export async function autoResolveHorarioConflicts(): Promise<AutoResolveResult> 
       idMateria: h.idMateria,
       teacherId: materiaTeacherMap.get(h.idMateria) || 0,
       room: (h.aula || '').trim().toLowerCase(),
+      originalAula: h.aula ? h.aula.trim() : null,
       slotIdx: getSlotIdx(h.diaSemana, h.horaInicio),
     }));
 
@@ -3511,7 +4844,7 @@ export async function autoResolveHorarioConflicts(): Promise<AutoResolveResult> 
           diaSemana: DIAS[dIdx],
           horaInicio: BLOQUES[bIdx].inicio,
           horaFin: BLOQUES[bIdx].fin,
-          aula: b.room || 'Aula',
+          aula: b.originalAula,
         };
       });
     }
@@ -3539,23 +4872,23 @@ export async function createHorario(data: {
   aula?: string;
   forceIgnoreConflict?: boolean;
 }): Promise<Horario> {
-  if (!data.forceIgnoreConflict) {
-    const check = await detectHorarioConflict({
-      idAno: data.idAno,
-      idSeccion: data.idSeccion,
-      idMateria: data.idMateria,
-      diaSemana: data.diaSemana,
-      horaInicio: data.horaInicio,
-      horaFin: data.horaFin,
-      aula: data.aula,
-    });
-    if (check.hasConflict) {
-      const errorMsg = check.conflicts.map((c) => c.message).join(' | ');
-      throw new Error(`Conflicto de Horario Detectado: ${errorMsg}`);
-    }
-  }
-
   return withWriteLock((db) => {
+    if (!data.forceIgnoreConflict) {
+      const check = detectHorarioConflictInDb(db, {
+        idAno: data.idAno,
+        idSeccion: data.idSeccion,
+        idMateria: data.idMateria,
+        diaSemana: data.diaSemana,
+        horaInicio: data.horaInicio,
+        horaFin: data.horaFin,
+        aula: data.aula,
+      });
+      if (check.hasConflict) {
+        const errorMsg = check.conflicts.map((c) => c.message).join(' | ');
+        throw new Error(`Conflicto de Horario Detectado: ${errorMsg}`);
+      }
+    }
+
     const created: Horario = {
       idHorario: nextNumericId(db.horarios, (h) => h.idHorario),
       idAno: Number(data.idAno),
@@ -3575,40 +4908,38 @@ export async function updateHorario(
   idHorario: number,
   data: Partial<Horario> & { forceIgnoreConflict?: boolean }
 ): Promise<Horario> {
-  const dbRead = await readDb();
-  const curr = dbRead.horarios.find((h) => h.idHorario === Number(idHorario));
-  if (!curr) throw new Error('Horario no encontrado');
-
-  const targetAno = data.idAno ?? curr.idAno;
-  const targetSeccion = data.idSeccion ?? curr.idSeccion;
-  const targetMateria = data.idMateria ?? curr.idMateria;
-  const targetDia = data.diaSemana ?? curr.diaSemana;
-  const targetInicio = data.horaInicio ?? curr.horaInicio;
-  const targetFin = data.horaFin ?? curr.horaFin;
-  const targetAula = data.aula !== undefined ? data.aula : curr.aula;
-
-  if (!data.forceIgnoreConflict) {
-    const check = await detectHorarioConflict({
-      idHorario: Number(idHorario),
-      idAno: targetAno,
-      idSeccion: targetSeccion,
-      idMateria: targetMateria,
-      diaSemana: targetDia,
-      horaInicio: targetInicio,
-      horaFin: targetFin,
-      aula: targetAula,
-    });
-    if (check.hasConflict) {
-      const errorMsg = check.conflicts.map((c) => c.message).join(' | ');
-      throw new Error(`Conflicto de Horario Detectado: ${errorMsg}`);
-    }
-  }
-
   return withWriteLock((db) => {
     const idx = db.horarios.findIndex((h) => h.idHorario === Number(idHorario));
     if (idx === -1) throw new Error('Horario no encontrado');
+    const curr = db.horarios[idx];
+
+    const targetAno = data.idAno ?? curr.idAno;
+    const targetSeccion = data.idSeccion ?? curr.idSeccion;
+    const targetMateria = data.idMateria ?? curr.idMateria;
+    const targetDia = data.diaSemana ?? curr.diaSemana;
+    const targetInicio = data.horaInicio ?? curr.horaInicio;
+    const targetFin = data.horaFin ?? curr.horaFin;
+    const targetAula = data.aula !== undefined ? data.aula : curr.aula;
+
+    if (!data.forceIgnoreConflict) {
+      const check = detectHorarioConflictInDb(db, {
+        idHorario: Number(idHorario),
+        idAno: targetAno,
+        idSeccion: targetSeccion,
+        idMateria: targetMateria,
+        diaSemana: targetDia,
+        horaInicio: targetInicio,
+        horaFin: targetFin,
+        aula: targetAula,
+      });
+      if (check.hasConflict) {
+        const errorMsg = check.conflicts.map((c) => c.message).join(' | ');
+        throw new Error(`Conflicto de Horario Detectado: ${errorMsg}`);
+      }
+    }
+
     db.horarios[idx] = {
-      ...db.horarios[idx],
+      ...curr,
       idAno: Number(targetAno),
       idSeccion: Number(targetSeccion),
       idMateria: Number(targetMateria),
@@ -3819,6 +5150,8 @@ export async function getAuditLogsPaginated(params: {
   search?: string;
   startDate?: string;
   endDate?: string;
+  allowedAnos?: number[];
+  actorIdScope?: number;
 }): Promise<PaginatedResponse<AuditLog>> {
   const db = await readDb();
   const page = Math.max(1, Number(params.page) || 1);
@@ -3828,10 +5161,76 @@ export async function getAuditLogsPaginated(params: {
   const accionFilter = params.accion ? params.accion.trim().toLowerCase() : '';
   const entidadFilter = params.entidad ? params.entidad.trim().toLowerCase() : '';
   const searchLower = params.search ? params.search.trim().toLowerCase() : '';
+  const allowedSet =
+    params.allowedAnos !== undefined ? new Set(params.allowedAnos.map(Number)) : null;
+
+  const matMap = allowedSet ? new Map(db.materias.map((m) => [m.idMateria, m])) : null;
+  const secMap = allowedSet ? new Map(db.secciones.map((s) => [s.idSeccion, s])) : null;
+  const estMap = allowedSet ? new Map(db.estudiantes.map((e) => [e.idEstudiante, e])) : null;
+  const asistMap = allowedSet ? new Map(db.asistencia.map((a) => [a.idAsistencia, a])) : null;
+
+  const isLogInAllowedAnos = (log: AuditLog): boolean => {
+    if (!allowedSet) return true;
+    const ent = String(log.entidad || '').toLowerCase();
+    // Nunca exponer logs globales de seguridad/sistema/respaldo/usuarios al coordinador seccional
+    if (['auth', 'session', 'database', 'backup_logs', 'users', 'configuracion', 'system_push'].includes(ent)) {
+      return false;
+    }
+    if (params.actorIdScope && log.idUsuario === params.actorIdScope) {
+      return true;
+    }
+    const det =
+      log.detalles && typeof log.detalles === 'object'
+        ? (log.detalles as Record<string, unknown>)
+        : null;
+    if (det) {
+      if (det.idAno != null && allowedSet.has(Number(det.idAno))) return true;
+      if (det.anioOrigenId != null && allowedSet.has(Number(det.anioOrigenId))) return true;
+      if (det.anioDestinoId != null && allowedSet.has(Number(det.anioDestinoId))) return true;
+      if (det.idMateria != null) {
+        const mat = matMap!.get(Number(det.idMateria));
+        if (mat && allowedSet.has(mat.idAno)) return true;
+      }
+      if (det.idSeccion != null) {
+        const sec = secMap!.get(Number(det.idSeccion));
+        if (sec && allowedSet.has(sec.idAno)) return true;
+      }
+      if (det.idEstudiante != null) {
+        const est = estMap!.get(Number(det.idEstudiante));
+        if (est?.idAnoActual != null && allowedSet.has(est.idAnoActual)) return true;
+      }
+      if (det.idAsistencia != null) {
+        const asis = asistMap!.get(Number(det.idAsistencia));
+        const mat = asis ? matMap!.get(asis.idMateria) : undefined;
+        if (mat && allowedSet.has(mat.idAno)) return true;
+      }
+    }
+    if (ent === 'materias' && log.idEntidad) {
+      const mat = matMap!.get(Number(log.idEntidad));
+      if (mat && allowedSet.has(mat.idAno)) return true;
+    }
+    if (ent === 'secciones' && log.idEntidad) {
+      const sec = secMap!.get(Number(log.idEntidad));
+      if (sec && allowedSet.has(sec.idAno)) return true;
+    }
+    if (ent === 'estudiantes' && log.idEntidad) {
+      const est = estMap!.get(Number(log.idEntidad));
+      if (est?.idAnoActual != null && allowedSet.has(est.idAnoActual)) return true;
+    }
+    if (ent === 'asistencia' && log.idEntidad) {
+      const mat = matMap!.get(Number(log.idEntidad));
+      if (mat && allowedSet.has(mat.idAno)) return true;
+      const asis = asistMap!.get(Number(log.idEntidad));
+      const mat2 = asis ? matMap!.get(asis.idMateria) : undefined;
+      if (mat2 && allowedSet.has(mat2.idAno)) return true;
+    }
+    return false;
+  };
 
   // db.auditLogs se inserta con unshift() manteniendo orden descendente por createdAt
   const matched: AuditLog[] = [];
   for (const log of db.auditLogs) {
+    if (!isLogInAllowedAnos(log)) continue;
     if (accionFilter && !log.accion.toLowerCase().includes(accionFilter)) continue;
     if (entidadFilter && log.entidad.toLowerCase() !== entidadFilter) continue;
 
@@ -3883,6 +5282,7 @@ export async function getDatabaseStats() {
     lapsosEscolares: db.lapsosEscolares.length,
     secciones: db.secciones.length,
     materias: db.materias.length,
+    suplenciasDocentes: db.suplenciasDocentes.length,
     estudiantes: db.estudiantes.length,
     representantes: db.representantes.length,
     asistencias: db.asistencia.length,
@@ -4175,6 +5575,7 @@ export async function createFullDatabaseBackup(authorInfo?: {
       secciones: db.secciones,
       materias: db.materias,
       docenteMaterias: db.docenteMaterias,
+      suplenciasDocentes: db.suplenciasDocentes,
       representantes: db.representantes,
       estudiantes: db.estudiantes,
       asistencia: db.asistencia,
@@ -4199,6 +5600,7 @@ export async function createFullDatabaseBackup(authorInfo?: {
       secciones: data.secciones.length,
       materias: data.materias.length,
       asignacionesDocentes: data.docenteMaterias.length,
+      suplenciasDocentes: data.suplenciasDocentes.length,
       representantes: data.representantes.length,
       estudiantes: data.estudiantes.length,
       asistencias: data.asistencia.length,
@@ -4351,6 +5753,12 @@ export async function restoreFullDatabaseBackup(
           normalized.docenteMaterias = normalized.docenteMaterias.map((dm) =>
             dm.idUsuario === collidingUser.id ? { ...dm, idUsuario: reassignedId } : dm
           );
+          normalized.suplenciasDocentes = normalized.suplenciasDocentes.map((s) => ({
+            ...s,
+            idSuplente: s.idSuplente === collidingUser.id ? reassignedId : s.idSuplente,
+            idDocenteTitular:
+              s.idDocenteTitular === collidingUser.id ? reassignedId : s.idDocenteTitular,
+          }));
         }
         const remainingByEmailIdx = normalized.users.findIndex(
           (u) => u.email.toLowerCase() === operatingDirector.email.toLowerCase()
@@ -4400,6 +5808,7 @@ export async function resetDatabaseToMasterSeed() {
     db.resumenesAsistencia = [];
     db.horarios = [];
     db.docenteMaterias = [];
+    db.suplenciasDocentes = [];
     db.estudiantes = [];
     db.representantes = [];
     db.pushSubscriptions = [];
@@ -5108,9 +6517,22 @@ async function writeCierreBackupFileAtomic(
   await fs.promises.mkdir(BACKUPS_DIR, { recursive: true });
   const serialized = JSON.stringify(snapshot, null, 2);
   const tmpPath = `${resolved}.${process.pid}.${Date.now()}.tmp`;
-  await fs.promises.writeFile(tmpPath, serialized, 'utf-8');
-  await fs.promises.rename(tmpPath, resolved);
-  return Buffer.byteLength(serialized, 'utf8');
+  let fh: fs.promises.FileHandle | null = null;
+  try {
+    fh = await fs.promises.open(tmpPath, 'w');
+    await fh.writeFile(serialized, 'utf-8');
+    await fh.sync();
+    await fh.close();
+    fh = null;
+    await fs.promises.rename(tmpPath, resolved);
+    return Buffer.byteLength(serialized, 'utf8');
+  } catch (err) {
+    if (fh) {
+      await fh.close().catch(() => {});
+    }
+    await fs.promises.unlink(tmpPath).catch(() => {});
+    throw err;
+  }
 }
 
 export async function listCierreBackups(): Promise<RespaldoCierreArchivoMeta[]> {

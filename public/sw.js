@@ -146,7 +146,19 @@ self.addEventListener('notificationclick', (event) => {
 
   const rawUrl =
     (event.notification.data && event.notification.data.url) || '/#portal-representante';
-  const targetUrl = new URL(rawUrl, self.location.origin).href;
+  const fallbackUrl = new URL('/#portal-representante', self.location.origin).href;
+  let targetUrl = fallbackUrl;
+  try {
+    const parsedTarget = new URL(String(rawUrl), self.location.origin);
+    if (
+      parsedTarget.origin === self.location.origin &&
+      (parsedTarget.protocol === 'http:' || parsedTarget.protocol === 'https:')
+    ) {
+      targetUrl = parsedTarget.href;
+    }
+  } catch {
+    targetUrl = fallbackUrl;
+  }
 
   event.waitUntil(
     self.clients

@@ -235,7 +235,16 @@ export const ScheduleManager: React.FC<ScheduleManagerProps> = ({
     return materias.filter((m) => m.idAno === selectedAnoId);
   }, [materias, selectedAnoId]);
 
-  // Adjust defaults when year changes
+  // Adjust defaults when year changes or scoped years load (e.g. coordinador_seccional)
+  useEffect(() => {
+    if (anos.length > 0 && !anos.some((a) => a.idAno === selectedAnoId)) {
+      const nextAnoId = anos[0].idAno;
+      setSelectedAnoId(nextAnoId);
+      const firstSec = secciones.find((s) => s.idAno === nextAnoId)?.idSeccion || 0;
+      setSelectedSeccionId(firstSec);
+    }
+  }, [anos, secciones, selectedAnoId]);
+
   useEffect(() => {
     if (availableSecciones.length > 0 && selectedSeccionId === 0) {
       setSelectedSeccionId(availableSecciones[0].idSeccion);
@@ -710,7 +719,12 @@ export const ScheduleManager: React.FC<ScheduleManagerProps> = ({
     });
   }, [horariosList, selectedAnoId, selectedSeccionId, selectedDocenteId]);
 
-  const canManage = currentUser?.rol === 'director' || currentUser?.rol === 'coordinador';
+  const canManage =
+    currentUser?.rol === 'director' ||
+    currentUser?.rol === 'coordinador' ||
+    currentUser?.rol === 'coordinador_seccional';
+  const canManageGlobalScheduleTools =
+    currentUser?.rol === 'director' || currentUser?.rol === 'coordinador';
 
   return (
     <div className="space-y-6">
@@ -864,8 +878,13 @@ export const ScheduleManager: React.FC<ScheduleManagerProps> = ({
                       <User className="w-3.5 h-3.5 text-slate-400 dark:text-[#71717A]" />
                       {liveClassStatus.teacher
                         ? `${liveClassStatus.teacher.nombre} ${liveClassStatus.teacher.apellidos}`
-                        : 'Profesor asignado'}
+                        : liveClassStatus.block.docenteTitularNombre || 'Profesor asignado'}
                     </span>
+                    {liveClassStatus.block.esSuplencia && (
+                      <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                        Suplencia de: {liveClassStatus.block.docenteTitularNombre || 'Docente Titular'}
+                      </span>
+                    )}
                   </div>
                 </div>
 
@@ -927,19 +946,21 @@ export const ScheduleManager: React.FC<ScheduleManagerProps> = ({
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={() => handleNotifySalida(liveClassStatus.salida!.idSalida)}
-                disabled={notifyingSalidaId === liveClassStatus.salida.idSalida}
-                className="px-4 py-2.5 rounded-2xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold transition-all shadow-sm flex items-center space-x-2 shrink-0 cursor-pointer disabled:opacity-50"
-              >
-                {notifyingSalidaId === liveClassStatus.salida.idSalida ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <BellRing className="w-4 h-4" />
-                )}
-                <span>Notificar Salida por Push</span>
-              </button>
+              {canManageGlobalScheduleTools && (
+                <button
+                  type="button"
+                  onClick={() => handleNotifySalida(liveClassStatus.salida!.idSalida)}
+                  disabled={notifyingSalidaId === liveClassStatus.salida.idSalida}
+                  className="px-4 py-2.5 rounded-2xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold transition-all shadow-sm flex items-center space-x-2 shrink-0 cursor-pointer disabled:opacity-50"
+                >
+                  {notifyingSalidaId === liveClassStatus.salida.idSalida ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <BellRing className="w-4 h-4" />
+                  )}
+                  <span>Notificar Salida por Push</span>
+                </button>
+              )}
             </div>
           ) : (
             <div className="p-6 rounded-2xl bg-slate-50 dark:bg-[#181818] border border-slate-200 dark:border-[#27272A] text-center py-8">
@@ -968,7 +989,7 @@ export const ScheduleManager: React.FC<ScheduleManagerProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {canManage && (
+            {canManageGlobalScheduleTools && (
               <>
                 <button
                   type="button"
@@ -1000,16 +1021,18 @@ export const ScheduleManager: React.FC<ScheduleManagerProps> = ({
                   <DoorOpen className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
                   <span>Configurar Salida ({salidasList.length})</span>
                 </button>
-
-                <button
-                  type="button"
-                  onClick={() => openModal()}
-                  className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition-all shadow-md shadow-indigo-100 dark:shadow-none flex items-center space-x-1.5 cursor-pointer"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>Nuevo Bloque Horario</span>
-                </button>
               </>
+            )}
+
+            {canManage && (
+              <button
+                type="button"
+                onClick={() => openModal()}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition-all shadow-md shadow-indigo-100 dark:shadow-none flex items-center space-x-1.5 cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Nuevo Bloque Horario</span>
+              </button>
             )}
           </div>
         </div>
@@ -1146,7 +1169,7 @@ export const ScheduleManager: React.FC<ScheduleManagerProps> = ({
                       Push Auto
                     </span>
                   )}
-                  {canManage && sal.activo !== false && (
+                  {canManageGlobalScheduleTools && sal.activo !== false && (
                     <button
                       type="button"
                       onClick={() => handleNotifySalida(sal.idSalida)}
@@ -1416,8 +1439,18 @@ export const ScheduleManager: React.FC<ScheduleManagerProps> = ({
 
                                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5 flex items-center gap-1.5">
                                   <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                                  <span>{teacher ? `${teacher.nombre} ${teacher.apellidos}` : 'Docente asignado'}</span>
+                                  <span>
+                                    {teacher
+                                      ? `${teacher.nombre} ${teacher.apellidos}`
+                                      : block.docenteTitularNombre || 'Docente asignado'}
+                                  </span>
                                 </p>
+
+                                {block.esSuplencia && (
+                                  <div className="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                                    <span>Supliendo a: {block.docenteTitularNombre || 'Docente Titular'}</span>
+                                  </div>
+                                )}
 
                                 {canManage && (
                                   <div className="mt-3 pt-2.5 border-t border-slate-100 dark:border-[#27272A] flex items-center justify-end space-x-2">
@@ -1634,9 +1667,19 @@ export const ScheduleManager: React.FC<ScheduleManagerProps> = ({
                                 <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-1">
                                   <User className="w-3 h-3 text-slate-400" />
                                   <span className="truncate">
-                                    {teacher ? `${teacher.nombre} ${teacher.apellidos}` : 'Docente asignado'}
+                                    {teacher
+                                      ? `${teacher.nombre} ${teacher.apellidos}`
+                                      : block.docenteTitularNombre || 'Docente asignado'}
                                   </span>
                                 </p>
+
+                                {block.esSuplencia && (
+                                  <div className="mt-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                                    <span className="truncate">
+                                      Suplencia de: {block.docenteTitularNombre || 'Docente Titular'}
+                                    </span>
+                                  </div>
+                                )}
 
                                 {/* Management Actions for Director / Coordinador */}
                                 {canManage && (

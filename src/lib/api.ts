@@ -3,6 +3,7 @@ import type {
   Seccion,
   Materia,
   DocenteMateria,
+  SuplenciaDocente,
   Representante,
   Estudiante,
   Usuario,
@@ -417,6 +418,7 @@ export async function createUser(data: {
   rol: RolUsuario;
   password?: string;
   activo?: boolean;
+  anosAsignados?: number[];
 }): Promise<Usuario> {
   return apiFetch('/users', {
     method: 'POST',
@@ -538,8 +540,93 @@ export async function assignDocenteMateriasBatch(
   });
 }
 
+export async function replaceDocenteMaterias(
+  idDocente: number,
+  idMaterias: number[]
+): Promise<{
+  success: boolean;
+  count: number;
+  addedCount: number;
+  removedCount: number;
+  assignments: DocenteMateria[];
+}> {
+  return apiFetch(`/docente-materias/docente/${idDocente}`, {
+    method: 'PUT',
+    body: JSON.stringify({ idMaterias }),
+  });
+}
+
 export async function removeDocenteMateria(id: number): Promise<void> {
   await apiFetch(`/docente-materias/${id}`, { method: 'DELETE' });
+}
+
+// -------------------------------------------------------------
+// 3B. SUPLENCIAS DOCENTES
+// -------------------------------------------------------------
+export async function fetchSuplencias(filters?: {
+  idSuplente?: number;
+  idDocenteTitular?: number;
+  idMateria?: number;
+  idAno?: number;
+  soloVigentes?: boolean;
+  fecha?: string;
+}): Promise<SuplenciaDocente[]> {
+  return apiFetch(
+    `/suplencias${buildQuery({
+      idSuplente: filters?.idSuplente,
+      idDocenteTitular: filters?.idDocenteTitular,
+      idMateria: filters?.idMateria,
+      idAno: filters?.idAno,
+      soloVigentes: filters?.soloVigentes ? 'true' : undefined,
+      fecha: filters?.fecha,
+    })}`
+  );
+}
+
+export async function createSuplencia(data: {
+  idSuplente: number;
+  idDocenteTitular: number;
+  alcanceCompleto?: boolean;
+  idDocenteMateria?: number | null;
+  idMateria?: number | null;
+  idSeccion?: number | null;
+  activo?: boolean;
+  fechaInicio?: string | null;
+  fechaFin?: string | null;
+  motivo?: string | null;
+}): Promise<SuplenciaDocente> {
+  return apiFetch('/suplencias', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateSuplencia(
+  idSuplencia: number,
+  data: {
+    idDocenteTitular?: number;
+    alcanceCompleto?: boolean;
+    idDocenteMateria?: number | null;
+    idMateria?: number | null;
+    idSeccion?: number | null;
+    activo?: boolean;
+    fechaInicio?: string | null;
+    fechaFin?: string | null;
+    motivo?: string | null;
+  }
+): Promise<SuplenciaDocente> {
+  return apiFetch(`/suplencias/${idSuplencia}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function toggleSuplencia(idSuplencia: number): Promise<SuplenciaDocente> {
+  return apiFetch(`/suplencias/${idSuplencia}/toggle`, { method: 'PATCH' });
+}
+
+export async function deleteSuplencia(idSuplencia: number): Promise<void> {
+  await apiFetch(`/suplencias/${idSuplencia}`, { method: 'DELETE' });
 }
 
 // -------------------------------------------------------------
@@ -704,7 +791,17 @@ export async function submitAsistenciaBatch(
   idMateria: number,
   fecha: string,
   records: Array<{ idEstudiante: number; estado: EstadoAsistencia; horaEntrada?: string }>
-): Promise<{ success: boolean; count: number }> {
+): Promise<{
+  success: boolean;
+  count: number;
+  updatedCount?: number;
+  skippedCount?: number;
+  skippedStudents?: Array<{
+    idEstudiante: number;
+    nombreCompleto: string;
+    estadoActual: EstadoAsistencia;
+  }>;
+}> {
   return apiFetch('/asistencia/batch', {
     method: 'POST',
     body: JSON.stringify({ idMateria, fecha, records }),

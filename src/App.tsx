@@ -35,6 +35,7 @@ import { ScheduleManager } from './components/ScheduleManager.tsx';
 import { ParentPortal } from './components/ParentPortal.tsx';
 import { BackupRestoreManager } from './components/BackupRestoreManager.tsx';
 import { TeacherTodaySubjects } from './components/TeacherTodaySubjects.tsx';
+import { SuplenciasPanel } from './components/SuplenciasPanel.tsx';
 import {
   fetchAnosEscolares,
   fetchSecciones,
@@ -43,6 +44,7 @@ import {
   fetchRepresentantes,
   fetchEstudiantes,
   fetchUsers,
+  fetchSuplencias,
   fetchAuthMe,
   logoutSession,
 } from './lib/api.ts';
@@ -51,6 +53,7 @@ import type {
   Seccion,
   Materia,
   DocenteMateria,
+  SuplenciaDocente,
   Representante,
   Estudiante,
   Usuario,
@@ -76,6 +79,7 @@ export default function App() {
     | 'estudiantes'
     | 'horarios'
     | 'auditoria'
+    | 'suplencias'
     | 'academico'
     | 'usuarios'
     | 'restauracion';
@@ -85,6 +89,7 @@ export default function App() {
     'estudiantes',
     'horarios',
     'auditoria',
+    'suplencias',
     'academico',
     'usuarios',
     'restauracion',
@@ -108,6 +113,7 @@ export default function App() {
   const [secciones, setSecciones] = useState<Seccion[]>([]);
   const [materias, setMaterias] = useState<Materia[]>([]);
   const [docenteMaterias, setDocenteMaterias] = useState<DocenteMateria[]>([]);
+  const [suplencias, setSuplencias] = useState<SuplenciaDocente[]>([]);
   const [representantes, setRepresentantes] = useState<Representante[]>([]);
   const [estudiantes, setEstudiantes] = useState<Estudiante[]>([]);
   const [staffUsers, setStaffUsers] = useState<Usuario[]>([]);
@@ -217,11 +223,13 @@ export default function App() {
   const [showArchModal, setShowArchModal] = useState<boolean>(false);
 
   const portalModeRef = React.useRef<'staff' | 'representante'>(portalMode);
+  const loadSeqRef = React.useRef<number>(0);
   useEffect(() => {
     portalModeRef.current = portalMode;
   }, [portalMode]);
 
   const loadAllData = async () => {
+    const reqSeq = ++loadSeqRef.current;
     setError(null);
     try {
       const [
@@ -229,33 +237,46 @@ export default function App() {
         seccionesData,
         materiasData,
         docenteMateriasData,
+        suplenciasData,
         repsData,
         estsData,
         usersData,
+        authStatus,
       ] = await Promise.all([
         fetchAnosEscolares(),
         fetchSecciones(),
         fetchMaterias(),
         fetchDocenteMaterias(),
+        fetchSuplencias(),
         fetchRepresentantes(),
         fetchEstudiantes(),
         fetchUsers(),
+        fetchAuthMe().catch(() => null),
       ]);
 
+      if (reqSeq !== loadSeqRef.current) return;
+
+      if (authStatus?.authenticated && authStatus.type === 'staff' && authStatus.user) {
+        setActiveStaffUser(authStatus.user);
+      }
       setAnos(anosData);
       setSecciones(seccionesData);
       setMaterias(materiasData);
       setDocenteMaterias(docenteMateriasData);
+      setSuplencias(suplenciasData);
       setRepresentantes(repsData);
       setEstudiantes(estsData);
       setStaffUsers(usersData);
     } catch (err: any) {
+      if (reqSeq !== loadSeqRef.current) return;
       console.error('Error loading master data:', err);
       setError(
         err.message || 'No se pudo conectar con el servidor institucional. Compruebe la conexión.'
       );
     } finally {
-      setLoading(false);
+      if (reqSeq === loadSeqRef.current) {
+        setLoading(false);
+      }
     }
   };
 
@@ -319,6 +340,7 @@ export default function App() {
       setSecciones([]);
       setMaterias([]);
       setDocenteMaterias([]);
+      setSuplencias([]);
       setRepresentantes([]);
       setEstudiantes([]);
       setStaffUsers([]);
@@ -338,6 +360,7 @@ export default function App() {
     setSecciones([]);
     setMaterias([]);
     setDocenteMaterias([]);
+    setSuplencias([]);
     setRepresentantes([]);
     setEstudiantes([]);
     setStaffUsers([]);
@@ -457,13 +480,14 @@ export default function App() {
                 {/* Sub-Tabs Components */}
                 {activeDocenteTab === 'horarios' && (
                   <div className="space-y-6">
-                    {activeStaffUser.rol === 'docente' && (
+                    {(activeStaffUser.rol === 'docente' || activeStaffUser.rol === 'docente_suplente') && (
                       <TeacherTodaySubjects
                         currentUser={activeStaffUser}
                         anos={anos}
                         secciones={secciones}
                         materias={materias}
                         docenteMaterias={docenteMaterias}
+                        suplencias={suplencias}
                         estudiantes={estudiantes}
                         onSelectClassForAttendance={({ materiaId, seccionId, anoId, fecha }) =>
                           handleGoToAttendanceFromSchedule(materiaId, seccionId, fecha, anoId)
@@ -494,6 +518,7 @@ export default function App() {
                     secciones={secciones}
                     materias={materias}
                     docenteMaterias={docenteMaterias}
+                    suplencias={suplencias}
                     estudiantes={estudiantes}
                     currentUser={activeStaffUser}
                     onRefreshData={loadAllData}
@@ -512,35 +537,58 @@ export default function App() {
                   />
                 )}
 
-                {activeDocenteTab === 'auditoria' && (
-                  <AttendanceAudit
-                    anos={anos}
-                    secciones={secciones}
-                    materias={materias}
-                    currentUser={activeStaffUser}
-                  />
-                )}
+                {activeDocenteTab === 'auditoria' &&
+                  ['director', 'coordinador', 'coordinador_seccional'].includes(activeStaffUser.rol) && (
+                    <AttendanceAudit
+                      anos={anos}
+                      secciones={secciones}
+                      materias={materias}
+                      currentUser={activeStaffUser}
+                    />
+                  )}
 
-                {activeDocenteTab === 'academico' && (
-                  <AcademicManager
-                    anos={anos}
-                    secciones={secciones}
-                    materias={materias}
-                    docenteMaterias={docenteMaterias}
-                    staffUsers={staffUsers}
-                    estudiantes={estudiantes}
-                    currentUser={activeStaffUser}
-                    onRefreshData={loadAllData}
-                  />
-                )}
+                {activeDocenteTab === 'suplencias' &&
+                  ['director', 'coordinador', 'coordinador_seccional'].includes(activeStaffUser.rol) && (
+                    <SuplenciasPanel
+                      anos={anos}
+                      secciones={secciones}
+                      materias={materias}
+                      docenteMaterias={docenteMaterias}
+                      suplencias={suplencias}
+                      staffUsers={staffUsers}
+                      currentUser={activeStaffUser}
+                      onRefreshData={loadAllData}
+                    />
+                  )}
 
-                {activeDocenteTab === 'usuarios' && (
-                  <StaffManager
-                    currentUser={activeStaffUser}
-                    staffUsers={staffUsers}
-                    onRefreshData={loadAllData}
-                  />
-                )}
+                {activeDocenteTab === 'academico' &&
+                  ['director', 'coordinador', 'coordinador_seccional'].includes(activeStaffUser.rol) && (
+                    <AcademicManager
+                      anos={anos}
+                      secciones={secciones}
+                      materias={materias}
+                      docenteMaterias={docenteMaterias}
+                      suplencias={suplencias}
+                      staffUsers={staffUsers}
+                      estudiantes={estudiantes}
+                      currentUser={activeStaffUser}
+                      onRefreshData={loadAllData}
+                    />
+                  )}
+
+                {activeDocenteTab === 'usuarios' &&
+                  ['director', 'coordinador'].includes(activeStaffUser.rol) && (
+                    <StaffManager
+                      currentUser={activeStaffUser}
+                      staffUsers={staffUsers}
+                      anos={anos}
+                      secciones={secciones}
+                      materias={materias}
+                      docenteMaterias={docenteMaterias}
+                      suplencias={suplencias}
+                      onRefreshData={loadAllData}
+                    />
+                  )}
 
                 {activeDocenteTab === 'restauracion' && activeStaffUser?.rol === 'director' && (
                   <BackupRestoreManager
@@ -635,7 +683,7 @@ export default function App() {
               type="button"
               onClick={() => setMobileMoreDrawerOpen(true)}
               className={`flex flex-col items-center justify-center py-1 transition-colors cursor-pointer ${
-                ['auditoria', 'academico', 'usuarios', 'restauracion'].includes(activeDocenteTab)
+                ['auditoria', 'suplencias', 'academico', 'usuarios', 'restauracion'].includes(activeDocenteTab)
                   ? 'text-purple-600 dark:text-purple-400 font-extrabold'
                   : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
               }`}
@@ -670,38 +718,62 @@ export default function App() {
             </div>
 
             <div className="space-y-1.5">
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveDocenteTab('auditoria');
-                  setMobileMoreDrawerOpen(false);
-                }}
-                className={`w-full text-left px-3.5 py-3 rounded-xl text-xs font-bold flex items-center space-x-2.5 transition-colors ${
-                  activeDocenteTab === 'auditoria'
-                    ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800'
-                    : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-[#181818]'
-                }`}
-              >
-                <Clock className="w-4 h-4 text-amber-500" />
-                <span>Auditoría de Horas de Entrada</span>
-              </button>
-
-              {(activeStaffUser?.rol === 'director' || activeStaffUser?.rol === 'coordinador') && (
+              {(activeStaffUser?.rol === 'director' ||
+                activeStaffUser?.rol === 'coordinador' ||
+                activeStaffUser?.rol === 'coordinador_seccional') && (
                 <button
                   type="button"
                   onClick={() => {
-                    setActiveDocenteTab('academico');
+                    setActiveDocenteTab('auditoria');
                     setMobileMoreDrawerOpen(false);
                   }}
                   className={`w-full text-left px-3.5 py-3 rounded-xl text-xs font-bold flex items-center space-x-2.5 transition-colors ${
-                    activeDocenteTab === 'academico'
-                      ? 'bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800'
+                    activeDocenteTab === 'auditoria'
+                      ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800'
                       : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-[#181818]'
                   }`}
                 >
-                  <Building className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                  <span>Niveles, Secciones & Materias</span>
+                  <Clock className="w-4 h-4 text-amber-500" />
+                  <span>Asistencia General &amp; Auditoría</span>
                 </button>
+              )}
+
+              {(activeStaffUser?.rol === 'director' ||
+                activeStaffUser?.rol === 'coordinador' ||
+                activeStaffUser?.rol === 'coordinador_seccional') && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveDocenteTab('suplencias');
+                      setMobileMoreDrawerOpen(false);
+                    }}
+                    className={`w-full text-left px-3.5 py-3 rounded-xl text-xs font-bold flex items-center space-x-2.5 transition-colors ${
+                      activeDocenteTab === 'suplencias'
+                        ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
+                        : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-[#181818]'
+                    }`}
+                  >
+                    <RefreshCw className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                    <span>Panel de Suplencias</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveDocenteTab('academico');
+                      setMobileMoreDrawerOpen(false);
+                    }}
+                    className={`w-full text-left px-3.5 py-3 rounded-xl text-xs font-bold flex items-center space-x-2.5 transition-colors ${
+                      activeDocenteTab === 'academico'
+                        ? 'bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800'
+                        : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-[#181818]'
+                    }`}
+                  >
+                    <Building className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                    <span>Niveles, Secciones, Materias &amp; Suplencias</span>
+                  </button>
+                </>
               )}
 
               {(activeStaffUser?.rol === 'director' || activeStaffUser?.rol === 'coordinador') && (
@@ -831,9 +903,10 @@ export default function App() {
                 <p>5. representantes (idRepresentante, usuario, cedula, nombres, apellidos, telefono, email, passwordHash, activo)</p>
                 <p>6. estudiantes (idEstudiante, cedula, nombres, apellidos, idAnoActual, idSeccion, idRepresentante)</p>
                 <p>7. asistencia (idAsistencia, idEstudiante, idMateria, fecha, horaEntrada, estado)</p>
-                <p>8. users (id, uid, usuario, email, passwordHash, rol [&apos;director&apos;, &apos;coordinador&apos;, &apos;docente&apos;], activo, nombre, apellidos)</p>
-                <p>9. horarios (idHorario, idAno, idSeccion, idMateria, diaSemana, horaInicio, horaFin, aula)</p>
-                <p className="text-amber-400 font-bold mt-1">10. recesos_institucionales (idReceso, nombre, horaInicio, horaFin, activo)</p>
+                <p>8. users (id, uid, usuario, email, passwordHash, rol [&apos;director&apos;, &apos;coordinador&apos;, &apos;coordinador_seccional&apos;, &apos;docente&apos;, &apos;docente_suplente&apos;], anosAsignados, activo)</p>
+                <p>9. suplencias_docentes (idSuplencia, idSuplente, idDocenteTitular, idMateria, idAno, idSeccion, fechaInicio, fechaFin, activo)</p>
+                <p>10. horarios (idHorario, idAno, idSeccion, idMateria, diaSemana, horaInicio, horaFin, aula)</p>
+                <p className="text-amber-400 font-bold mt-1">11. recesos_institucionales (idReceso, nombre, horaInicio, horaFin, activo)</p>
               </div>
 
               <div className="bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-900 p-3.5 rounded-2xl text-indigo-950 dark:text-indigo-200">
@@ -846,10 +919,13 @@ export default function App() {
                     <strong>Director:</strong> Control total del sistema, configuración institucional, auditoría de asistencia y gestión de personal.
                   </li>
                   <li>
-                    <strong>Coordinador:</strong> Pase de asistencia, justificaciones y reposos médicos, gestión académica (materias, secciones, horarios) y representantes.
+                    <strong>Coordinador Académico:</strong> Pase de asistencia, justificaciones y reposos médicos, gestión académica global y representantes.
                   </li>
                   <li>
-                    <strong>Docente:</strong> Pase de lista y control de asistencia restringido a sus materias asignadas.
+                    <strong>Coordinador Seccional:</strong> Gestión administrativa, horarios, suplencias, estudiantes y justificaciones restringidas exclusivamente a sus años escolares asignados.
+                  </li>
+                  <li>
+                    <strong>Docente / Docente Suplente:</strong> Pase de lista en aula restringido a sus materias asignadas o suplencias vigentes, registrando en auditoría al docente titular sustituido.
                   </li>
                   <li>
                     <strong>Representante:</strong> Portal dedicado para seguimiento en tiempo real del historial de asistencia y horarios escolares.

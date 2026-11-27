@@ -11,10 +11,15 @@ import {
   requireAuth,
   requireRole,
   validateDocenteOwnership,
+  verifySameOriginForCookieMutations,
+  isCoordinadorSeccional,
+  getCoordinadorSeccionalAnos,
+  assertCoordinadorSeccionalAno,
 } from './auth.ts';
 import {
   validateBody,
   validateQuery,
+  validatePositiveIntParam,
   loginCredentialsSchema,
   createStaffUserSchema,
   updateStaffUserSchema,
@@ -60,13 +65,25 @@ import {
   updateMateriaSchema,
   assignDocenteMateriaSchema,
   assignDocenteMateriasBatchSchema,
+  replaceDocenteMateriasSchema,
   createEstudianteSchema,
   asistenciaQuerySchema,
   validateHorarioConflictSchema,
   suggestSlotsSchema,
   updateHorarioSchema,
+  usersQuerySchema,
+  soloActivosQuerySchema,
+  lapsosQuerySchema,
+  idAnoOptionalQuerySchema,
+  docenteMateriasQuerySchema,
+  estudiantesQuerySchema,
+  horariosQuerySchema,
+  notificacionesQuerySchema,
+  createSuplenciaSchema,
+  updateSuplenciaSchema,
+  suplenciasQuerySchema,
 } from './validation.ts';
-import type { EstadoAsistencia } from '../types.ts';
+import type { EstadoAsistencia, RolUsuario } from '../types.ts';
 import {
   getVapidPublicKey,
   dispatchAttendancePushNotificationsDirect,
@@ -101,6 +118,7 @@ const restoreJsonParser = express.json({ limit: '50mb' });
 
 schoolApp.set('trust proxy', 1);
 schoolApp.use(cookieParser());
+schoolApp.use(verifySameOriginForCookieMutations);
 schoolApp.use((req, res, next) => {
   if (req.path === '/backup/restore' && req.method === 'POST') {
     return restoreJsonParser(req, res, next);
@@ -108,6 +126,23 @@ schoolApp.use((req, res, next) => {
   return standardJsonParser(req, res, next);
 });
 schoolApp.use(express.urlencoded({ extended: true, limit: '1mb' }));
+schoolApp.use((err: any, _req: Request, res: Response, next: express.NextFunction) => {
+  if (err?.type === 'entity.too.large' || err?.status === 413) {
+    res.status(413).json({
+      error: 'La carga útil enviada excede el tamaño máximo permitido.',
+      code: 'PAYLOAD_TOO_LARGE',
+    });
+    return;
+  }
+  if (err instanceof SyntaxError && 'body' in err) {
+    res.status(400).json({
+      error: 'Cuerpo JSON malformado.',
+      code: 'INVALID_JSON',
+    });
+    return;
+  }
+  next(err);
+});
 schoolApp.use(apiRouter);
 
 function getAuditAuthorFromReq(req: Request) {
@@ -136,6 +171,10 @@ function getAuditAuthorFromReq(req: Request) {
     ipOrigen: req.ip || req.socket.remoteAddress || null,
     userAgent: req.headers['user-agent'] || null,
   };
+}
+
+function getAllowedAnosScope(req: Request): number[] | undefined {
+  return isCoordinadorSeccional(req.user) ? getCoordinadorSeccionalAnos(req.user) : undefined;
 }
 
 // Rate limiter estricto contra fuerza bruta en login
@@ -464,14 +503,19 @@ apiRouter.put(
   }
 );
 
-apiRouter.get('/recesos', requireAuth, async (req: Request, res: Response) => {
-  try {
-    const soloActivos = req.query.soloActivos === 'true';
-    res.json(await db.getRecesos(soloActivos));
-  } catch (e: any) {
-    res.status(500).json({ error: e.message });
+apiRouter.get(
+  '/recesos',
+  requireAuth,
+  validateQuery(soloActivosQuerySchema),
+  async (_req: Request, res: Response) => {
+    try {
+      const { soloActivos } = res.locals.validatedQuery as { soloActivos: boolean };
+      res.json(await db.getRecesos(soloActivos));
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   }
-});
+);
 
 apiRouter.post(
   '/recesos',
@@ -499,13 +543,11 @@ apiRouter.put(
   '/recesos/:id',
   requireAuth,
   requireRole('director', 'coordinador'),
+  validatePositiveIntParam('id', 'receso'),
   validateBody(updateRecesoSchema),
   async (req: Request, res: Response) => {
     try {
-      const idReceso = Number(req.params.id);
-      if (!Number.isInteger(idReceso) || idReceso <= 0) {
-        return res.status(400).json({ error: 'ID de receso inválido.' });
-      }
+      const idReceso = res.locals.validatedParams.id as number;
       const updated = await db.updateReceso(idReceso, req.body);
       await db.logAuditEvent({
         ...getAuditAuthorFromReq(req),
@@ -525,9 +567,10 @@ apiRouter.patch(
   '/recesos/:id/toggle',
   requireAuth,
   requireRole('director', 'coordinador'),
+  validatePositiveIntParam('id', 'receso'),
   async (req: Request, res: Response) => {
     try {
-      const idReceso = Number(req.params.id);
+      const idReceso = res.locals.validatedParams.id as number;
       const updated = await db.toggleReceso(idReceso);
       await db.logAuditEvent({
         ...getAuditAuthorFromReq(req),
@@ -547,9 +590,10 @@ apiRouter.delete(
   '/recesos/:id',
   requireAuth,
   requireRole('director', 'coordinador'),
+  validatePositiveIntParam('id', 'receso'),
   async (req: Request, res: Response) => {
     try {
-      const idReceso = Number(req.params.id);
+      const idReceso = res.locals.validatedParams.id as number;
       await db.deleteReceso(idReceso);
       await db.logAuditEvent({
         ...getAuditAuthorFromReq(req),
@@ -569,14 +613,19 @@ apiRouter.delete(
 // (Planificador automático unificado en scheduleNotifier.ts)
 // ---------------------------------------------------------------------------
 
-apiRouter.get('/salidas', requireAuth, async (req: Request, res: Response) => {
-  try {
-    const soloActivos = req.query.soloActivos === 'true';
-    res.json(await db.getSalidas(soloActivos));
-  } catch (e: any) {
-    res.status(500).json({ error: e.message });
+apiRouter.get(
+  '/salidas',
+  requireAuth,
+  validateQuery(soloActivosQuerySchema),
+  async (_req: Request, res: Response) => {
+    try {
+      const { soloActivos } = res.locals.validatedQuery as { soloActivos: boolean };
+      res.json(await db.getSalidas(soloActivos));
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   }
-});
+);
 
 apiRouter.post(
   '/salidas',
@@ -604,13 +653,11 @@ apiRouter.put(
   '/salidas/:id',
   requireAuth,
   requireRole('director', 'coordinador'),
+  validatePositiveIntParam('id', 'hora de salida'),
   validateBody(updateSalidaSchema),
   async (req: Request, res: Response) => {
     try {
-      const idSalida = Number(req.params.id);
-      if (!Number.isInteger(idSalida) || idSalida <= 0) {
-        return res.status(400).json({ error: 'ID de hora de salida inválido.' });
-      }
+      const idSalida = res.locals.validatedParams.id as number;
       const updated = await db.updateSalida(idSalida, req.body || {});
       await db.logAuditEvent({
         ...getAuditAuthorFromReq(req),
@@ -630,12 +677,10 @@ apiRouter.patch(
   '/salidas/:id/toggle',
   requireAuth,
   requireRole('director', 'coordinador'),
+  validatePositiveIntParam('id', 'hora de salida'),
   async (req: Request, res: Response) => {
     try {
-      const idSalida = Number(req.params.id);
-      if (!Number.isInteger(idSalida) || idSalida <= 0) {
-        return res.status(400).json({ error: 'ID de hora de salida inválido.' });
-      }
+      const idSalida = res.locals.validatedParams.id as number;
       const updated = await db.toggleSalida(idSalida);
       await db.logAuditEvent({
         ...getAuditAuthorFromReq(req),
@@ -655,12 +700,10 @@ apiRouter.delete(
   '/salidas/:id',
   requireAuth,
   requireRole('director', 'coordinador'),
+  validatePositiveIntParam('id', 'hora de salida'),
   async (req: Request, res: Response) => {
     try {
-      const idSalida = Number(req.params.id);
-      if (!Number.isInteger(idSalida) || idSalida <= 0) {
-        return res.status(400).json({ error: 'ID de hora de salida inválido.' });
-      }
+      const idSalida = res.locals.validatedParams.id as number;
       await db.deleteSalida(idSalida);
       await db.logAuditEvent({
         ...getAuditAuthorFromReq(req),
@@ -679,12 +722,10 @@ apiRouter.post(
   '/salidas/:id/notificar',
   requireAuth,
   requireRole('director', 'coordinador'),
+  validatePositiveIntParam('id', 'hora de salida'),
   async (req: Request, res: Response) => {
     try {
-      const idSalida = Number(req.params.id);
-      if (!Number.isInteger(idSalida) || idSalida <= 0) {
-        return res.status(400).json({ error: 'ID de hora de salida inválido.' });
-      }
+      const idSalida = res.locals.validatedParams.id as number;
 
       const clock = getSchoolClockInTimezone();
       const author = getAuditAuthorFromReq(req);
@@ -777,15 +818,14 @@ apiRouter.get('/lapsos/activo', requireAuth, async (_req: Request, res: Response
 apiRouter.get(
   '/lapsos',
   requireAuth,
-  requireRole('director', 'coordinador'),
-  async (req: Request, res: Response) => {
+  requireRole('director', 'coordinador', 'coordinador_seccional'),
+  validateQuery(lapsosQuerySchema),
+  async (_req: Request, res: Response) => {
     try {
-      const anioEscolar = req.query.anioEscolar
-        ? String(req.query.anioEscolar)
-        : req.query.anio_escolar
-        ? String(req.query.anio_escolar)
-        : undefined;
-      const soloActivos = req.query.soloActivos === 'true';
+      const { anioEscolar, soloActivos } = res.locals.validatedQuery as {
+        anioEscolar?: string;
+        soloActivos: boolean;
+      };
       res.json(await db.getLapsos({ anioEscolar, soloActivos }));
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -827,10 +867,11 @@ apiRouter.put(
   '/lapsos/:id',
   requireAuth,
   requireRole('director', 'coordinador'),
+  validatePositiveIntParam('id', 'lapso escolar'),
   validateBody(updateLapsoSchema),
   async (req: Request, res: Response) => {
     try {
-      const id = Number(req.params.id);
+      const id = res.locals.validatedParams.id as number;
       const updated = await db.updateLapso(id, req.body);
       await db.logAuditEvent({
         ...getAuditAuthorFromReq(req),
@@ -858,10 +899,11 @@ apiRouter.patch(
   '/lapsos/:id/activar',
   requireAuth,
   requireRole('director', 'coordinador'),
+  validatePositiveIntParam('id', 'lapso escolar'),
   validateBody(activateLapsoSchema),
   async (req: Request, res: Response) => {
     try {
-      const id = Number(req.params.id);
+      const id = res.locals.validatedParams.id as number;
       const activo = req.body?.activo !== undefined ? Boolean(req.body.activo) : true;
       const updated = await db.activateLapso(id, activo);
       await db.logAuditEvent({
@@ -887,9 +929,10 @@ apiRouter.delete(
   '/lapsos/:id',
   requireAuth,
   requireRole('director', 'coordinador'),
+  validatePositiveIntParam('id', 'lapso escolar'),
   async (req: Request, res: Response) => {
     try {
-      const id = Number(req.params.id);
+      const id = res.locals.validatedParams.id as number;
       await db.deleteLapso(id);
       await db.logAuditEvent({
         ...getAuditAuthorFromReq(req),
@@ -907,17 +950,22 @@ apiRouter.delete(
 // ---------------------------------------------------------------------------
 // 2. PERSONAL INSTITUCIONAL (USERS)
 // ---------------------------------------------------------------------------
-apiRouter.get('/users', requireAuth, async (req: Request, res: Response) => {
-  if (req.authType !== 'staff' || !req.user) {
-    return res.status(403).json({ error: 'Acceso reservado para personal institucional.' });
+apiRouter.get(
+  '/users',
+  requireAuth,
+  validateQuery(usersQuerySchema),
+  async (req: Request, res: Response) => {
+    if (req.authType !== 'staff' || !req.user) {
+      return res.status(403).json({ error: 'Acceso reservado para personal institucional.' });
+    }
+    try {
+      const { rol } = res.locals.validatedQuery as { rol?: RolUsuario };
+      res.json(await db.getUsers(rol, { id: req.user.id, rol: req.user.rol }));
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   }
-  try {
-    const rol = req.query.rol as any;
-    res.json(await db.getUsers(rol));
-  } catch (e: any) {
-    res.status(500).json({ error: e.message });
-  }
-});
+);
 
 apiRouter.post(
   '/users',
@@ -945,10 +993,11 @@ apiRouter.put(
   '/users/:id',
   requireAuth,
   requireRole('director'),
+  validatePositiveIntParam('id', 'usuario'),
   validateBody(updateStaffUserSchema),
   async (req: Request, res: Response) => {
     try {
-      const id = Number(req.params.id);
+      const id = res.locals.validatedParams.id as number;
       const updated = await db.updateUser(id, req.body);
       await db.logAuditEvent({
         ...getAuditAuthorFromReq(req),
@@ -971,9 +1020,10 @@ apiRouter.delete(
   '/users/:id',
   requireAuth,
   requireRole('director'),
+  validatePositiveIntParam('id', 'usuario'),
   async (req: Request, res: Response) => {
     try {
-      const id = Number(req.params.id);
+      const id = res.locals.validatedParams.id as number;
       if (req.user?.id === id) {
         return res.status(400).json({
           error: 'Operación denegada: No puede eliminar su propia cuenta activa.',
@@ -996,9 +1046,9 @@ apiRouter.delete(
 // ---------------------------------------------------------------------------
 // 3. AÑOS ESCOLARES, SECCIONES, MATERIAS & ASIGNACIONES
 // ---------------------------------------------------------------------------
-apiRouter.get('/anos', requireAuth, async (_req: Request, res: Response) => {
+apiRouter.get('/anos', requireAuth, async (req: Request, res: Response) => {
   try {
-    res.json(await db.getAnosEscolares());
+    res.json(await db.getAnosEscolares(getAllowedAnosScope(req)));
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -1031,13 +1081,11 @@ apiRouter.put(
   '/anos/:id',
   requireAuth,
   requireRole('director', 'coordinador'),
+  validatePositiveIntParam('id', 'año escolar'),
   validateBody(updateAnoSchema),
   async (req: Request, res: Response) => {
     try {
-      const id = Number(req.params.id);
-      if (!Number.isInteger(id) || id <= 0) {
-        return res.status(400).json({ error: 'ID de año escolar inválido.' });
-      }
+      const id = res.locals.validatedParams.id as number;
       const { nombreNivel, activo } = req.body;
       res.json(await db.updateAnoEscolar(id, nombreNivel, activo));
     } catch (e: any) {
@@ -1050,9 +1098,11 @@ apiRouter.delete(
   '/anos/:id',
   requireAuth,
   requireRole('director', 'coordinador'),
-  async (req: Request, res: Response) => {
+  validatePositiveIntParam('id', 'año escolar'),
+  async (_req: Request, res: Response) => {
     try {
-      await db.deleteAnoEscolar(Number(req.params.id));
+      const id = res.locals.validatedParams.id as number;
+      await db.deleteAnoEscolar(id);
       res.json({ success: true });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -1060,23 +1110,34 @@ apiRouter.delete(
   }
 );
 
-apiRouter.get('/secciones', requireAuth, async (req: Request, res: Response) => {
-  try {
-    const idAno = req.query.idAno ? Number(req.query.idAno) : undefined;
-    res.json(await db.getSecciones(idAno));
-  } catch (e: any) {
-    res.status(500).json({ error: e.message });
+apiRouter.get(
+  '/secciones',
+  requireAuth,
+  validateQuery(idAnoOptionalQuerySchema),
+  async (req: Request, res: Response) => {
+    try {
+      const { idAno } = res.locals.validatedQuery as { idAno?: number };
+      if (idAno && !(await assertCoordinadorSeccionalAno(req, res, idAno, 'secciones'))) {
+        return;
+      }
+      res.json(await db.getSecciones(idAno, getAllowedAnosScope(req)));
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   }
-});
+);
 
 apiRouter.post(
   '/secciones',
   requireAuth,
-  requireRole('director', 'coordinador'),
+  requireRole('director', 'coordinador', 'coordinador_seccional'),
   validateBody(createSeccionSchema),
   async (req: Request, res: Response) => {
     try {
       const { idAno, nombreSeccion } = req.body;
+      if (!(await assertCoordinadorSeccionalAno(req, res, idAno, 'secciones'))) {
+        return;
+      }
       res.status(201).json(await db.createSeccion(idAno, nombreSeccion));
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -1087,13 +1148,26 @@ apiRouter.post(
 apiRouter.put(
   '/secciones/:id',
   requireAuth,
-  requireRole('director', 'coordinador'),
+  requireRole('director', 'coordinador', 'coordinador_seccional'),
+  validatePositiveIntParam('id', 'sección'),
   validateBody(updateSeccionSchema),
   async (req: Request, res: Response) => {
     try {
-      const id = Number(req.params.id);
-      if (!Number.isInteger(id) || id <= 0) {
-        return res.status(400).json({ error: 'ID de sección inválido.' });
+      const id = res.locals.validatedParams.id as number;
+      if (isCoordinadorSeccional(req.user)) {
+        const existing = await db.getSeccionById(id);
+        if (!existing) {
+          return res.status(404).json({ error: 'Sección no encontrada.' });
+        }
+        if (!(await assertCoordinadorSeccionalAno(req, res, existing.idAno, 'secciones'))) {
+          return;
+        }
+        if (
+          req.body.idAno !== undefined &&
+          !(await assertCoordinadorSeccionalAno(req, res, req.body.idAno, 'secciones'))
+        ) {
+          return;
+        }
       }
       const { nombreSeccion, idAno } = req.body;
       res.json(await db.updateSeccion(id, nombreSeccion, idAno));
@@ -1106,10 +1180,21 @@ apiRouter.put(
 apiRouter.delete(
   '/secciones/:id',
   requireAuth,
-  requireRole('director', 'coordinador'),
+  requireRole('director', 'coordinador', 'coordinador_seccional'),
+  validatePositiveIntParam('id', 'sección'),
   async (req: Request, res: Response) => {
     try {
-      await db.deleteSeccion(Number(req.params.id));
+      const id = res.locals.validatedParams.id as number;
+      if (isCoordinadorSeccional(req.user)) {
+        const existing = await db.getSeccionById(id);
+        if (!existing) {
+          return res.status(404).json({ error: 'Sección no encontrada.' });
+        }
+        if (!(await assertCoordinadorSeccionalAno(req, res, existing.idAno, 'secciones'))) {
+          return;
+        }
+      }
+      await db.deleteSeccion(id);
       res.json({ success: true });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -1117,23 +1202,38 @@ apiRouter.delete(
   }
 );
 
-apiRouter.get('/materias', requireAuth, async (req: Request, res: Response) => {
-  try {
-    const idAno = req.query.idAno ? Number(req.query.idAno) : undefined;
-    res.json(await db.getMaterias(idAno));
-  } catch (e: any) {
-    res.status(500).json({ error: e.message });
+apiRouter.get(
+  '/materias',
+  requireAuth,
+  validateQuery(idAnoOptionalQuerySchema),
+  async (req: Request, res: Response) => {
+    try {
+      const { idAno } = res.locals.validatedQuery as { idAno?: number };
+      if (idAno && !(await assertCoordinadorSeccionalAno(req, res, idAno, 'materias'))) {
+        return;
+      }
+      const includeTeacherEmail =
+        req.authType === 'staff' &&
+        req.user?.rol !== 'docente' &&
+        req.user?.rol !== 'docente_suplente';
+      res.json(await db.getMaterias(idAno, includeTeacherEmail, getAllowedAnosScope(req)));
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   }
-});
+);
 
 apiRouter.post(
   '/materias',
   requireAuth,
-  requireRole('director', 'coordinador'),
+  requireRole('director', 'coordinador', 'coordinador_seccional'),
   validateBody(createMateriaSchema),
   async (req: Request, res: Response) => {
     try {
       const { idAno, nombreMateria } = req.body;
+      if (!(await assertCoordinadorSeccionalAno(req, res, idAno, 'materias'))) {
+        return;
+      }
       res.status(201).json(await db.createMateria(idAno, nombreMateria));
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -1144,13 +1244,26 @@ apiRouter.post(
 apiRouter.put(
   '/materias/:id',
   requireAuth,
-  requireRole('director', 'coordinador'),
+  requireRole('director', 'coordinador', 'coordinador_seccional'),
+  validatePositiveIntParam('id', 'materia'),
   validateBody(updateMateriaSchema),
   async (req: Request, res: Response) => {
     try {
-      const id = Number(req.params.id);
-      if (!Number.isInteger(id) || id <= 0) {
-        return res.status(400).json({ error: 'ID de materia inválido.' });
+      const id = res.locals.validatedParams.id as number;
+      if (isCoordinadorSeccional(req.user)) {
+        const existing = await db.getMateriaById(id);
+        if (!existing) {
+          return res.status(404).json({ error: 'Materia no encontrada.' });
+        }
+        if (!(await assertCoordinadorSeccionalAno(req, res, existing.idAno, 'materias'))) {
+          return;
+        }
+        if (
+          req.body.idAno !== undefined &&
+          !(await assertCoordinadorSeccionalAno(req, res, req.body.idAno, 'materias'))
+        ) {
+          return;
+        }
       }
       const { nombreMateria, idAno } = req.body;
       res.json(await db.updateMateria(id, nombreMateria, idAno));
@@ -1163,10 +1276,21 @@ apiRouter.put(
 apiRouter.delete(
   '/materias/:id',
   requireAuth,
-  requireRole('director', 'coordinador'),
+  requireRole('director', 'coordinador', 'coordinador_seccional'),
+  validatePositiveIntParam('id', 'materia'),
   async (req: Request, res: Response) => {
     try {
-      await db.deleteMateria(Number(req.params.id));
+      const id = res.locals.validatedParams.id as number;
+      if (isCoordinadorSeccional(req.user)) {
+        const existing = await db.getMateriaById(id);
+        if (!existing) {
+          return res.status(404).json({ error: 'Materia no encontrada.' });
+        }
+        if (!(await assertCoordinadorSeccionalAno(req, res, existing.idAno, 'materias'))) {
+          return;
+        }
+      }
+      await db.deleteMateria(id);
       res.json({ success: true });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -1174,24 +1298,40 @@ apiRouter.delete(
   }
 );
 
-apiRouter.get('/docente-materias', requireAuth, async (req: Request, res: Response) => {
-  try {
-    const idUsuario = req.query.idUsuario ? Number(req.query.idUsuario) : undefined;
-    const idMateria = req.query.idMateria ? Number(req.query.idMateria) : undefined;
-    res.json(await db.getDocenteMaterias(idUsuario, idMateria));
-  } catch (e: any) {
-    res.status(500).json({ error: e.message });
+apiRouter.get(
+  '/docente-materias',
+  requireAuth,
+  validateQuery(docenteMateriasQuerySchema),
+  async (req: Request, res: Response) => {
+    try {
+      const { idUsuario, idMateria } = res.locals.validatedQuery as {
+        idUsuario?: number;
+        idMateria?: number;
+      };
+      res.json(await db.getDocenteMaterias(idUsuario, idMateria, getAllowedAnosScope(req)));
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   }
-});
+);
 
 apiRouter.post(
   '/docente-materias',
   requireAuth,
-  requireRole('director', 'coordinador'),
+  requireRole('director', 'coordinador', 'coordinador_seccional'),
   validateBody(assignDocenteMateriaSchema),
   async (req: Request, res: Response) => {
     try {
       const { idUsuario, idMateria } = req.body;
+      if (isCoordinadorSeccional(req.user)) {
+        const mat = await db.getMateriaById(idMateria);
+        if (!mat) {
+          return res.status(404).json({ error: 'Materia no encontrada.' });
+        }
+        if (!(await assertCoordinadorSeccionalAno(req, res, mat.idAno, 'docente_materias'))) {
+          return;
+        }
+      }
       const created = await db.assignDocenteMateria(idUsuario, idMateria);
       await db.logAuditEvent({
         ...getAuditAuthorFromReq(req),
@@ -1210,11 +1350,22 @@ apiRouter.post(
 apiRouter.post(
   '/docente-materias/batch',
   requireAuth,
-  requireRole('director', 'coordinador'),
+  requireRole('director', 'coordinador', 'coordinador_seccional'),
   validateBody(assignDocenteMateriasBatchSchema),
   async (req: Request, res: Response) => {
     try {
       const { idUsuario, idMaterias } = req.body;
+      if (isCoordinadorSeccional(req.user)) {
+        for (const idMat of idMaterias as number[]) {
+          const mat = await db.getMateriaById(idMat);
+          if (!mat) {
+            return res.status(404).json({ error: `La materia ID ${idMat} no existe.` });
+          }
+          if (!(await assertCoordinadorSeccionalAno(req, res, mat.idAno, 'docente_materias'))) {
+            return;
+          }
+        }
+      }
       const result = await db.assignDocenteMateriasBatch(idUsuario, idMaterias);
       await db.logAuditEvent({
         ...getAuditAuthorFromReq(req),
@@ -1230,19 +1381,339 @@ apiRouter.post(
   }
 );
 
+apiRouter.put(
+  '/docente-materias/docente/:idDocente',
+  requireAuth,
+  requireRole('director', 'coordinador', 'coordinador_seccional'),
+  validatePositiveIntParam('idDocente', 'docente'),
+  validateBody(replaceDocenteMateriasSchema),
+  async (req: Request, res: Response) => {
+    try {
+      const idDocente = res.locals.validatedParams.idDocente as number;
+      const { idMaterias } = req.body as { idMaterias: number[] };
+      const allowedAnos = isCoordinadorSeccional(req.user)
+        ? await getCoordinadorSeccionalAnos(req.user)
+        : undefined;
+
+      const result = await db.replaceDocenteMaterias(idDocente, idMaterias, allowedAnos);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'ASIGNACION_DOCENTE_MATERIAS_REEMPLAZADA',
+        entidad: 'docente_materias',
+        idEntidad: idDocente,
+        detalles: {
+          idUsuario: idDocente,
+          totalMaterias: result.count,
+          agregadas: result.addedCount,
+          removidas: result.removedCount,
+        },
+      });
+      res.json(result);
+    } catch (e: any) {
+      const msg = String(e?.message || 'Error al reemplazar asignaciones del docente.');
+      const status = msg.startsWith('Acceso denegado') ? 403 : msg.includes('no existe') ? 404 : 400;
+      res.status(status).json({ error: msg });
+    }
+  }
+);
+
 apiRouter.delete(
   '/docente-materias/:id',
   requireAuth,
-  requireRole('director', 'coordinador'),
+  requireRole('director', 'coordinador', 'coordinador_seccional'),
+  validatePositiveIntParam('id', 'asignación docente-materia'),
   async (req: Request, res: Response) => {
     try {
-      const id = Number(req.params.id);
+      const id = res.locals.validatedParams.id as number;
+      if (isCoordinadorSeccional(req.user)) {
+        const allAssignments = await db.getDocenteMaterias();
+        const existing = allAssignments.find((a) => a.idAsignacion === id);
+        if (!existing) {
+          return res.status(404).json({ error: 'Asignación docente-materia no encontrada.' });
+        }
+        if (!(await assertCoordinadorSeccionalAno(req, res, existing.idAno, 'docente_materias'))) {
+          return;
+        }
+      }
       await db.removeDocenteMateria(id);
       await db.logAuditEvent({
         ...getAuditAuthorFromReq(req),
         accion: 'DESASIGNACION_DOCENTE_MATERIA',
         entidad: 'docente_materias',
         idEntidad: id,
+      });
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// 3B. SUPLENCIAS DOCENTES
+// ---------------------------------------------------------------------------
+apiRouter.get(
+  '/suplencias',
+  requireAuth,
+  validateQuery(suplenciasQuerySchema),
+  async (req: Request, res: Response) => {
+    if (req.authType !== 'staff' || !req.user) {
+      return res.status(403).json({ error: 'Acceso reservado para personal institucional.' });
+    }
+    try {
+      const q = res.locals.validatedQuery as {
+        idSuplente?: number;
+        idDocenteTitular?: number;
+        idMateria?: number;
+        idAno?: number;
+        soloVigentes?: boolean;
+        fecha?: string;
+      };
+
+      if (q.idAno && !(await assertCoordinadorSeccionalAno(req, res, q.idAno, 'suplencias_docentes'))) {
+        return;
+      }
+
+      const includeEmails = req.user.rol !== 'docente' && req.user.rol !== 'docente_suplente';
+      const effectiveFilters = {
+        ...q,
+        idSuplente: req.user.rol === 'docente_suplente' ? req.user.id : q.idSuplente,
+        idDocenteTitular: req.user.rol === 'docente' ? req.user.id : q.idDocenteTitular,
+        allowedAnos: getAllowedAnosScope(req),
+        includeEmails,
+      };
+
+      res.json(await db.getSuplenciasDocentes(effectiveFilters));
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  }
+);
+
+function getSuplenciaCoveredAnoIds(sup: {
+  idAno?: number | null;
+  materiasTitularResumen?: Array<{ idAno: number }>;
+}): number[] {
+  const fromResumen = (sup.materiasTitularResumen || []).map((m) => m.idAno);
+  if (fromResumen.length > 0) {
+    return Array.from(new Set(fromResumen));
+  }
+  return sup.idAno != null ? [sup.idAno] : [];
+}
+
+apiRouter.post(
+  '/suplencias',
+  requireAuth,
+  requireRole('director', 'coordinador', 'coordinador_seccional'),
+  validateBody(createSuplenciaSchema),
+  async (req: Request, res: Response) => {
+    try {
+      if (req.body.alcanceCompleto) {
+        if (isCoordinadorSeccional(req.user)) {
+          if (req.body.idSeccion) {
+            const secs = await db.getSecciones();
+            const sec = secs.find((s) => s.idSeccion === Number(req.body.idSeccion));
+            if (sec && !(await assertCoordinadorSeccionalAno(req, res, sec.idAno, 'suplencias_docentes'))) {
+              return;
+            }
+          } else {
+            const titularMats = await db.getDocenteMaterias(req.body.idDocenteTitular);
+            const titularAnos = Array.from(
+              new Set(titularMats.map((dm) => dm.idAno).filter((id): id is number => id != null))
+            );
+            for (const anoId of titularAnos) {
+              if (!(await assertCoordinadorSeccionalAno(req, res, anoId, 'suplencias_docentes'))) {
+                return;
+              }
+            }
+          }
+        }
+      } else {
+        const materia = await db.getMateriaById(req.body.idMateria);
+        if (!materia) {
+          return res.status(404).json({ error: 'La materia seleccionada no existe.' });
+        }
+        if (!(await assertCoordinadorSeccionalAno(req, res, materia.idAno, 'suplencias_docentes'))) {
+          return;
+        }
+      }
+
+      const created = await db.createSuplenciaDocente(req.body);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'SUPLENCIA_DOCENTE_CREADA',
+        entidad: 'suplencias_docentes',
+        idEntidad: created.idSuplencia,
+        detalles: {
+          idSuplencia: created.idSuplencia,
+          idSuplente: created.idSuplente,
+          idDocenteTitular: created.idDocenteTitular,
+          alcanceCompleto: Boolean(created.alcanceCompleto),
+          idMateria: created.idMateria ?? null,
+          idAno: created.idAno ?? null,
+          idSeccion: created.idSeccion ?? null,
+          fechaInicio: created.fechaInicio ?? null,
+          fechaFin: created.fechaFin ?? null,
+          motivo: created.motivo ?? null,
+        },
+      });
+      res.status(201).json(created);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.put(
+  '/suplencias/:id',
+  requireAuth,
+  requireRole('director', 'coordinador', 'coordinador_seccional'),
+  validatePositiveIntParam('id', 'suplencia docente'),
+  validateBody(updateSuplenciaSchema),
+  async (req: Request, res: Response) => {
+    try {
+      const id = res.locals.validatedParams.id as number;
+      const existing = await db.getSuplenciaById(id);
+      if (!existing) {
+        return res.status(404).json({ error: 'Suplencia docente no encontrada.' });
+      }
+      if (isCoordinadorSeccional(req.user)) {
+        const existingAnos = getSuplenciaCoveredAnoIds(existing);
+        for (const anoId of existingAnos) {
+          if (!(await assertCoordinadorSeccionalAno(req, res, anoId, 'suplencias_docentes'))) {
+            return;
+          }
+        }
+      }
+
+      const nextAlcanceCompleto =
+        req.body.alcanceCompleto !== undefined
+          ? Boolean(req.body.alcanceCompleto)
+          : Boolean(existing.alcanceCompleto);
+
+      if (!nextAlcanceCompleto && req.body.idMateria !== undefined && req.body.idMateria !== null) {
+        const mat = await db.getMateriaById(req.body.idMateria);
+        if (!mat) {
+          return res.status(404).json({ error: 'Materia no encontrada.' });
+        }
+        if (!(await assertCoordinadorSeccionalAno(req, res, mat.idAno, 'suplencias_docentes'))) {
+          return;
+        }
+      } else if (nextAlcanceCompleto && isCoordinadorSeccional(req.user)) {
+        const targetTitularId = req.body.idDocenteTitular ?? existing.idDocenteTitular;
+        const targetSeccionId =
+          req.body.idSeccion !== undefined ? req.body.idSeccion : existing.idSeccion;
+        if (targetSeccionId) {
+          const secs = await db.getSecciones();
+          const sec = secs.find((s) => s.idSeccion === Number(targetSeccionId));
+          if (sec && !(await assertCoordinadorSeccionalAno(req, res, sec.idAno, 'suplencias_docentes'))) {
+            return;
+          }
+        } else {
+          const titularMats = await db.getDocenteMaterias(targetTitularId);
+          const titularAnos = Array.from(
+            new Set(titularMats.map((dm) => dm.idAno).filter((ano): ano is number => ano != null))
+          );
+          for (const anoId of titularAnos) {
+            if (!(await assertCoordinadorSeccionalAno(req, res, anoId, 'suplencias_docentes'))) {
+              return;
+            }
+          }
+        }
+      }
+
+      const updated = await db.updateSuplenciaDocente(id, req.body);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'SUPLENCIA_DOCENTE_ACTUALIZADA',
+        entidad: 'suplencias_docentes',
+        idEntidad: id,
+        detalles: {
+          idSuplencia: id,
+          alcanceCompleto: Boolean(updated.alcanceCompleto),
+          idAno: updated.idAno ?? null,
+          idMateria: updated.idMateria ?? null,
+          idSeccion: updated.idSeccion ?? null,
+          activo: updated.activo,
+        },
+      });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.patch(
+  '/suplencias/:id/toggle',
+  requireAuth,
+  requireRole('director', 'coordinador', 'coordinador_seccional'),
+  validatePositiveIntParam('id', 'suplencia docente'),
+  async (req: Request, res: Response) => {
+    try {
+      const id = res.locals.validatedParams.id as number;
+      const existing = await db.getSuplenciaById(id);
+      if (!existing) {
+        return res.status(404).json({ error: 'Suplencia docente no encontrada.' });
+      }
+      if (isCoordinadorSeccional(req.user)) {
+        for (const anoId of getSuplenciaCoveredAnoIds(existing)) {
+          if (!(await assertCoordinadorSeccionalAno(req, res, anoId, 'suplencias_docentes'))) {
+            return;
+          }
+        }
+      }
+      const updated = await db.toggleSuplenciaDocente(id);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'SUPLENCIA_DOCENTE_ESTADO_ALTERNADO',
+        entidad: 'suplencias_docentes',
+        idEntidad: id,
+        detalles: {
+          idSuplencia: id,
+          alcanceCompleto: Boolean(updated.alcanceCompleto),
+          idAno: updated.idAno ?? null,
+          idMateria: updated.idMateria ?? null,
+          activo: updated.activo,
+        },
+      });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  }
+);
+
+apiRouter.delete(
+  '/suplencias/:id',
+  requireAuth,
+  requireRole('director', 'coordinador', 'coordinador_seccional'),
+  validatePositiveIntParam('id', 'suplencia docente'),
+  async (req: Request, res: Response) => {
+    try {
+      const id = res.locals.validatedParams.id as number;
+      const existing = await db.getSuplenciaById(id);
+      if (!existing) {
+        return res.status(404).json({ error: 'Suplencia docente no encontrada.' });
+      }
+      if (isCoordinadorSeccional(req.user)) {
+        for (const anoId of getSuplenciaCoveredAnoIds(existing)) {
+          if (!(await assertCoordinadorSeccionalAno(req, res, anoId, 'suplencias_docentes'))) {
+            return;
+          }
+        }
+      }
+      await db.deleteSuplenciaDocente(id);
+      await db.logAuditEvent({
+        ...getAuditAuthorFromReq(req),
+        accion: 'SUPLENCIA_DOCENTE_ELIMINADA',
+        entidad: 'suplencias_docentes',
+        idEntidad: id,
+        detalles: {
+          alcanceCompleto: Boolean(existing.alcanceCompleto),
+          idAno: existing.idAno ?? null,
+          idMateria: existing.idMateria ?? null,
+        },
       });
       res.json({ success: true });
     } catch (e: any) {
@@ -1259,10 +1730,10 @@ apiRouter.get('/representantes', requireAuth, async (req: Request, res: Response
     if (req.authType === 'representante' && req.representante) {
       return res.json([req.representante]);
     }
-    if (req.user?.rol === 'docente') {
+    if (req.user?.rol === 'docente' || req.user?.rol === 'docente_suplente') {
       return res.json([]);
     }
-    res.json(await db.getRepresentantes());
+    res.json(await db.getRepresentantes(getAllowedAnosScope(req)));
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -1271,7 +1742,7 @@ apiRouter.get('/representantes', requireAuth, async (req: Request, res: Response
 apiRouter.post(
   '/representantes',
   requireAuth,
-  requireRole('director', 'coordinador'),
+  requireRole('director', 'coordinador', 'coordinador_seccional'),
   validateBody(createRepresentanteSchema),
   async (req: Request, res: Response) => {
     try {
@@ -1293,10 +1764,11 @@ apiRouter.post(
 apiRouter.put(
   '/representantes/:id',
   requireAuth,
+  validatePositiveIntParam('id', 'representante'),
   validateBody(updateRepresentanteSchema),
   async (req: Request, res: Response) => {
     try {
-      const id = Number(req.params.id);
+      const id = res.locals.validatedParams.id as number;
       const isSelfRep = req.authType === 'representante';
 
       if (isSelfRep) {
@@ -1305,10 +1777,26 @@ apiRouter.put(
             error: 'Acceso denegado: Solo puede modificar los datos de su propia cuenta.',
           });
         }
-      } else if (!req.user || !['director', 'coordinador'].includes(req.user.rol)) {
+      } else if (
+        !req.user ||
+        !['director', 'coordinador', 'coordinador_seccional'].includes(req.user.rol)
+      ) {
         return res.status(403).json({
           error: 'Acceso denegado: Solo Director o Coordinador pueden modificar representantes.',
         });
+      } else if (isCoordinadorSeccional(req.user)) {
+        const allowedAnos = getCoordinadorSeccionalAnos(req.user);
+        const repStudents = await db.getEstudiantes({ idRepresentante: id }, false);
+        if (
+          repStudents.length > 0 &&
+          !repStudents.some((e) => e.idAnoActual != null && allowedAnos.includes(e.idAnoActual))
+        ) {
+          return res.status(403).json({
+            error:
+              'Acceso denegado: Este representante no tiene estudiantes vinculados dentro de sus años asignados.',
+            code: 'FORBIDDEN_YEAR_SCOPE',
+          });
+        }
       }
 
       const updated = await db.updateRepresentante(id, req.body, isSelfRep);
@@ -1333,11 +1821,26 @@ apiRouter.put(
 apiRouter.put(
   '/representantes/:id/credenciales',
   requireAuth,
-  requireRole('director', 'coordinador'),
+  requireRole('director', 'coordinador', 'coordinador_seccional'),
+  validatePositiveIntParam('id', 'representante'),
   validateBody(updateRepresentanteCredencialesSchema),
   async (req: Request, res: Response) => {
     try {
-      const id = Number(req.params.id);
+      const id = res.locals.validatedParams.id as number;
+      if (isCoordinadorSeccional(req.user)) {
+        const allowedAnos = getCoordinadorSeccionalAnos(req.user);
+        const repStudents = await db.getEstudiantes({ idRepresentante: id }, false);
+        if (
+          repStudents.length > 0 &&
+          !repStudents.some((e) => e.idAnoActual != null && allowedAnos.includes(e.idAnoActual))
+        ) {
+          return res.status(403).json({
+            error:
+              'Acceso denegado: Este representante no tiene estudiantes vinculados dentro de sus años asignados.',
+            code: 'FORBIDDEN_YEAR_SCOPE',
+          });
+        }
+      }
       const result = await db.updateRepresentanteCredenciales(id, req.body);
       await db.logAuditEvent({
         ...getAuditAuthorFromReq(req),
@@ -1362,9 +1865,10 @@ apiRouter.delete(
   '/representantes/:id',
   requireAuth,
   requireRole('director', 'coordinador'),
+  validatePositiveIntParam('id', 'representante'),
   async (req: Request, res: Response) => {
     try {
-      const id = Number(req.params.id);
+      const id = res.locals.validatedParams.id as number;
       await db.deleteRepresentante(id);
       await db.logAuditEvent({
         ...getAuditAuthorFromReq(req),
@@ -1379,32 +1883,66 @@ apiRouter.delete(
   }
 );
 
-apiRouter.get('/estudiantes', requireAuth, async (req: Request, res: Response) => {
-  try {
-    const idAno = req.query.idAno ? Number(req.query.idAno) : undefined;
-    const idSeccion = req.query.idSeccion ? Number(req.query.idSeccion) : undefined;
-    let idRepresentante = req.query.idRepresentante ? Number(req.query.idRepresentante) : undefined;
+apiRouter.get(
+  '/estudiantes',
+  requireAuth,
+  validateQuery(estudiantesQuerySchema),
+  async (req: Request, res: Response) => {
+    try {
+      const { idAno, idSeccion, idRepresentante: queryIdRep } = res.locals.validatedQuery as {
+        idAno?: number;
+        idSeccion?: number;
+        idRepresentante?: number;
+      };
 
-    if (req.authType === 'representante' && req.representante) {
-      idRepresentante = req.representante.idRepresentante;
+      if (idAno && !(await assertCoordinadorSeccionalAno(req, res, idAno, 'estudiantes'))) {
+        return;
+      }
+
+      const isRep = req.authType === 'representante' && Boolean(req.representante);
+      const isDocenteTitular = req.authType === 'staff' && req.user?.rol === 'docente';
+      const isDocenteSuplente = req.authType === 'staff' && req.user?.rol === 'docente_suplente';
+      const isTeacherMasked = isDocenteTitular || isDocenteSuplente;
+
+      const idRepresentante = isRep
+        ? req.representante!.idRepresentante
+        : isTeacherMasked
+        ? undefined
+        : queryIdRep;
+
+      const idDocenteScope = isDocenteTitular ? req.user!.id : undefined;
+      const idSuplenteScope = isDocenteSuplente ? req.user!.id : undefined;
+      const canReadReps = req.authType === 'staff' && !isTeacherMasked;
+
+      res.json(
+        await db.getEstudiantes(
+          {
+            idAno,
+            idSeccion,
+            idRepresentante,
+            idDocenteScope,
+            idSuplenteScope,
+            allowedAnos: getAllowedAnosScope(req),
+          },
+          canReadReps
+        )
+      );
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
     }
-
-    const canReadReps =
-      req.authType === 'staff' && req.user?.rol !== 'docente';
-
-    res.json(await db.getEstudiantes({ idAno, idSeccion, idRepresentante }, canReadReps));
-  } catch (e: any) {
-    res.status(500).json({ error: e.message });
   }
-});
+);
 
 apiRouter.post(
   '/estudiantes',
   requireAuth,
-  requireRole('director', 'coordinador'),
+  requireRole('director', 'coordinador', 'coordinador_seccional'),
   validateBody(createEstudianteSchema),
   async (req: Request, res: Response) => {
     try {
+      if (!(await assertCoordinadorSeccionalAno(req, res, req.body.idAnoActual, 'estudiantes'))) {
+        return;
+      }
       const est = await db.createEstudiante(req.body);
       await db.logAuditEvent({
         ...getAuditAuthorFromReq(req),
@@ -1423,17 +1961,35 @@ apiRouter.post(
 apiRouter.put(
   '/estudiantes/:id',
   requireAuth,
-  requireRole('director', 'coordinador'),
+  requireRole('director', 'coordinador', 'coordinador_seccional'),
+  validatePositiveIntParam('id', 'estudiante'),
   validateBody(updateEstudianteSchema),
   async (req: Request, res: Response) => {
     try {
-      const id = Number(req.params.id);
+      const id = res.locals.validatedParams.id as number;
+      if (isCoordinadorSeccional(req.user)) {
+        const existing = await db.getEstudianteById(id);
+        if (!existing) {
+          return res.status(404).json({ error: 'Estudiante no encontrado.' });
+        }
+        if (!(await assertCoordinadorSeccionalAno(req, res, existing.idAnoActual, 'estudiantes'))) {
+          return;
+        }
+        if (
+          req.body.idAnoActual !== undefined &&
+          req.body.idAnoActual !== null &&
+          !(await assertCoordinadorSeccionalAno(req, res, req.body.idAnoActual, 'estudiantes'))
+        ) {
+          return;
+        }
+      }
       const updated = await db.updateEstudiante(id, req.body);
       await db.logAuditEvent({
         ...getAuditAuthorFromReq(req),
         accion: 'ESTUDIANTE_ACTUALIZADO',
         entidad: 'estudiantes',
         idEntidad: id,
+        detalles: { idAnoActual: updated.idAnoActual, idSeccion: updated.idSeccion },
       });
       res.json(updated);
     } catch (e: any) {
@@ -1445,10 +2001,20 @@ apiRouter.put(
 apiRouter.delete(
   '/estudiantes/:id',
   requireAuth,
-  requireRole('director', 'coordinador'),
+  requireRole('director', 'coordinador', 'coordinador_seccional'),
+  validatePositiveIntParam('id', 'estudiante'),
   async (req: Request, res: Response) => {
     try {
-      const id = Number(req.params.id);
+      const id = res.locals.validatedParams.id as number;
+      if (isCoordinadorSeccional(req.user)) {
+        const existing = await db.getEstudianteById(id);
+        if (!existing) {
+          return res.status(404).json({ error: 'Estudiante no encontrado.' });
+        }
+        if (!(await assertCoordinadorSeccionalAno(req, res, existing.idAnoActual, 'estudiantes'))) {
+          return;
+        }
+      }
       await db.deleteEstudiante(id);
       await db.logAuditEvent({
         ...getAuditAuthorFromReq(req),
@@ -1563,12 +2129,10 @@ apiRouter.delete(
   '/calendario/no-laborables/:id',
   requireAuth,
   requireRole('director', 'coordinador'),
+  validatePositiveIntParam('id', 'día no laborable'),
   async (req: Request, res: Response) => {
     try {
-      const id = Number(req.params.id);
-      if (!Number.isInteger(id) || id <= 0) {
-        return res.status(400).json({ error: 'ID de registro inválido.' });
-      }
+      const id = res.locals.validatedParams.id as number;
       const removed = await db.deleteDiaNoLaborable(id);
       await db.logAuditEvent({
         ...getAuditAuthorFromReq(req),
@@ -1627,6 +2191,10 @@ apiRouter.get(
         lapso_id?: number;
       };
 
+      if (q.idAno && !(await assertCoordinadorSeccionalAno(req, res, q.idAno, 'asistencia'))) {
+        return;
+      }
+
       let requestedIdMaterias = q.idMaterias
         ? q.idMaterias
             .split(',')
@@ -1648,6 +2216,52 @@ apiRouter.get(
         }
       }
 
+      let suplenciaRestrictions:
+        | Array<{ idMateria: number; idAno: number; idSeccion?: number | null }>
+        | undefined;
+      if (req.authType === 'staff' && req.user?.rol === 'docente_suplente') {
+        const activeSups = await db.getActiveSuplenciasForUser(req.user.id, q.fecha);
+        if (activeSups.length === 0) {
+          return res.json([]);
+        }
+        const restrictions: Array<{ idMateria: number; idAno: number; idSeccion?: number | null }> = [];
+        const supMateriaSet = new Set<number>();
+
+        for (const s of activeSups) {
+          if (s.materiasTitularResumen && s.materiasTitularResumen.length > 0) {
+            for (const m of s.materiasTitularResumen) {
+              supMateriaSet.add(m.idMateria);
+              restrictions.push({
+                idMateria: m.idMateria,
+                idAno: m.idAno,
+                idSeccion: s.idSeccion ?? null,
+              });
+            }
+          } else if (s.idMateria != null && s.idAno != null) {
+            supMateriaSet.add(s.idMateria);
+            restrictions.push({
+              idMateria: s.idMateria,
+              idAno: s.idAno,
+              idSeccion: s.idSeccion ?? null,
+            });
+          }
+        }
+
+        if (restrictions.length === 0) {
+          return res.json([]);
+        }
+        if (q.idMateria && !supMateriaSet.has(q.idMateria)) {
+          return res.json([]);
+        }
+        if (requestedIdMaterias) {
+          requestedIdMaterias = requestedIdMaterias.filter((id) => supMateriaSet.has(id));
+        }
+        suplenciaRestrictions = restrictions;
+      }
+
+      const isTeacherMasked =
+        req.user?.rol === 'docente' || req.user?.rol === 'docente_suplente';
+
       const filters = {
         fecha: q.fecha,
         mes: q.mes,
@@ -1660,10 +2274,14 @@ apiRouter.get(
         idRepresentante:
           req.authType === 'representante' && req.representante
             ? req.representante.idRepresentante
+            : isTeacherMasked
+            ? undefined
             : q.idRepresentante,
         idSeccion: q.idSeccion,
         idAno: q.idAno,
         lapsoId: q.lapsoId || q.lapso_id,
+        allowedAnos: getAllowedAnosScope(req),
+        suplenciaRestrictions,
       };
       res.json(await db.getAsistencia(filters));
     } catch (e: any) {
@@ -1672,7 +2290,7 @@ apiRouter.get(
   }
 );
 
-const handleGetAttendanceHistoryPaginated = async (_req: Request, res: Response) => {
+const handleGetAttendanceHistoryPaginated = async (req: Request, res: Response) => {
   try {
     const query = res.locals.validatedQuery as {
       page: number;
@@ -1689,7 +2307,15 @@ const handleGetAttendanceHistoryPaginated = async (_req: Request, res: Response)
       estado?: EstadoAsistencia;
       search?: string;
     };
-    res.json(await db.getAsistenciaPaginated(query));
+    if (query.idAno && !(await assertCoordinadorSeccionalAno(req, res, query.idAno, 'asistencia'))) {
+      return;
+    }
+    res.json(
+      await db.getAsistenciaPaginated({
+        ...query,
+        allowedAnos: getAllowedAnosScope(req),
+      })
+    );
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -1698,7 +2324,7 @@ const handleGetAttendanceHistoryPaginated = async (_req: Request, res: Response)
 apiRouter.get(
   '/asistencia/general',
   requireAuth,
-  requireRole('director', 'coordinador'),
+  requireRole('director', 'coordinador', 'coordinador_seccional'),
   validateQuery(attendanceHistoryQuerySchema),
   handleGetAttendanceHistoryPaginated
 );
@@ -1706,7 +2332,7 @@ apiRouter.get(
 apiRouter.get(
   '/attendance/history',
   requireAuth,
-  requireRole('director', 'coordinador'),
+  requireRole('director', 'coordinador', 'coordinador_seccional'),
   validateQuery(attendanceHistoryQuerySchema),
   handleGetAttendanceHistoryPaginated
 );
@@ -1723,13 +2349,22 @@ const handleRegistrarAsistenciaBatch = async (req: Request, res: Response) => {
       });
     }
 
-    const ownership = await validateDocenteOwnership(req, Number(idMateria));
+    const studentIds = Array.isArray(records)
+      ? records
+          .map((r: any) => Number(r.idEstudiante))
+          .filter((id: number) => Number.isInteger(id) && id > 0)
+      : undefined;
+
+    const ownership = await validateDocenteOwnership(req, Number(idMateria), {
+      fecha,
+      studentIds,
+    });
     if (!ownership.allowed) {
       return res.status(403).json({ error: ownership.reason });
     }
 
     // Restricción RBAC: Solo Coordinación o Dirección pueden justificar inasistencias o registrar reposos médicos
-    if (req.user?.rol === 'docente') {
+    if (req.user?.rol === 'docente' || req.user?.rol === 'docente_suplente') {
       const existingDayRecords = await db.getAsistencia({
         idMateria: Number(idMateria),
         fecha,
@@ -1772,16 +2407,20 @@ const handleRegistrarAsistenciaBatch = async (req: Request, res: Response) => {
     const author = getAuditAuthorFromReq(req);
 
     // Persistencia consolidada en una única transacción atómica: asistencia + auditLogs + notificacionesRepresentante
-    const saved = await db.registrarAsistenciaBatch(Number(idMateria), fecha, records, {
+    const batchResult = await db.registrarAsistenciaBatch(Number(idMateria), fecha, records, {
       actorId: req.user?.id,
       actorNombre,
       actorRol: req.user?.rol,
+      suplenciaInfo: ownership.suplenciaInfo ?? null,
       auditAuthor: author,
       buildNotification: buildAttendanceNotificationDetails,
     });
 
-    // Lectura ligera en memoria para despacho Web Push desacoplado
-    const pushPayload = await db.getPushDispatchPayloadForBatch(Number(idMateria), saved);
+    // Lectura ligera en memoria para despacho Web Push desacoplado (solo registros modificados/creados)
+    const pushPayload = await db.getPushDispatchPayloadForBatch(
+      Number(idMateria),
+      batchResult.changedRecords
+    );
 
     enqueueDetachedPushJob(`asistencia_batch_${idMateria}`, async () => {
       if (pushPayload.subscriptions.length > 0 && pushPayload.records.length > 0) {
@@ -1797,7 +2436,13 @@ const handleRegistrarAsistenciaBatch = async (req: Request, res: Response) => {
       }
     });
 
-    res.json({ success: true, count: saved.length });
+    res.json({
+      success: true,
+      count: batchResult.updatedCount,
+      updatedCount: batchResult.updatedCount,
+      skippedCount: batchResult.skippedCount,
+      skippedStudents: batchResult.skippedStudents,
+    });
   } catch (e: any) {
     res.status(400).json({ error: e.message });
   }
@@ -1806,7 +2451,7 @@ const handleRegistrarAsistenciaBatch = async (req: Request, res: Response) => {
 apiRouter.post(
   '/asistencia/batch',
   requireAuth,
-  requireRole('director', 'coordinador', 'docente'),
+  requireRole('director', 'coordinador', 'coordinador_seccional', 'docente', 'docente_suplente'),
   validateBody(asistenciaBatchSchema),
   handleRegistrarAsistenciaBatch
 );
@@ -1814,20 +2459,27 @@ apiRouter.post(
 apiRouter.post(
   '/attendance/batch',
   requireAuth,
-  requireRole('director', 'coordinador', 'docente'),
+  requireRole('director', 'coordinador', 'coordinador_seccional', 'docente', 'docente_suplente'),
   validateBody(asistenciaBatchSchema),
   handleRegistrarAsistenciaBatch
 );
 
 const handleUpdateAsistenciaJustificacion = async (req: Request, res: Response) => {
   try {
-    const idAsistencia = Number(req.params.id);
-    if (!Number.isInteger(idAsistencia) || idAsistencia <= 0) {
-      return res.status(400).json({ error: 'ID de registro de asistencia inválido.' });
-    }
+    const idAsistencia = res.locals.validatedParams.id as number;
 
     if (!req.user) {
       return res.status(401).json({ error: 'No autenticado.' });
+    }
+
+    if (isCoordinadorSeccional(req.user)) {
+      const existing = await db.getAsistenciaById(idAsistencia);
+      if (!existing) {
+        return res.status(404).json({ error: 'Registro de asistencia no encontrado.' });
+      }
+      if (!(await assertCoordinadorSeccionalAno(req, res, existing.idAno, 'asistencia'))) {
+        return;
+      }
     }
 
     const { estado, motivoJustificacion, numeroJustificante, fechaRecepcionDocumento } = req.body;
@@ -1890,7 +2542,8 @@ const handleUpdateAsistenciaJustificacion = async (req: Request, res: Response) 
 apiRouter.patch(
   '/asistencia/:id',
   requireAuth,
-  requireRole('coordinador', 'director'),
+  requireRole('coordinador', 'coordinador_seccional', 'director'),
+  validatePositiveIntParam('id', 'registro de asistencia'),
   validateBody(updateAsistenciaJustificacionSchema),
   handleUpdateAsistenciaJustificacion
 );
@@ -1898,40 +2551,48 @@ apiRouter.patch(
 apiRouter.patch(
   '/attendance/:id',
   requireAuth,
-  requireRole('coordinador', 'director'),
+  requireRole('coordinador', 'coordinador_seccional', 'director'),
+  validatePositiveIntParam('id', 'registro de asistencia'),
   validateBody(updateAsistenciaJustificacionSchema),
   handleUpdateAsistenciaJustificacion
 );
 
-apiRouter.get('/portal/representante/:id', requireAuth, async (req: Request, res: Response) => {
-  try {
-    const idRep = Number(req.params.id);
-    if (req.authType === 'representante') {
-      if (!req.representante || req.representante.idRepresentante !== idRep) {
-        return res.status(403).json({
-          error: 'Acceso denegado: Solo puede consultar su propio portal de representante.',
-        });
+apiRouter.get(
+  '/portal/representante/:id',
+  requireAuth,
+  validatePositiveIntParam('id', 'representante'),
+  async (req: Request, res: Response) => {
+    try {
+      const idRep = res.locals.validatedParams.id as number;
+      if (req.authType === 'representante') {
+        if (!req.representante || req.representante.idRepresentante !== idRep) {
+          return res.status(403).json({
+            error: 'Acceso denegado: Solo puede consultar su propio portal de representante.',
+          });
+        }
+      } else if (!req.user || !['director', 'coordinador'].includes(req.user.rol)) {
+        return res.status(403).json({ error: 'Acceso denegado al portal de representante.' });
       }
-    } else if (!req.user || !['director', 'coordinador'].includes(req.user.rol)) {
-      return res.status(403).json({ error: 'Acceso denegado al portal de representante.' });
-    }
 
-    const data = await db.getPortalRepresentanteData(idRep);
-    if (!data) {
-      return res.status(404).json({ error: 'Representante no encontrado.' });
+      const data = await db.getPortalRepresentanteData(idRep);
+      if (!data) {
+        return res.status(404).json({ error: 'Representante no encontrado.' });
+      }
+      res.json(data);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
     }
-    res.json(data);
-  } catch (e: any) {
-    res.status(500).json({ error: e.message });
   }
-});
+);
 
 apiRouter.get(
   '/portal/representante/:id/notificaciones',
   requireAuth,
+  validatePositiveIntParam('id', 'representante'),
+  validateQuery(notificacionesQuerySchema),
   async (req: Request, res: Response) => {
     try {
-      const idRep = Number(req.params.id);
+      const idRep = res.locals.validatedParams.id as number;
       if (req.authType === 'representante') {
         if (!req.representante || req.representante.idRepresentante !== idRep) {
           return res.status(403).json({ error: 'Acceso denegado a notificaciones de otro representante.' });
@@ -1939,9 +2600,11 @@ apiRouter.get(
       } else if (!req.user || !['director', 'coordinador'].includes(req.user.rol)) {
         return res.status(403).json({ error: 'Acceso denegado.' });
       }
-      const onlyUnread = req.query.unread === 'true';
-      const limit = req.query.limit ? Number(req.query.limit) : 60;
-      res.json(await db.getNotificacionesRepresentante(idRep, { onlyUnread, limit }));
+      const { unread, limit } = res.locals.validatedQuery as {
+        unread: boolean;
+        limit: number;
+      };
+      res.json(await db.getNotificacionesRepresentante(idRep, { onlyUnread: unread, limit }));
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -1951,9 +2614,10 @@ apiRouter.get(
 apiRouter.patch(
   '/portal/representante/:id/notificaciones/leer-todas',
   requireAuth,
+  validatePositiveIntParam('id', 'representante'),
   async (req: Request, res: Response) => {
     try {
-      const idRep = Number(req.params.id);
+      const idRep = res.locals.validatedParams.id as number;
       if (
         req.authType !== 'representante' ||
         !req.representante ||
@@ -1974,13 +2638,12 @@ apiRouter.patch(
 apiRouter.patch(
   '/portal/representante/:id/notificaciones/:idNotif/leer',
   requireAuth,
+  validatePositiveIntParam('id', 'representante'),
+  validatePositiveIntParam('idNotif', 'notificación'),
   async (req: Request, res: Response) => {
     try {
-      const idRep = Number(req.params.id);
-      const idNotif = Number(req.params.idNotif);
-      if (!Number.isInteger(idNotif) || idNotif <= 0) {
-        return res.status(400).json({ error: 'ID de notificación inválido.' });
-      }
+      const idRep = res.locals.validatedParams.id as number;
+      const idNotif = res.locals.validatedParams.idNotif as number;
       if (
         req.authType !== 'representante' ||
         !req.representante ||
@@ -2004,28 +2667,46 @@ apiRouter.patch(
 // ---------------------------------------------------------------------------
 // 6. HORARIOS ESCOLARES & ANTICONFLICTOS
 // ---------------------------------------------------------------------------
-apiRouter.get('/horarios', requireAuth, async (req: Request, res: Response) => {
-  try {
-    const filters = {
-      idAno: req.query.idAno ? Number(req.query.idAno) : undefined,
-      idSeccion: req.query.idSeccion ? Number(req.query.idSeccion) : undefined,
-      diaSemana: req.query.diaSemana ? String(req.query.diaSemana) : undefined,
-      idMateria: req.query.idMateria ? Number(req.query.idMateria) : undefined,
-      idDocente: req.query.idDocente ? Number(req.query.idDocente) : undefined,
-    };
-    res.json(await db.getHorarios(filters));
-  } catch (e: any) {
-    res.status(500).json({ error: e.message });
+apiRouter.get(
+  '/horarios',
+  requireAuth,
+  validateQuery(horariosQuerySchema),
+  async (req: Request, res: Response) => {
+    try {
+      const filters = res.locals.validatedQuery as {
+        idAno?: number;
+        idSeccion?: number;
+        diaSemana?: string;
+        idMateria?: number;
+        idDocente?: number;
+      };
+      if (filters.idAno && !(await assertCoordinadorSeccionalAno(req, res, filters.idAno, 'horarios'))) {
+        return;
+      }
+      const isDocenteSuplente = req.authType === 'staff' && req.user?.rol === 'docente_suplente';
+      res.json(
+        await db.getHorarios({
+          ...filters,
+          allowedAnos: getAllowedAnosScope(req),
+          idSuplenteScope: isDocenteSuplente ? req.user!.id : undefined,
+        })
+      );
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   }
-});
+);
 
 apiRouter.post(
   '/horarios/validate-conflict',
   requireAuth,
-  requireRole('director', 'coordinador'),
+  requireRole('director', 'coordinador', 'coordinador_seccional'),
   validateBody(validateHorarioConflictSchema),
   async (req: Request, res: Response) => {
     try {
+      if (!(await assertCoordinadorSeccionalAno(req, res, req.body.idAno, 'horarios'))) {
+        return;
+      }
       res.json(await db.detectHorarioConflict(req.body));
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -2036,10 +2717,13 @@ apiRouter.post(
 apiRouter.post(
   '/horarios/suggest-slots',
   requireAuth,
-  requireRole('director', 'coordinador'),
+  requireRole('director', 'coordinador', 'coordinador_seccional'),
   validateBody(suggestSlotsSchema),
   async (req: Request, res: Response) => {
     try {
+      if (!(await assertCoordinadorSeccionalAno(req, res, req.body.idAno, 'horarios'))) {
+        return;
+      }
       res.json(await db.suggestConflictFreeSlots(req.body));
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -2070,10 +2754,19 @@ apiRouter.post(
 apiRouter.post(
   '/horarios',
   requireAuth,
-  requireRole('director', 'coordinador'),
+  requireRole('director', 'coordinador', 'coordinador_seccional'),
   validateBody(createHorarioSchema),
   async (req: Request, res: Response) => {
     try {
+      if (!(await assertCoordinadorSeccionalAno(req, res, req.body.idAno, 'horarios'))) {
+        return;
+      }
+      if (isCoordinadorSeccional(req.user)) {
+        const mat = await db.getMateriaById(req.body.idMateria);
+        if (!mat || !(await assertCoordinadorSeccionalAno(req, res, mat.idAno, 'horarios'))) {
+          return;
+        }
+      }
       const created = await db.createHorario(req.body);
       await db.logAuditEvent({
         ...getAuditAuthorFromReq(req),
@@ -2092,13 +2785,32 @@ apiRouter.post(
 apiRouter.put(
   '/horarios/:id',
   requireAuth,
-  requireRole('director', 'coordinador'),
+  requireRole('director', 'coordinador', 'coordinador_seccional'),
+  validatePositiveIntParam('id', 'horario'),
   validateBody(updateHorarioSchema),
   async (req: Request, res: Response) => {
     try {
-      const id = Number(req.params.id);
-      if (!Number.isInteger(id) || id <= 0) {
-        return res.status(400).json({ error: 'ID de horario inválido.' });
+      const id = res.locals.validatedParams.id as number;
+      if (isCoordinadorSeccional(req.user)) {
+        const existing = await db.getHorarioById(id);
+        if (!existing) {
+          return res.status(404).json({ error: 'Bloque horario no encontrado.' });
+        }
+        if (!(await assertCoordinadorSeccionalAno(req, res, existing.idAno, 'horarios'))) {
+          return;
+        }
+        if (
+          req.body.idAno !== undefined &&
+          !(await assertCoordinadorSeccionalAno(req, res, req.body.idAno, 'horarios'))
+        ) {
+          return;
+        }
+        if (req.body.idMateria !== undefined) {
+          const mat = await db.getMateriaById(req.body.idMateria);
+          if (!mat || !(await assertCoordinadorSeccionalAno(req, res, mat.idAno, 'horarios'))) {
+            return;
+          }
+        }
       }
       const updated = await db.updateHorario(id, req.body);
       await db.logAuditEvent({
@@ -2106,7 +2818,7 @@ apiRouter.put(
         accion: 'HORARIO_BLOQUE_ACTUALIZADO',
         entidad: 'horarios',
         idEntidad: id,
-        detalles: req.body,
+        detalles: { ...req.body, idAno: updated.idAno },
       });
       res.json(updated);
     } catch (e: any) {
@@ -2118,16 +2830,29 @@ apiRouter.put(
 apiRouter.delete(
   '/horarios/:id',
   requireAuth,
-  requireRole('director', 'coordinador'),
+  requireRole('director', 'coordinador', 'coordinador_seccional'),
+  validatePositiveIntParam('id', 'horario'),
   async (req: Request, res: Response) => {
     try {
-      const id = Number(req.params.id);
+      const id = res.locals.validatedParams.id as number;
+      let existingAno: number | undefined;
+      if (isCoordinadorSeccional(req.user)) {
+        const existing = await db.getHorarioById(id);
+        if (!existing) {
+          return res.status(404).json({ error: 'Bloque horario no encontrado.' });
+        }
+        if (!(await assertCoordinadorSeccionalAno(req, res, existing.idAno, 'horarios'))) {
+          return;
+        }
+        existingAno = existing.idAno;
+      }
       await db.deleteHorario(id);
       await db.logAuditEvent({
         ...getAuditAuthorFromReq(req),
         accion: 'HORARIO_BLOQUE_ELIMINADO',
         entidad: 'horarios',
         idEntidad: id,
+        ...(existingAno !== undefined ? { detalles: { idAno: existingAno } } : {}),
       });
       res.json({ success: true });
     } catch (e: any) {
@@ -2139,7 +2864,7 @@ apiRouter.delete(
 // ---------------------------------------------------------------------------
 // 7. AUDITORÍA, RESPALDO & RESTAURACIÓN
 // ---------------------------------------------------------------------------
-const handleGetAuditLogsPaginated = async (_req: Request, res: Response) => {
+const handleGetAuditLogsPaginated = async (req: Request, res: Response) => {
   try {
     const query = res.locals.validatedQuery as {
       page: number;
@@ -2150,7 +2875,13 @@ const handleGetAuditLogsPaginated = async (_req: Request, res: Response) => {
       startDate?: string;
       endDate?: string;
     };
-    res.json(await db.getAuditLogsPaginated(query));
+    res.json(
+      await db.getAuditLogsPaginated({
+        ...query,
+        allowedAnos: getAllowedAnosScope(req),
+        actorIdScope: isCoordinadorSeccional(req.user) ? req.user?.id : undefined,
+      })
+    );
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -2159,7 +2890,7 @@ const handleGetAuditLogsPaginated = async (_req: Request, res: Response) => {
 apiRouter.get(
   '/auditoria',
   requireAuth,
-  requireRole('director', 'coordinador'),
+  requireRole('director', 'coordinador', 'coordinador_seccional'),
   validateQuery(auditLogsQuerySchema),
   handleGetAuditLogsPaginated
 );
@@ -2167,7 +2898,7 @@ apiRouter.get(
 apiRouter.get(
   '/audit-logs',
   requireAuth,
-  requireRole('director', 'coordinador'),
+  requireRole('director', 'coordinador', 'coordinador_seccional'),
   validateQuery(auditLogsQuerySchema),
   handleGetAuditLogsPaginated
 );

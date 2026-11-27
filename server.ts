@@ -9,6 +9,7 @@ import {
   schoolApp,
   startInstitutionalMilestoneScheduler,
 } from './src/server/api.ts';
+import { isOriginAllowedForRequest } from './src/server/auth.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -34,84 +35,72 @@ app.use(
   })
 );
 
-// 2. CORS restringido mediante validación estricta de URL.hostname (sin coincidencias laxas por subcadena)
-const explicitAllowedOrigins = new Set<string>(
-  [
-    process.env.APP_URL,
-    ...(process.env.CORS_ALLOWED_ORIGINS ? process.env.CORS_ALLOWED_ORIGINS.split(',') : []),
-    'http://localhost:3000',
-    'https://localhost:3000',
-    'http://127.0.0.1:3000',
-    'https://127.0.0.1:3000',
-  ]
-    .map((entry) => {
-      if (!entry) return '';
-      try {
-        return new URL(entry.trim()).origin;
-      } catch {
-        return '';
-      }
-    })
-    .filter(Boolean)
-);
-
-function isOriginAllowed(origin: string): boolean {
-  let parsed: URL;
-  try {
-    parsed = new URL(origin);
-  } catch {
-    return false;
-  }
-
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    return false;
-  }
-
-  if (explicitAllowedOrigins.has(parsed.origin)) {
-    return true;
-  }
-
-  const host = parsed.hostname.toLowerCase();
-
-  // Desarrollo local estricto
-  if (host === 'localhost' || host === '127.0.0.1') {
-    return true;
-  }
-
-  // Entornos productivos/preview requieren HTTPS y coincidencia exacta de dominio/subdominio permitido
-  if (parsed.protocol !== 'https:') {
-    return false;
-  }
-
-  return (
-    host === 'aistudio.google.com' ||
-    host.endsWith('.aistudio.google.com') ||
-    host === 'ai.studio' ||
-    host.endsWith('.ai.studio') ||
-    host.endsWith('.run.app') ||
-    host.endsWith('.googleusercontent.com') ||
-    host.endsWith('.web.app') ||
-    host.endsWith('.firebaseapp.com')
-  );
-}
-
-app.use(
+// 2. CORS estricto: únicamente orígenes explícitos (APP_URL / CORS_ALLOWED_ORIGINS), mismo Host y localhost en desarrollo
+app.use((req, res, next) => {
   cors({
     origin: (origin, callback) => {
-      // Peticiones sin origen (mismo origen en el navegador, herramientas locales, llamadas internas)
+      // Peticiones sin cabecera Origin (navegación directa, curl local, llamadas internas)
       if (!origin) return callback(null, true);
-      callback(null, isOriginAllowed(origin));
+      callback(null, isOriginAllowedForRequest(origin, req));
     },
     credentials: true, // Habilita la transmisión de cookies HttpOnly seguras
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-requested-with'],
-  })
-);
+  })(req, res, next);
+});
 
 // 3. Parser de cookies seguro (los parsers JSON/urlencoded con límite acotado se aplican dentro de schoolApp)
 app.use(cookieParser());
 
-// 4. Cabeceras frescas para manifiesto PWA y Service Worker (evitar cachés viejas de EduControl)
+// 4. Bloqueo preventivo de archivos JSON sensibles, carpetas de respaldos, seeds y datos antes de servir estáticos/Vite
+function normalizeSafeRequestPath(rawPath: string): string {
+  let decoded = rawPath;
+  try {
+    decoded = decodeURIComponent(rawPath);
+  } catch {
+    decoded = rawPath;
+  }
+  const withForwardSlashes = decoded.replace(/\\/g, '/');
+  return path.posix.normalize(withForwardSlashes).toLowerCase();
+}
+
+app.use((req, res, next) => {
+  const reqPathLower = normalizeSafeRequestPath(req.path);
+
+  // No interferir con la API autenticada ni con el manifiesto PWA ni con módulos internos de desarrollo Vite
+  if (
+    reqPathLower.startsWith('/api/') ||
+    reqPathLower === '/manifest.webmanifest' ||
+    (!isProd &&
+      (reqPathLower.startsWith('/@vite') ||
+        reqPathLower.startsWith('/@react-refresh') ||
+        reqPathLower.startsWith('/node_modules/')))
+  ) {
+    next();
+    return;
+  }
+
+  const isBlockedSensitiveDir =
+    reqPathLower.startsWith('/assets/aistudio') ||
+    reqPathLower.startsWith('/backups') ||
+    reqPathLower.startsWith('/data') ||
+    reqPathLower.startsWith('/seeds') ||
+    reqPathLower.startsWith('/src/server/seeds');
+
+  const isDirectJsonFile = reqPathLower.endsWith('.json') || reqPathLower.endsWith('.json.map');
+
+  if (isBlockedSensitiveDir || isDirectJsonFile) {
+    res.status(403).json({
+      error: 'Acceso denegado a recursos internos o archivos de respaldo.',
+      code: 'FORBIDDEN_STATIC_RESOURCE',
+    });
+    return;
+  }
+
+  next();
+});
+
+// 5. Cabeceras frescas para manifiesto PWA y Service Worker (evitar cachés viejas de EduControl)
 app.use((req, res, next) => {
   if (req.path === '/manifest.webmanifest') {
     res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
@@ -123,10 +112,10 @@ app.use((req, res, next) => {
   next();
 });
 
-// 5. Montar la API escolar blindada
+// 6. Montar la API escolar blindada
 app.use('/api', schoolApp);
 
-// 6. Frontend: Vite middlewares en desarrollo, archivos estáticos compilados en producción
+// 7. Frontend: Vite middlewares en desarrollo, archivos estáticos compilados en producción
 if (!isProd) {
   const { createServer: createViteServer } = await import('vite');
   const vite = await createViteServer({

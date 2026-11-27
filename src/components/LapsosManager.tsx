@@ -27,7 +27,7 @@ import { formatDateEs, getLocalTodayDateString } from '../lib/utils.ts';
 
 interface LapsosManagerProps {
   currentUser?: Usuario | null;
-  onRefreshData?: () => void;
+  onRefreshData?: () => Promise<void> | void;
   onLapsosChanged?: (lapsos: LapsoEscolar[]) => void;
 }
 
@@ -260,7 +260,7 @@ export const LapsosManager: React.FC<LapsosManagerProps> = ({
       }
       setModalOpen(false);
       await loadData();
-      onRefreshData?.();
+      await onRefreshData?.();
     } catch (err: any) {
       setModalError(err?.message || 'Error al guardar la configuración del lapso.');
     } finally {
@@ -279,7 +279,7 @@ export const LapsosManager: React.FC<LapsosManagerProps> = ({
         text: `"${updated.nombre}" establecido ahora como el Lapso Actual en curso.`,
       });
       await loadData();
-      onRefreshData?.();
+      await onRefreshData?.();
     } catch (err: any) {
       setFeedback({
         type: 'error',
@@ -301,7 +301,7 @@ export const LapsosManager: React.FC<LapsosManagerProps> = ({
         text: `"${lapso.nombre}" eliminado correctamente.`,
       });
       await loadData();
-      onRefreshData?.();
+      await onRefreshData?.();
     } catch (err: any) {
       setFeedback({
         type: 'error',

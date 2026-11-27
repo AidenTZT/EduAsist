@@ -1,3 +1,5 @@
+import net from 'node:net';
+import dns from 'node:dns/promises';
 import type { Request, Response, NextFunction } from 'express';
 import { z, ZodError, type ZodSchema } from 'zod';
 
@@ -54,7 +56,8 @@ export const createStaffUserSchema = z.object({
     .regex(NAME_REGEX, 'Los apellidos no pueden contener números ni caracteres especiales no permitidos'),
   cedula: z.string().trim().optional().nullable(),
   telefono: z.string().trim().optional().nullable(),
-  rol: z.enum(['director', 'coordinador', 'docente']),
+  rol: z.enum(['director', 'coordinador', 'coordinador_seccional', 'docente', 'docente_suplente']),
+  anosAsignados: z.array(z.coerce.number().int().positive('ID de año escolar inválido')).max(50).optional(),
   password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres').optional().or(z.literal('')),
   activo: z.boolean().optional(),
 });
@@ -83,7 +86,8 @@ export const updateStaffUserSchema = z.object({
     .optional(),
   cedula: z.string().trim().optional().nullable(),
   telefono: z.string().trim().optional().nullable(),
-  rol: z.enum(['director', 'coordinador', 'docente']).optional(),
+  rol: z.enum(['director', 'coordinador', 'coordinador_seccional', 'docente', 'docente_suplente']).optional(),
+  anosAsignados: z.array(z.coerce.number().int().positive('ID de año escolar inválido')).max(50).optional(),
   password: z.string().min(6, 'La contraseña debe tener al menos 6 caracteres').optional().or(z.literal('')),
   activo: z.boolean().optional(),
 });
@@ -287,6 +291,10 @@ export const assignDocenteMateriasBatchSchema = z.object({
   idMaterias: z.array(z.coerce.number().int().positive('ID de materia inválido')).max(200),
 });
 
+export const replaceDocenteMateriasSchema = z.object({
+  idMaterias: z.array(z.coerce.number().int().positive('ID de materia inválido')).max(200),
+});
+
 export const createEstudianteSchema = z.object({
   cedula: z.string().trim().min(3, 'Cédula escolar obligatoria').max(25),
   nombres: z.string().trim().min(2, 'Nombres obligatorios').max(100),
@@ -448,30 +456,141 @@ export const activateLapsoSchema = z.object({
   activo: z.boolean().optional().default(true),
 });
 
+const BLOCKED_PUSH_HOST_SUFFIXES = [
+  '.localhost',
+  '.local',
+  '.internal',
+  '.arpa',
+  '.home',
+  '.lan',
+];
+
+const BLOCKED_PUSH_HOSTS = new Set([
+  'localhost',
+  'metadata',
+  'metadata.google.internal',
+  'instance-data',
+]);
+
+function unwrapIpv4MappedIpv6(ip: string): string | null {
+  const lower = ip.toLowerCase();
+  if (!lower.startsWith('::ffff:')) return null;
+  const tail = lower.slice(7);
+  if (net.isIPv4(tail)) return tail;
+  const parts = tail.split(':');
+  if (parts.length === 2 && /^[0-9a-f]{1,4}$/.test(parts[0]) && /^[0-9a-f]{1,4}$/.test(parts[1])) {
+    const hi = parseInt(parts[0], 16);
+    const lo = parseInt(parts[1], 16);
+    return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+  }
+  return null;
+}
+
+export function isPublicIpAddress(rawIp: string): boolean {
+  const ip = String(rawIp || '').trim().split('%')[0];
+  const ipVersion = net.isIP(ip);
+  if (ipVersion === 0) return false;
+
+  if (ipVersion === 4) {
+    const octets = ip.split('.').map(Number);
+    if (octets.length !== 4 || octets.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
+      return false;
+    }
+    const [a, b, c] = octets;
+    if (a === 0) return false; // 0.0.0.0/8 (This network)
+    if (a === 10) return false; // 10.0.0.0/8 (RFC1918)
+    if (a === 100 && b >= 64 && b <= 127) return false; // 100.64.0.0/10 (CGNAT)
+    if (a === 127) return false; // 127.0.0.0/8 (Loopback)
+    if (a === 169 && b === 254) return false; // 169.254.0.0/16 (Link-local / Cloud Metadata)
+    if (a === 172 && b >= 16 && b <= 31) return false; // 172.16.0.0/12 (RFC1918)
+    if (a === 192 && b === 0 && c === 0) return false; // 192.0.0.0/24 (IETF Protocol)
+    if (a === 192 && b === 0 && c === 2) return false; // 192.0.2.0/24 (TEST-NET-1)
+    if (a === 192 && b === 168) return false; // 192.168.0.0/16 (RFC1918)
+    if (a === 198 && (b === 18 || b === 19)) return false; // 198.18.0.0/15 (Benchmarking)
+    if (a === 198 && b === 51 && c === 100) return false; // 198.51.100.0/24 (TEST-NET-2)
+    if (a === 203 && b === 0 && c === 113) return false; // 203.0.113.0/24 (TEST-NET-3)
+    if (a >= 224) return false; // 224.0.0.0/4 Multicast & 240.0.0.0/4 Reserved
+    return true;
+  }
+
+  // IPv6
+  const unwrapped = unwrapIpv4MappedIpv6(ip);
+  if (unwrapped) {
+    return isPublicIpAddress(unwrapped);
+  }
+
+  const lower = ip.toLowerCase();
+  if (lower === '::' || lower === '::1') return false;
+  // Normalizar primer bloque hexadecimal
+  const firstSegment = lower.split(':')[0];
+  if (firstSegment) {
+    const val = parseInt(firstSegment, 16);
+    if (!Number.isNaN(val)) {
+      if ((val & 0xfe00) === 0xfc00) return false; // fc00::/7 Unique Local Address (ULA)
+      if ((val & 0xffc0) === 0xfe80) return false; // fe80::/10 Link-local
+      if ((val & 0xffc0) === 0xfec0) return false; // fec0::/10 Deprecated Site-local
+      if ((val & 0xff00) === 0xff00) return false; // ff00::/8 Multicast
+    }
+  }
+  if (lower.startsWith('100::') || lower.startsWith('2001:db8:')) return false;
+  return true;
+}
+
 export function isSafePushEndpointUrl(rawUrl: string): boolean {
   try {
     const parsed = new URL(String(rawUrl || '').trim());
     if (parsed.protocol !== 'https:') return false;
     if (parsed.username || parsed.password) return false;
-    const host = parsed.hostname.toLowerCase();
+    if (parsed.port && parsed.port !== '443') return false;
+
+    const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.+$/, '');
     if (!host || !host.includes('.')) return false;
+
     if (
-      host === 'localhost' ||
-      host.endsWith('.localhost') ||
-      host.endsWith('.local') ||
-      host.endsWith('.internal') ||
-      host.endsWith('.arpa') ||
-      host === 'metadata.google.internal'
+      BLOCKED_PUSH_HOSTS.has(host) ||
+      BLOCKED_PUSH_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix))
     ) {
       return false;
     }
-    // Bloquear literales IPv4 / IPv6 (todos los proveedores Web Push legítimos usan dominios públicos HTTPS)
-    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(':')) {
+
+    // Bloquear literales IPv4 / IPv6 estándar y formas numéricas no estándar (hex, octal o entero único)
+    if (net.isIP(host) !== 0 || host.includes(':')) {
       return false;
     }
+    if (/^(?:\d+|0x[0-9a-f]+)$/i.test(host)) {
+      return false;
+    }
+    const labels = host.split('.');
+    if (
+      labels.length <= 4 &&
+      labels.every((part) => /^(?:\d+|0x[0-9a-f]+|0[0-7]+)$/i.test(part))
+    ) {
+      return false;
+    }
+
     return true;
   } catch {
     return false;
+  }
+}
+
+export async function assertSafePushEndpointAndResolve(rawUrl: string): Promise<void> {
+  if (!isSafePushEndpointUrl(rawUrl)) {
+    throw new Error('Endpoint Web Push bloqueado por política de seguridad HTTPS.');
+  }
+  const parsed = new URL(String(rawUrl).trim());
+  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.+$/, '');
+
+  const resolved = await dns.lookup(host, { all: true, verbatim: true });
+  if (!Array.isArray(resolved) || resolved.length === 0) {
+    throw new Error('No se pudo resolver el dominio del endpoint Web Push.');
+  }
+  for (const record of resolved) {
+    if (!isPublicIpAddress(record.address)) {
+      throw new Error(
+        'Endpoint Web Push bloqueado: el dominio resuelve a una dirección IP privada, local o reservada.'
+      );
+    }
   }
 }
 
@@ -778,8 +897,24 @@ export const updateEstudianteSchema = z.object({
     .min(2, 'Los apellidos deben tener al menos 2 caracteres.')
     .regex(NAME_REGEX, 'Los apellidos no pueden contener números ni caracteres especiales.')
     .optional(),
-  idAnoActual: z.coerce.number().int().positive().nullable().optional(),
-  idSeccion: z.coerce.number().int().positive().nullable().optional(),
+  idAnoActual: z.preprocess(
+    (v) =>
+      v === undefined
+        ? undefined
+        : v === '' || v === null || Number(v) === 0
+        ? null
+        : Number(v),
+    z.number().int().positive().nullable().optional()
+  ),
+  idSeccion: z.preprocess(
+    (v) =>
+      v === undefined
+        ? undefined
+        : v === '' || v === null || Number(v) === 0
+        ? null
+        : Number(v),
+    z.number().int().positive().nullable().optional()
+  ),
   idRepresentante: z.coerce.number().int().positive().optional(),
   estadoAcademico: z.enum(['ACTIVO', 'EGRESADO', 'RETIRADO']).optional(),
 });
@@ -884,6 +1019,7 @@ export const restoreBackupSchema = z.object({
       secciones: backupArrayField,
       materias: backupArrayField,
       docenteMaterias: backupArrayField.optional(),
+      suplenciasDocentes: backupArrayField.optional(),
       representantes: backupArrayField,
       estudiantes: backupArrayField,
       asistencia: backupArrayField,
@@ -960,6 +1096,223 @@ export const resumenesAsistenciaQuerySchema = z.object({
   estudianteId: z.preprocess(
     emptyToUndefined,
     z.coerce.number().int().positive('ID de estudiante inválido.').optional()
+  ),
+});
+
+export const positiveIntParamSchema = z
+  .string()
+  .trim()
+  .regex(/^[1-9]\d{0,11}$/, 'El identificador debe ser un número entero positivo.')
+  .transform((val) => Number(val));
+
+export function validatePositiveIntParam(paramName: string = 'id', entityLabel: string = 'registro') {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const parsed = positiveIntParamSchema.safeParse(req.params?.[paramName]);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: `ID de ${entityLabel} inválido.`,
+        code: 'INVALID_ROUTE_PARAM',
+      });
+      return;
+    }
+    if (!res.locals.validatedParams) {
+      res.locals.validatedParams = {};
+    }
+    res.locals.validatedParams[paramName] = parsed.data;
+    next();
+  };
+}
+
+export const usersQuerySchema = z.object({
+  rol: z.preprocess(
+    emptyToUndefined,
+    z.enum(['director', 'coordinador', 'coordinador_seccional', 'docente', 'docente_suplente']).optional()
+  ),
+});
+
+export const createSuplenciaSchema = z
+  .object({
+    idSuplente: z.coerce.number().int().positive('Debe seleccionar un docente suplente válido.'),
+    idDocenteTitular: z.coerce.number().int().positive('Debe seleccionar un docente titular válido.'),
+    alcanceCompleto: z.boolean().optional().default(false),
+    idDocenteMateria: z.preprocess(
+      (v) => (v === '' || v === null || v === undefined || Number(v) === 0 ? null : Number(v)),
+      z.number().int().positive().nullable().optional()
+    ),
+    idMateria: z.preprocess(
+      (v) => (v === '' || v === null || v === undefined || Number(v) === 0 ? null : Number(v)),
+      z.number().int().positive('Debe seleccionar una materia válida.').nullable().optional()
+    ),
+    idSeccion: z.preprocess(
+      (v) => (v === '' || v === null || v === undefined || Number(v) === 0 ? null : Number(v)),
+      z.number().int().positive().nullable().optional()
+    ),
+    activo: z.boolean().optional().default(true),
+    fechaInicio: z.preprocess(
+      (v) => (v === '' || v === null || v === undefined ? null : String(v).trim()),
+      z
+        .string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato inválido para fechaInicio. Utilice YYYY-MM-DD')
+        .nullable()
+        .optional()
+    ),
+    fechaFin: z.preprocess(
+      (v) => (v === '' || v === null || v === undefined ? null : String(v).trim()),
+      z
+        .string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato inválido para fechaFin. Utilice YYYY-MM-DD')
+        .nullable()
+        .optional()
+    ),
+    motivo: z.preprocess(
+      (v) => (v === '' || v === null || v === undefined ? null : String(v).trim()),
+      z.string().max(300, 'El motivo de la suplencia no puede exceder 300 caracteres.').nullable().optional()
+    ),
+  })
+  .refine((data) => data.idSuplente !== data.idDocenteTitular, {
+    message: 'El docente suplente no puede ser el mismo usuario que el docente titular.',
+    path: ['idSuplente'],
+  })
+  .refine((data) => data.alcanceCompleto || (data.idMateria != null && data.idMateria > 0), {
+    message: 'Debe seleccionar una materia específica o cubrir todas las materias del docente titular.',
+    path: ['idMateria'],
+  })
+  .refine(
+    (data) => !data.fechaInicio || !data.fechaFin || data.fechaInicio <= data.fechaFin,
+    {
+      message: 'La fecha de inicio de la suplencia no puede ser posterior a la fecha de fin.',
+      path: ['fechaFin'],
+    }
+  );
+
+export const updateSuplenciaSchema = z
+  .object({
+    idDocenteTitular: z.coerce.number().int().positive().optional(),
+    alcanceCompleto: z.boolean().optional(),
+    idDocenteMateria: z.preprocess(
+      (v) => (v === '' || v === null || v === undefined || Number(v) === 0 ? null : Number(v)),
+      z.number().int().positive().nullable().optional()
+    ),
+    idMateria: z.preprocess(
+      (v) => (v === '' || v === null || v === undefined || Number(v) === 0 ? null : Number(v)),
+      z.number().int().positive().nullable().optional()
+    ),
+    idSeccion: z.preprocess(
+      (v) => (v === '' || v === null || v === undefined || Number(v) === 0 ? null : Number(v)),
+      z.number().int().positive().nullable().optional()
+    ),
+    activo: z.boolean().optional(),
+    fechaInicio: z.preprocess(
+      (v) => (v === '' || v === null || v === undefined ? null : String(v).trim()),
+      z
+        .string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato inválido para fechaInicio. Utilice YYYY-MM-DD')
+        .nullable()
+        .optional()
+    ),
+    fechaFin: z.preprocess(
+      (v) => (v === '' || v === null || v === undefined ? null : String(v).trim()),
+      z
+        .string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato inválido para fechaFin. Utilice YYYY-MM-DD')
+        .nullable()
+        .optional()
+    ),
+    motivo: z.preprocess(
+      (v) => (v === '' || v === null || v === undefined ? null : String(v).trim()),
+      z.string().max(300, 'El motivo de la suplencia no puede exceder 300 caracteres.').nullable().optional()
+    ),
+  })
+  .refine(
+    (data) => !(data.alcanceCompleto === false && data.idMateria === null),
+    {
+      message: 'Debe seleccionar una materia específica cuando desactiva la cobertura total del titular.',
+      path: ['idMateria'],
+    }
+  )
+  .refine(
+    (data) => !data.fechaInicio || !data.fechaFin || data.fechaInicio <= data.fechaFin,
+    {
+      message: 'La fecha de inicio de la suplencia no puede ser posterior a la fecha de fin.',
+      path: ['fechaFin'],
+    }
+  );
+
+export const suplenciasQuerySchema = z.object({
+  idSuplente: optionalPositiveIntQuery,
+  idDocenteTitular: optionalPositiveIntQuery,
+  idMateria: optionalPositiveIntQuery,
+  idAno: optionalPositiveIntQuery,
+  soloVigentes: z
+    .preprocess(emptyToUndefined, z.enum(['true', 'false']).optional())
+    .transform((v) => v === 'true'),
+  fecha: optionalDateYmdQuery,
+});
+
+export const soloActivosQuerySchema = z.object({
+  soloActivos: z
+    .preprocess(emptyToUndefined, z.enum(['true', 'false']).optional())
+    .transform((v) => v === 'true'),
+});
+
+export const lapsosQuerySchema = z.preprocess(
+  (raw) => {
+    if (!raw || typeof raw !== 'object') return {};
+    const obj = raw as Record<string, unknown>;
+    return {
+      ...obj,
+      anioEscolar: obj.anioEscolar ?? obj.anio_escolar,
+    };
+  },
+  z.object({
+    anioEscolar: z.preprocess(
+      emptyToUndefined,
+      z.string().trim().max(40, 'Año escolar demasiado largo').optional()
+    ),
+    soloActivos: z
+      .preprocess(emptyToUndefined, z.enum(['true', 'false']).optional())
+      .transform((v) => v === 'true'),
+  })
+);
+
+export const idAnoOptionalQuerySchema = z.object({
+  idAno: optionalPositiveIntQuery,
+});
+
+export const docenteMateriasQuerySchema = z.object({
+  idUsuario: optionalPositiveIntQuery,
+  idMateria: optionalPositiveIntQuery,
+});
+
+export const estudiantesQuerySchema = z.object({
+  idAno: optionalPositiveIntQuery,
+  idSeccion: optionalPositiveIntQuery,
+  idRepresentante: optionalPositiveIntQuery,
+});
+
+export const horariosQuerySchema = z.object({
+  idAno: optionalPositiveIntQuery,
+  idSeccion: optionalPositiveIntQuery,
+  diaSemana: z.preprocess(
+    emptyToUndefined,
+    z.enum(['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes']).optional()
+  ),
+  idMateria: optionalPositiveIntQuery,
+  idDocente: optionalPositiveIntQuery,
+});
+
+export const notificacionesQuerySchema = z.object({
+  unread: z
+    .preprocess(emptyToUndefined, z.enum(['true', 'false']).optional())
+    .transform((v) => v === 'true'),
+  limit: z.preprocess(
+    emptyToUndefined,
+    z.coerce
+      .number()
+      .int('El límite de notificaciones debe ser entero')
+      .min(1, 'El límite mínimo es 1')
+      .max(100, 'El límite máximo permitido es 100')
+      .default(60)
   ),
 });
 

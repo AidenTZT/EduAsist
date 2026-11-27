@@ -21,6 +21,7 @@ import { formatDateEs, getLocalTodayDateString } from '../lib/utils.ts';
 
 interface NonWorkingDaysManagerProps {
   currentUser?: Usuario | null;
+  onRefreshData?: () => Promise<void> | void;
 }
 
 const MOTIVO_PRESETS = [
@@ -31,7 +32,10 @@ const MOTIVO_PRESETS = [
   'Día de Júbilo / Asueto Regional',
 ];
 
-export const NonWorkingDaysManager: React.FC<NonWorkingDaysManagerProps> = ({ currentUser }) => {
+export const NonWorkingDaysManager: React.FC<NonWorkingDaysManagerProps> = ({
+  currentUser,
+  onRefreshData,
+}) => {
   const isAuthorized = currentUser?.rol === 'director' || currentUser?.rol === 'coordinador';
 
   const [dias, setDias] = useState<DiaNoLaborable[]>([]);
@@ -109,6 +113,7 @@ export const NonWorkingDaysManager: React.FC<NonWorkingDaysManagerProps> = ({ cu
           created.fechaInicio
         )}${created.fechaFin !== created.fechaInicio ? ` al ${formatDateEs(created.fechaFin)}` : ''}).`,
       });
+      await onRefreshData?.();
     } catch (err: any) {
       setFeedback({
         type: 'error',
@@ -130,6 +135,7 @@ export const NonWorkingDaysManager: React.FC<NonWorkingDaysManagerProps> = ({ cu
         type: 'success',
         text: 'Registro de día no laborable eliminado correctamente.',
       });
+      await onRefreshData?.();
     } catch (err: any) {
       setFeedback({
         type: 'error',

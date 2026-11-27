@@ -9,6 +9,7 @@ import {
   MapPin,
   RefreshCw,
   Sparkles,
+  UserCheck,
 } from 'lucide-react';
 import type {
   AnoEscolar,
@@ -18,6 +19,7 @@ import type {
   Materia,
   RegistroAsistencia,
   Seccion,
+  SuplenciaDocente,
   Usuario,
   VerificarDiaNoLaborableResult,
 } from '../types.ts';
@@ -39,6 +41,7 @@ interface TeacherTodaySubjectsProps {
   secciones: Seccion[];
   materias: Materia[];
   docenteMaterias: DocenteMateria[];
+  suplencias?: SuplenciaDocente[];
   estudiantes: Estudiante[];
   onSelectClassForAttendance: (params: {
     materiaId?: number;
@@ -55,6 +58,7 @@ export const TeacherTodaySubjects: React.FC<TeacherTodaySubjectsProps> = ({
   secciones,
   materias,
   docenteMaterias,
+  suplencias = [],
   estudiantes,
   onSelectClassForAttendance,
   onViewFullSchedule,
@@ -68,7 +72,78 @@ export const TeacherTodaySubjects: React.FC<TeacherTodaySubjectsProps> = ({
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
+  const isSuplente = currentUser?.rol === 'docente_suplente';
   const todayDayName = useMemo(() => getLocalTodayDayName(todayDate), [todayDate]);
+
+  const activeSuplenciasHoy = useMemo(() => {
+    if (!isSuplente || !currentUser?.id) return [];
+    return suplencias.filter((s) => {
+      if (s.idSuplente !== currentUser.id || !s.activo) return false;
+      if (s.fechaInicio && todayDate < s.fechaInicio) return false;
+      if (s.fechaFin && todayDate > s.fechaFin) return false;
+      return true;
+    });
+  }, [isSuplente, currentUser?.id, suplencias, todayDate]);
+
+  const expandedSuplenciasHoy = useMemo(() => {
+    if (!isSuplente) return [];
+    const entries: Array<{
+      sup: SuplenciaDocente;
+      idMateria: number;
+      idAno: number;
+      nombreMateria: string;
+      nombreNivel: string;
+    }> = [];
+    const secById = new Map(secciones.map((s) => [s.idSeccion, s]));
+    const matById = new Map(materias.map((m) => [m.idMateria, m]));
+    const anoById = new Map(anos.map((a) => [a.idAno, a]));
+
+    for (const sup of activeSuplenciasHoy) {
+      const seccionObj = sup.idSeccion != null ? secById.get(sup.idSeccion) : undefined;
+      if (sup.alcanceCompleto || sup.idMateria == null) {
+        const summary =
+          sup.materiasTitularResumen && sup.materiasTitularResumen.length > 0
+            ? sup.materiasTitularResumen
+            : docenteMaterias
+                .filter((dm) => dm.idUsuario === sup.idDocenteTitular)
+                .map((dm) => {
+                  const m = matById.get(dm.idMateria);
+                  const aId = dm.idAno ?? m?.idAno ?? 0;
+                  return {
+                    idMateria: dm.idMateria,
+                    nombreMateria: dm.nombreMateria || m?.nombreMateria || `Materia #${dm.idMateria}`,
+                    idAno: aId,
+                    nombreNivel: dm.nombreNivel || m?.nombreNivel || anoById.get(aId)?.nombreNivel || 'Año Escolar',
+                  };
+                });
+
+        const seenMatIds = new Set<number>();
+        for (const item of summary) {
+          if (!item.idMateria || seenMatIds.has(item.idMateria)) continue;
+          if (seccionObj && item.idAno !== seccionObj.idAno) continue;
+          seenMatIds.add(item.idMateria);
+          entries.push({
+            sup,
+            idMateria: item.idMateria,
+            idAno: item.idAno,
+            nombreMateria: item.nombreMateria,
+            nombreNivel: item.nombreNivel || anoById.get(item.idAno)?.nombreNivel || 'Año Escolar',
+          });
+        }
+      } else {
+        const m = matById.get(sup.idMateria);
+        const aId = sup.idAno ?? m?.idAno ?? 0;
+        entries.push({
+          sup,
+          idMateria: sup.idMateria,
+          idAno: aId,
+          nombreMateria: sup.nombreMateria || m?.nombreMateria || `Materia #${sup.idMateria}`,
+          nombreNivel: sup.nombreNivel || m?.nombreNivel || anoById.get(aId)?.nombreNivel || 'Año Escolar',
+        });
+      }
+    }
+    return entries;
+  }, [isSuplente, activeSuplenciasHoy, secciones, materias, anos, docenteMaterias]);
 
   // Actualizar reloj local cada 30 segundos para reflejar bloque en curso y cambio de día
   useEffect(() => {
@@ -86,7 +161,11 @@ export const TeacherTodaySubjects: React.FC<TeacherTodaySubjectsProps> = ({
     setError(null);
     try {
       const [horariosData, dayCheck] = await Promise.all([
-        fetchHorarios({ idDocente: currentUser.id, diaSemana: todayDayName }),
+        fetchHorarios(
+          isSuplente
+            ? { diaSemana: todayDayName }
+            : { idDocente: currentUser.id, diaSemana: todayDayName }
+        ),
         verificarDiaNoLaborable(todayDate).catch(() => null),
       ]);
 
@@ -96,7 +175,12 @@ export const TeacherTodaySubjects: React.FC<TeacherTodaySubjectsProps> = ({
       setTodayBlocks(sorted);
       setNonWorkingInfo(dayCheck);
 
-      const idMateriasHoy = Array.from(new Set(sorted.map((h) => h.idMateria)));
+      const idMateriasHoy = Array.from(
+        new Set([
+          ...sorted.map((h) => h.idMateria),
+          ...expandedSuplenciasHoy.map((e) => e.idMateria),
+        ])
+      );
       if (idMateriasHoy.length > 0) {
         const asistenciaData = await fetchAsistencia({
           fecha: todayDate,
@@ -111,7 +195,7 @@ export const TeacherTodaySubjects: React.FC<TeacherTodaySubjectsProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [currentUser?.id, todayDayName, todayDate]);
+  }, [currentUser?.id, isSuplente, todayDayName, todayDate, expandedSuplenciasHoy]);
 
   useEffect(() => {
     loadTodayDashboard();
@@ -119,8 +203,11 @@ export const TeacherTodaySubjects: React.FC<TeacherTodaySubjectsProps> = ({
 
   // Total de materias asignadas al docente (por si no tiene bloques hoy)
   const totalAssignedSubjects = useMemo(
-    () => docenteMaterias.filter((dm) => dm.idUsuario === currentUser.id).length,
-    [docenteMaterias, currentUser.id]
+    () =>
+      isSuplente
+        ? new Set(expandedSuplenciasHoy.map((e) => e.idMateria)).size || activeSuplenciasHoy.length
+        : docenteMaterias.filter((dm) => dm.idUsuario === currentUser.id).length,
+    [isSuplente, expandedSuplenciasHoy, activeSuplenciasHoy.length, docenteMaterias, currentUser.id]
   );
 
   // Construir tarjetas enriquecidas con estado de asistencia real por materia + sección + fecha
@@ -197,14 +284,22 @@ export const TeacherTodaySubjects: React.FC<TeacherTodaySubjectsProps> = ({
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-lg font-bold text-slate-900 dark:text-[#F4F4F5] tracking-tight">
-                Mis Materias de Hoy
+                {isSuplente ? 'Mis Suplencias Asignadas de Hoy' : 'Mis Materias de Hoy'}
               </h2>
+              {isSuplente && (
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800 flex items-center gap-1">
+                  <UserCheck className="w-3 h-3" />
+                  Docente Suplente
+                </span>
+              )}
               <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 border border-indigo-200/80 dark:border-indigo-900">
                 {todayDayName} • {formatDateEs(todayDate)}
               </span>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              Toca cualquier clase programada para abrir directamente su pase de asistencia con el grupo seleccionado.
+              {isSuplente
+                ? 'Visualiza las materias que estás sustituyendo hoy y toca una tarjeta para pasar asistencia en reemplazo del docente titular.'
+                : 'Toca cualquier clase programada para abrir directamente su pase de asistencia con el grupo seleccionado.'}
             </p>
           </div>
         </div>
@@ -375,6 +470,14 @@ export const TeacherTodaySubjects: React.FC<TeacherTodaySubjectsProps> = ({
                           {seccionNombre}
                         </span>
                       </p>
+                      {isSuplente && (block.docenteTitularNombre || block.docenteNombre) && (
+                        <div className="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800 text-[10px] font-bold">
+                          <UserCheck className="w-3 h-3 shrink-0" />
+                          <span>
+                            Supliendo a: {block.docenteTitularNombre || block.docenteNombre}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -398,10 +501,16 @@ export const TeacherTodaySubjects: React.FC<TeacherTodaySubjectsProps> = ({
         <div className="p-6 rounded-2xl bg-slate-50 dark:bg-[#181818] border border-dashed border-slate-200 dark:border-[#27272A] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="space-y-1">
             <p className="text-sm font-bold text-slate-800 dark:text-[#F4F4F5]">
-              No tienes clases programadas para hoy ({todayDayName})
+              {isSuplente
+                ? `No tienes bloques horarios de suplencia programados para hoy (${todayDayName})`
+                : `No tienes clases programadas para hoy (${todayDayName})`}
             </p>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              {totalAssignedSubjects > 0
+              {isSuplente
+                ? totalAssignedSubjects > 0
+                  ? `Tienes ${totalAssignedSubjects} suplencia(s) activa(s) asignada(s). Puedes pasar asistencia directamente seleccionando una abajo o yendo al Pase de Asistencia.`
+                  : 'Aún no tienes suplencias vigentes asignadas por la coordinación o dirección.'
+                : totalAssignedSubjects > 0
                 ? `Tienes ${totalAssignedSubjects} materia(s) asignada(s) en tu carga académica, pero sin bloques agendados para los días ${todayDayName}.`
                 : 'Aún no tienes materias asignadas en el horario escolar.'}
             </p>
@@ -428,6 +537,57 @@ export const TeacherTodaySubjects: React.FC<TeacherTodaySubjectsProps> = ({
           </div>
         </div>
       ) : null}
+
+      {/* Lista directa de suplencias vigentes para Docente Suplente (útil si el bloque no coincide con el horario de hoy o tiene múltiples) */}
+      {!loading && isSuplente && expandedSuplenciasHoy.length > 0 && (
+        <div className="pt-3 border-t border-slate-200/80 dark:border-[#27272A] space-y-2.5">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-amber-700 dark:text-amber-300 flex items-center gap-1.5">
+              <UserCheck className="w-3.5 h-3.5" />
+              <span>Materias por Suplencia Vigente ({expandedSuplenciasHoy.length})</span>
+            </h3>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+            {expandedSuplenciasHoy.map((entry) => (
+              <button
+                key={`sup-card-${entry.sup.idSuplencia}-${entry.idMateria}`}
+                type="button"
+                onClick={() =>
+                  onSelectClassForAttendance({
+                    materiaId: entry.idMateria,
+                    seccionId: entry.sup.idSeccion ?? 0,
+                    anoId: entry.idAno,
+                    fecha: todayDate,
+                  })
+                }
+                className="text-left p-3.5 rounded-xl bg-amber-50/50 dark:bg-amber-950/20 hover:bg-amber-50 dark:hover:bg-amber-950/35 border border-amber-200/80 dark:border-amber-800/60 transition-colors cursor-pointer flex items-center justify-between gap-2"
+              >
+                <div className="min-w-0 space-y-0.5">
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-xs font-bold text-slate-900 dark:text-[#F4F4F5] truncate">
+                      {entry.nombreMateria}
+                    </p>
+                    {entry.sup.alcanceCompleto && (
+                      <span className="px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 text-[9px] font-bold shrink-0">
+                        Total
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">
+                    {entry.nombreNivel} •{' '}
+                    {entry.sup.nombreSeccion ? `Sección ${entry.sup.nombreSeccion}` : 'Todas las secciones'}
+                  </p>
+                  <p className="text-[10px] font-bold text-amber-800 dark:text-amber-300 truncate">
+                    Titular: {entry.sup.titularNombre} {entry.sup.titularApellidos}
+                    {entry.sup.motivo ? ` — ${entry.sup.motivo}` : ''}
+                  </p>
+                </div>
+                <ChevronRight className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </section>
   );
 };

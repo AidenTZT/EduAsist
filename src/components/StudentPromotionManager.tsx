@@ -29,7 +29,7 @@ interface StudentPromotionManagerProps {
   secciones: Seccion[];
   estudiantes: Estudiante[];
   currentUser?: Usuario | null;
-  onRefreshData: () => void;
+  onRefreshData: () => Promise<void> | void;
 }
 
 export const StudentPromotionManager: React.FC<StudentPromotionManagerProps> = ({
@@ -349,7 +349,7 @@ export const StudentPromotionManager: React.FC<StudentPromotionManagerProps> = (
       setConfirmOpen(false);
       setDoubleConfirmChecked(false);
       setBackendWarnings([]);
-      onRefreshData();
+      await onRefreshData();
       await loadEstadoCiclo();
     } catch (err: any) {
       if (err?.status === 409 && err?.code === 'PROMOTION_DOUBLE_CONFIRM_REQUIRED') {

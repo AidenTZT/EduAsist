@@ -25,16 +25,19 @@ import {
   CalendarOff,
   ChevronLeft,
   ChevronRight,
+  RefreshCw,
 } from 'lucide-react';
 import { LapsosManager } from './LapsosManager.tsx';
 import { SchoolScheduleStatusBanner } from './SchoolScheduleStatusBanner.tsx';
 import { StudentPromotionManager } from './StudentPromotionManager.tsx';
 import { NonWorkingDaysManager } from './NonWorkingDaysManager.tsx';
+import { SuplenciasPanel } from './SuplenciasPanel.tsx';
 import type {
   AnoEscolar,
   Seccion,
   Materia,
   DocenteMateria,
+  SuplenciaDocente,
   Usuario,
   Horario,
   Estudiante,
@@ -49,7 +52,7 @@ import {
   createMateria,
   updateMateria,
   deleteMateria,
-  assignDocenteMateriasBatch,
+  replaceDocenteMaterias,
   removeDocenteMateria,
   fetchConfiguracion,
   updateConfiguracion,
@@ -96,10 +99,11 @@ interface AcademicManagerProps {
   secciones: Seccion[];
   materias: Materia[];
   docenteMaterias: DocenteMateria[];
+  suplencias?: SuplenciaDocente[];
   staffUsers: Usuario[];
   estudiantes?: Estudiante[];
   currentUser?: Usuario | null;
-  onRefreshData: () => void;
+  onRefreshData: () => Promise<void> | void;
 }
 
 export const AcademicManager: React.FC<AcademicManagerProps> = ({
@@ -107,17 +111,37 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
   secciones,
   materias,
   docenteMaterias,
+  suplencias = [],
   staffUsers,
   estudiantes = [],
   currentUser,
   onRefreshData,
 }) => {
+  const isDirector = currentUser?.rol === 'director';
+  const isCoordinadorSeccional = currentUser?.rol === 'coordinador_seccional';
+  const canManageHorariosConfig =
+    currentUser?.rol === 'director' || currentUser?.rol === 'coordinador';
+  const canManageAcademicCore =
+    currentUser?.rol === 'director' ||
+    currentUser?.rol === 'coordinador' ||
+    isCoordinadorSeccional;
+
   const [activeTab, setActiveTab] = useState<
-    'lapsos' | 'calendario' | 'promocion' | 'secciones' | 'materias' | 'asignaciones' | 'anos' | 'configuracion'
-  >('lapsos');
+    | 'lapsos'
+    | 'calendario'
+    | 'promocion'
+    | 'secciones'
+    | 'materias'
+    | 'asignaciones'
+    | 'suplencias'
+    | 'anos'
+    | 'configuracion'
+  >(() => (currentUser?.rol === 'coordinador_seccional' ? 'secciones' : 'lapsos'));
 
   // Modals state
-  const [modalType, setModalType] = useState<'ano' | 'seccion' | 'materia' | 'asignacion' | null>(null);
+  const [modalType, setModalType] = useState<
+    'ano' | 'seccion' | 'materia' | 'asignacion' | null
+  >(null);
   const [editItem, setEditItem] = useState<any | null>(null);
 
   // Form states
@@ -147,11 +171,8 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
     text: string;
   } | null>(null);
 
-  const isDirector = currentUser?.rol === 'director';
-  const canManageHorariosConfig =
-    currentUser?.rol === 'director' || currentUser?.rol === 'coordinador';
-
-  // Strictly filter only users with rol === 'docente'
+  // Strictly filter only users with rol === 'docente' for titular assignments
+  // (Docente Suplente never requires assignments in docente_materias; managed in Panel de Suplencias)
   const eligibleDocentes = staffUsers.filter((u) => u.rol === 'docente');
 
   // Form state for multiple subject assignment
@@ -169,6 +190,18 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
 
   const [saving, setSaving] = useState<boolean>(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  useEffect(() => {
+    if (
+      isCoordinadorSeccional &&
+      (activeTab === 'lapsos' ||
+        activeTab === 'calendario' ||
+        activeTab === 'promocion' ||
+        activeTab === 'configuracion')
+    ) {
+      setActiveTab('secciones');
+    }
+  }, [isCoordinadorSeccional, activeTab]);
 
   // Estado y controles del carrusel horizontal de pestañas
   const tabsCarouselRef = useRef<HTMLDivElement | null>(null);
@@ -236,6 +269,7 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
       | 'secciones'
       | 'materias'
       | 'asignaciones'
+      | 'suplencias'
       | 'anos'
       | 'configuracion',
     targetEl?: HTMLButtonElement | null
@@ -309,6 +343,7 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
     for (const dm of docenteMaterias) {
       if (!docenteMap.has(dm.idUsuario)) {
         const staffMatch = staffUsers.find((u) => u.id === dm.idUsuario);
+        if (staffMatch && staffMatch.rol !== 'docente') continue;
         docenteMap.set(
           dm.idUsuario,
           staffMatch || {
@@ -515,7 +550,7 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
         type: 'success',
         text: `Asignación de "${nombreMateria}" removida correctamente.`,
       });
-      onRefreshData();
+      await onRefreshData();
     } catch (err: any) {
       setMessage({
         type: 'error',
@@ -570,7 +605,7 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
         setMessage({ type: 'success', text: 'Año escolar creado con éxito' });
       }
       setModalType(null);
-      onRefreshData();
+      await onRefreshData();
     } catch (err: any) {
       setMessage({ type: 'error', text: err.message || 'Error al guardar año escolar' });
     } finally {
@@ -583,7 +618,7 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
     try {
       await deleteAnoEscolar(idAno);
       setMessage({ type: 'success', text: 'Año escolar eliminado' });
-      onRefreshData();
+      await onRefreshData();
     } catch (err: any) {
       setMessage({ type: 'error', text: err.message || 'Error al eliminar año escolar' });
     }
@@ -602,7 +637,7 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
         setMessage({ type: 'success', text: 'Sección creada exitosamente' });
       }
       setModalType(null);
-      onRefreshData();
+      await onRefreshData();
     } catch (err: any) {
       setMessage({ type: 'error', text: err.message || 'Error al guardar sección' });
     } finally {
@@ -611,11 +646,11 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
   };
 
   const handleDeleteSeccion = async (idSeccion: number) => {
-    if (!confirm('¿Seguro que desea eliminar esta sección? Los estudiantes vinculados quedarán sin sección asignada.')) return;
+    if (!confirm('¿Seguro que desea eliminar esta sección?')) return;
     try {
       await deleteSeccion(idSeccion);
       setMessage({ type: 'success', text: 'Sección eliminada' });
-      onRefreshData();
+      await onRefreshData();
     } catch (err: any) {
       setMessage({ type: 'error', text: err.message || 'Error al eliminar sección' });
     }
@@ -634,7 +669,7 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
         setMessage({ type: 'success', text: 'Materia creada exitosamente' });
       }
       setModalType(null);
-      onRefreshData();
+      await onRefreshData();
     } catch (err: any) {
       setMessage({ type: 'error', text: err.message || 'Error al guardar materia' });
     } finally {
@@ -643,11 +678,11 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
   };
 
   const handleDeleteMateria = async (idMateria: number) => {
-    if (!confirm('¿Seguro que desea eliminar esta materia? Se eliminarán los registros de asistencia vinculados.')) return;
+    if (!confirm('¿Seguro que desea eliminar esta materia?')) return;
     try {
       await deleteMateria(idMateria);
       setMessage({ type: 'success', text: 'Materia eliminada' });
-      onRefreshData();
+      await onRefreshData();
     } catch (err: any) {
       setMessage({ type: 'error', text: err.message || 'Error al eliminar materia' });
     }
@@ -673,26 +708,14 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
     setMessage(null);
 
     try {
-      const currentAssignments = docenteMaterias.filter((dm) => dm.idUsuario === selectedDocenteId);
-      const currentAssignedMateriaIds = currentAssignments.map((dm) => dm.idMateria);
-
-      const materiasToAssign = selectedMateriaIds.filter((id) => !currentAssignedMateriaIds.includes(id));
-      const assignmentsToRemove = currentAssignments.filter((dm) => !selectedMateriaIds.includes(dm.idMateria));
-
-      for (const a of assignmentsToRemove) {
-        await removeDocenteMateria(a.idAsignacion);
-      }
-
-      if (materiasToAssign.length > 0) {
-        await assignDocenteMateriasBatch(selectedDocenteId, materiasToAssign);
-      }
+      const result = await replaceDocenteMaterias(selectedDocenteId, selectedMateriaIds);
 
       setMessage({
         type: 'success',
-        text: `Asignaciones actualizadas con éxito para el docente ${targetDocente.nombre} ${targetDocente.apellidos}. Total asignadas: ${selectedMateriaIds.length}.`,
+        text: `Asignaciones actualizadas con éxito para el docente ${targetDocente.nombre} ${targetDocente.apellidos}. Total asignadas: ${result.count}.`,
       });
+      await onRefreshData();
       setModalType(null);
-      onRefreshData();
     } catch (err: any) {
       setMessage({ type: 'error', text: err.message || 'Error al actualizar asignaciones del docente' });
     } finally {
@@ -714,7 +737,7 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
         type: 'success',
         text: `Configuración institucional actualizada exitosamente (${configNombrePlantel} • ${configAnoLectivo}).`,
       });
-      onRefreshData();
+      await onRefreshData();
     } catch (err: any) {
       setMessage({ type: 'error', text: err.message || 'Error al guardar configuración institucional' });
     } finally {
@@ -760,7 +783,7 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
         text: `Horario institucional actualizado: Receso ${updated.horaRecesoInicio} - ${updated.horaRecesoFin} • Salida ${updated.horaSalida}.`,
       });
       loadHorariosAndPushStatus();
-      onRefreshData();
+      await onRefreshData();
     } catch (err: any) {
       setMessage({
         type: 'error',
@@ -804,21 +827,28 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <div className="flex items-center space-x-2">
+            <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-xl font-bold text-slate-900 tracking-tight">
                 Gestión Institucional & Académica
               </h2>
               <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-purple-50 text-purple-700 border border-purple-200">
                 Pensum Oficial MPPE
               </span>
+              {isCoordinadorSeccional && (
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-cyan-50 text-cyan-800 border border-cyan-200">
+                  Coordinación Seccional ({anos.map((a) => a.nombreNivel.split(' - ')[0]).join(', ')})
+                </span>
+              )}
             </div>
             <p className="text-xs text-slate-500 mt-1">
-              Control de configuración institucional, años académicos, secciones y asignaciones docentes
+              {isCoordinadorSeccional
+                ? 'Gestión académica limitada a sus años escolares asignados: secciones, materias, carga docente y suplencias'
+                : 'Control de configuración institucional, años académicos, secciones, asignaciones y suplencias docentes'}
             </p>
           </div>
 
           <div className="flex items-center space-x-2">
-            {activeTab === 'anos' && (
+            {activeTab === 'anos' && canManageHorariosConfig && (
               <button
                 onClick={() => openCreateModal('ano')}
                 className="px-3.5 py-2 rounded-xl text-xs font-bold bg-purple-600 text-white hover:bg-purple-700 flex items-center space-x-1.5 shadow-sm shadow-purple-100 cursor-pointer"
@@ -827,7 +857,7 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
                 <span>Nuevo Año / Nivel</span>
               </button>
             )}
-            {activeTab === 'secciones' && (
+            {activeTab === 'secciones' && canManageAcademicCore && (
               <button
                 onClick={() => openCreateModal('seccion')}
                 className="px-3.5 py-2 rounded-xl text-xs font-bold bg-purple-600 text-white hover:bg-purple-700 flex items-center space-x-1.5 shadow-sm shadow-purple-100 cursor-pointer"
@@ -836,7 +866,7 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
                 <span>Nueva Sección</span>
               </button>
             )}
-            {activeTab === 'materias' && (
+            {activeTab === 'materias' && canManageAcademicCore && (
               <button
                 onClick={() => openCreateModal('materia')}
                 className="px-3.5 py-2 rounded-xl text-xs font-bold bg-purple-600 text-white hover:bg-purple-700 flex items-center space-x-1.5 shadow-sm shadow-purple-100 cursor-pointer"
@@ -845,7 +875,7 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
                 <span>Nueva Materia</span>
               </button>
             )}
-            {activeTab === 'asignaciones' && (
+            {activeTab === 'asignaciones' && canManageAcademicCore && (
               <button
                 onClick={() => openCreateModal('asignacion')}
                 className="px-3.5 py-2 rounded-xl text-xs font-bold bg-purple-600 text-white hover:bg-purple-700 flex items-center space-x-1.5 shadow-sm shadow-purple-100 cursor-pointer"
@@ -884,20 +914,22 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
                 onScroll={updateCarouselScroll}
                 className="flex items-center gap-1.5 overflow-x-auto scrollbar-none scroll-smooth snap-x snap-mandatory py-0.5 px-0.5"
               >
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={activeTab === 'lapsos'}
-                  onClick={(e) => handleSelectCarouselTab('lapsos', e.currentTarget)}
-                  className={`shrink-0 snap-start px-3.5 py-2 min-h-[38px] rounded-xl text-xs font-bold whitespace-nowrap transition-colors inline-flex items-center gap-1.5 cursor-pointer border ${
-                    activeTab === 'lapsos'
-                      ? 'bg-purple-100 dark:bg-purple-950/60 text-purple-900 dark:text-purple-200 border-purple-200 dark:border-purple-800/70 shadow-2xs font-extrabold'
-                      : 'text-slate-600 dark:text-zinc-400 border-transparent hover:bg-slate-100 dark:hover:bg-[#181818]'
-                  }`}
-                >
-                  <CalendarRange className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
-                  <span>Lapsos Escolares</span>
-                </button>
+                {canManageHorariosConfig && (
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === 'lapsos'}
+                    onClick={(e) => handleSelectCarouselTab('lapsos', e.currentTarget)}
+                    className={`shrink-0 snap-start px-3.5 py-2 min-h-[38px] rounded-xl text-xs font-bold whitespace-nowrap transition-colors inline-flex items-center gap-1.5 cursor-pointer border ${
+                      activeTab === 'lapsos'
+                        ? 'bg-purple-100 dark:bg-purple-950/60 text-purple-900 dark:text-purple-200 border-purple-200 dark:border-purple-800/70 shadow-2xs font-extrabold'
+                        : 'text-slate-600 dark:text-zinc-400 border-transparent hover:bg-slate-100 dark:hover:bg-[#181818]'
+                    }`}
+                  >
+                    <CalendarRange className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
+                    <span>Lapsos Escolares</span>
+                  </button>
+                )}
 
                 {canManageHorariosConfig && (
                   <button
@@ -933,20 +965,22 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
                   </button>
                 )}
 
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={activeTab === 'configuracion'}
-                  onClick={(e) => handleSelectCarouselTab('configuracion', e.currentTarget)}
-                  className={`shrink-0 snap-start px-3.5 py-2 min-h-[38px] rounded-xl text-xs font-bold whitespace-nowrap transition-colors inline-flex items-center gap-1.5 cursor-pointer border ${
-                    activeTab === 'configuracion'
-                      ? 'bg-purple-100 dark:bg-purple-950/60 text-purple-900 dark:text-purple-200 border-purple-200 dark:border-purple-800/70 shadow-2xs font-extrabold'
-                      : 'text-slate-600 dark:text-zinc-400 border-transparent hover:bg-slate-100 dark:hover:bg-[#181818]'
-                  }`}
-                >
-                  <Settings className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
-                  <span>Configuración del Plantel</span>
-                </button>
+                {canManageHorariosConfig && (
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === 'configuracion'}
+                    onClick={(e) => handleSelectCarouselTab('configuracion', e.currentTarget)}
+                    className={`shrink-0 snap-start px-3.5 py-2 min-h-[38px] rounded-xl text-xs font-bold whitespace-nowrap transition-colors inline-flex items-center gap-1.5 cursor-pointer border ${
+                      activeTab === 'configuracion'
+                        ? 'bg-purple-100 dark:bg-purple-950/60 text-purple-900 dark:text-purple-200 border-purple-200 dark:border-purple-800/70 shadow-2xs font-extrabold'
+                        : 'text-slate-600 dark:text-zinc-400 border-transparent hover:bg-slate-100 dark:hover:bg-[#181818]'
+                    }`}
+                  >
+                    <Settings className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" />
+                    <span>Configuración del Plantel</span>
+                  </button>
+                )}
 
                 <button
                   type="button"
@@ -991,6 +1025,21 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
                 >
                   <UserCheck className="w-3.5 h-3.5 shrink-0" />
                   <span>Asignación Docente-Materia ({docenteMaterias.length})</span>
+                </button>
+
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === 'suplencias'}
+                  onClick={(e) => handleSelectCarouselTab('suplencias', e.currentTarget)}
+                  className={`shrink-0 snap-start px-3.5 py-2 min-h-[38px] rounded-xl text-xs font-bold whitespace-nowrap transition-colors inline-flex items-center gap-1.5 cursor-pointer border tabular-nums ${
+                    activeTab === 'suplencias'
+                      ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-900 dark:text-amber-200 border-amber-200 dark:border-amber-800/70 shadow-2xs font-extrabold'
+                      : 'text-slate-600 dark:text-zinc-400 border-transparent hover:bg-slate-100 dark:hover:bg-[#181818]'
+                  }`}
+                >
+                  <RefreshCw className="w-3.5 h-3.5 shrink-0" />
+                  <span>Suplencias ({suplencias.length})</span>
                 </button>
 
                 <button
@@ -1049,17 +1098,17 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
       )}
 
       {/* -1. LAPSOS ESCOLARES */}
-      {activeTab === 'lapsos' && (
+      {activeTab === 'lapsos' && canManageHorariosConfig && (
         <LapsosManager currentUser={currentUser} onRefreshData={onRefreshData} />
       )}
 
       {/* -0.5 DÍAS NO LABORABLES Y FERIADOS */}
-      {activeTab === 'calendario' && (
-        <NonWorkingDaysManager currentUser={currentUser} />
+      {activeTab === 'calendario' && canManageHorariosConfig && (
+        <NonWorkingDaysManager currentUser={currentUser} onRefreshData={onRefreshData} />
       )}
 
       {/* -0.2 PROMOCIÓN MASIVA DE AÑO ESCOLAR */}
-      {activeTab === 'promocion' && (
+      {activeTab === 'promocion' && canManageHorariosConfig && (
         <StudentPromotionManager
           anos={anos}
           secciones={secciones}
@@ -1070,7 +1119,7 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
       )}
 
       {/* 0. CONFIGURACIÓN INSTITUCIONAL */}
-      {activeTab === 'configuracion' && (
+      {activeTab === 'configuracion' && canManageHorariosConfig && (
         <div className="space-y-6">
           {/* Role Access Notice */}
           {!isDirector && (
@@ -1533,7 +1582,7 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
                   </span>
                 </div>
                 <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5">
-                  Vista unificada de materias, años escolares y secciones asignadas a cada profesor
+                  Carga fija exclusiva para docentes titulares. El personal con rol <strong>Docente Suplente</strong> no requiere materias aquí y se asigna en el <strong>Panel de Suplencias</strong>.
                 </p>
               </div>
               <button
@@ -2005,6 +2054,21 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
         </div>
       )}
 
+      {/* 3B. SUPLENCIAS DOCENTES TAB (Panel de Suplencias Embebido) */}
+      {activeTab === 'suplencias' && (
+        <SuplenciasPanel
+          embedded
+          anos={anos}
+          secciones={secciones}
+          materias={materias}
+          docenteMaterias={docenteMaterias}
+          suplencias={suplencias}
+          staffUsers={staffUsers}
+          currentUser={currentUser ?? null}
+          onRefreshData={onRefreshData}
+        />
+      )}
+
       {/* 4. AÑOS ESCOLARES TAB */}
       {activeTab === 'anos' && (
         <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
@@ -2013,7 +2077,9 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
               Años Escolares / Niveles
             </span>
             <span className="text-xs text-slate-500 font-medium">
-              Estructura formal de la institución
+              {canManageHorariosConfig
+                ? 'Estructura formal de la institución'
+                : 'Años asignados a su Coordinación Seccional (Solo lectura)'}
             </span>
           </div>
 
@@ -2024,7 +2090,7 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
                   <th className="py-3 px-4">ID</th>
                   <th className="py-3 px-4">Nombre del Año / Nivel</th>
                   <th className="py-3 px-4">Estado</th>
-                  <th className="py-3 px-4 text-right w-36">Acciones</th>
+                  {canManageHorariosConfig && <th className="py-3 px-4 text-right w-36">Acciones</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -2037,24 +2103,26 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
                         {ano.activo ? 'Activo' : 'Inactivo'}
                       </span>
                     </td>
-                    <td className="py-3 px-4 text-right">
-                      <div className="flex items-center justify-end space-x-2">
-                        <button
-                          onClick={() => openEditModal('ano', ano)}
-                          className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
-                          title="Editar Año"
-                        >
-                          <Edit2 className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleDeleteAno(ano.idAno)}
-                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                          title="Eliminar Año"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </td>
+                    {canManageHorariosConfig && (
+                      <td className="py-3 px-4 text-right">
+                        <div className="flex items-center justify-end space-x-2">
+                          <button
+                            onClick={() => openEditModal('ano', ano)}
+                            className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
+                            title="Editar Año"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteAno(ano.idAno)}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                            title="Eliminar Año"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -2351,6 +2419,6 @@ export const AcademicManager: React.FC<AcademicManagerProps> = ({
         </div>
       )}
 
-    </div>
+      </div>
   );
 };

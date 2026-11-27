@@ -18,16 +18,27 @@ import {
   DatabaseBackup,
   ChevronLeft,
   ChevronRight,
+  RefreshCw,
 } from 'lucide-react';
 import { PWAInstallButton } from './PWAInstallButton.tsx';
 import { InstallPWAButton } from './InstallPWAButton.tsx';
 import type { Usuario, RolUsuario } from '../types.ts';
 
+type DocenteNavTab =
+  | 'asistencia'
+  | 'estudiantes'
+  | 'horarios'
+  | 'auditoria'
+  | 'suplencias'
+  | 'academico'
+  | 'usuarios'
+  | 'restauracion';
+
 interface NavbarProps {
   currentView: 'portal-selector' | 'docente' | 'representante';
   onViewChange: (view: 'portal-selector' | 'docente' | 'representante') => void;
-  activeDocenteTab: 'asistencia' | 'estudiantes' | 'horarios' | 'auditoria' | 'academico' | 'usuarios' | 'restauracion';
-  onDocenteTabChange: (tab: 'asistencia' | 'estudiantes' | 'horarios' | 'auditoria' | 'academico' | 'usuarios' | 'restauracion') => void;
+  activeDocenteTab: DocenteNavTab;
+  onDocenteTabChange: (tab: DocenteNavTab) => void;
   activeUser: Usuario | null;
   allStaffUsers: Usuario[];
   onSelectStaffUser?: (user: Usuario) => void;
@@ -120,7 +131,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   };
 
   const handleSelectNavTab = (
-    tab: 'asistencia' | 'estudiantes' | 'horarios' | 'auditoria' | 'academico' | 'usuarios' | 'restauracion',
+    tab: DocenteNavTab,
     targetEl?: HTMLButtonElement | null
   ) => {
     onDocenteTabChange(tab);
@@ -152,6 +163,18 @@ export const Navbar: React.FC<NavbarProps> = ({
           label: 'Coordinador Académico',
           bg: 'bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border-blue-200 dark:border-blue-800',
           dot: 'bg-blue-600 dark:bg-blue-400',
+        };
+      case 'coordinador_seccional':
+        return {
+          label: 'Coordinador Seccional',
+          bg: 'bg-cyan-100 dark:bg-cyan-950/60 text-cyan-800 dark:text-cyan-300 border-cyan-200 dark:border-cyan-800',
+          dot: 'bg-cyan-600 dark:bg-cyan-400',
+        };
+      case 'docente_suplente':
+        return {
+          label: 'Docente Suplente',
+          bg: 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-800',
+          dot: 'bg-amber-600 dark:bg-amber-400',
         };
       case 'docente':
       default:
@@ -396,8 +419,10 @@ export const Navbar: React.FC<NavbarProps> = ({
                     <span>Estudiantes & Representantes</span>
                   </button>
 
-                  {/* Asistencia General & Auditoría (ROL EXCLUSIVO: DIRECTOR Y COORDINADOR) */}
-                  {(activeUser?.rol === 'director' || activeUser?.rol === 'coordinador') && (
+                  {/* Asistencia General & Auditoría (DIRECTOR, COORDINADOR Y COORDINADOR SECCIONAL) */}
+                  {(activeUser?.rol === 'director' ||
+                    activeUser?.rol === 'coordinador' ||
+                    activeUser?.rol === 'coordinador_seccional') && (
                     <button
                       type="button"
                       role="tab"
@@ -414,8 +439,30 @@ export const Navbar: React.FC<NavbarProps> = ({
                     </button>
                   )}
 
-                  {/* Admin Tabs: Academic Structure (Director AND Coordinador) */}
-                  {(activeUser?.rol === 'director' || activeUser?.rol === 'coordinador') && (
+                  {/* Panel de Suplencias (Director, Coordinador y Coordinador Seccional) */}
+                  {(activeUser?.rol === 'director' ||
+                    activeUser?.rol === 'coordinador' ||
+                    activeUser?.rol === 'coordinador_seccional') && (
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={activeDocenteTab === 'suplencias'}
+                      onClick={(e) => handleSelectNavTab('suplencias', e.currentTarget)}
+                      className={`shrink-0 snap-start flex items-center space-x-1.5 px-3 py-1.5 min-h-[34px] rounded-lg text-xs font-bold whitespace-nowrap transition-colors cursor-pointer ${
+                        activeDocenteTab === 'suplencias'
+                          ? 'bg-amber-50 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 font-extrabold border border-amber-200/80 dark:border-amber-800'
+                          : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-[#181818]'
+                      }`}
+                    >
+                      <RefreshCw className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                      <span>Panel de Suplencias</span>
+                    </button>
+                  )}
+
+                  {/* Admin Tabs: Academic Structure (Director, Coordinador y Coordinador Seccional) */}
+                  {(activeUser?.rol === 'director' ||
+                    activeUser?.rol === 'coordinador' ||
+                    activeUser?.rol === 'coordinador_seccional') && (
                     <button
                       type="button"
                       role="tab"
@@ -428,7 +475,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                       }`}
                     >
                       <Building className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0" />
-                      <span>Niveles, Secciones & Materias</span>
+                      <span>Niveles, Secciones, Materias & Suplencias</span>
                     </button>
                   )}
 
@@ -576,7 +623,9 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <span>Estudiantes & Representantes</span>
               </button>
 
-              {(activeUser?.rol === 'director' || activeUser?.rol === 'coordinador') && (
+              {(activeUser?.rol === 'director' ||
+                activeUser?.rol === 'coordinador' ||
+                activeUser?.rol === 'coordinador_seccional') && (
                 <>
                   <button
                     onClick={() => {
@@ -595,13 +644,29 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </>
               )}
 
-              {(activeUser?.rol === 'director' || activeUser?.rol === 'coordinador') && (
+              {(activeUser?.rol === 'director' ||
+                activeUser?.rol === 'coordinador' ||
+                activeUser?.rol === 'coordinador_seccional') && (
                 <>
                   <div className="pt-2 border-t border-slate-100 dark:border-[#27272A]">
                     <p className="text-[11px] font-bold text-purple-700 dark:text-purple-400 uppercase tracking-wider px-2">
                       Administración Institucional
                     </p>
                   </div>
+                  <button
+                    onClick={() => {
+                      onDocenteTabChange('suplencias');
+                      setMobileMenuOpen(false);
+                    }}
+                    className={`w-full text-left px-3 py-2.5 rounded-xl text-sm font-semibold flex items-center space-x-2.5 ${
+                      activeDocenteTab === 'suplencias'
+                        ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-bold border border-amber-200/80 dark:border-amber-800'
+                        : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-[#181818]'
+                    }`}
+                  >
+                    <RefreshCw className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                    <span>Panel de Suplencias</span>
+                  </button>
                   <button
                     onClick={() => {
                       onDocenteTabChange('academico');
@@ -614,7 +679,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                     }`}
                   >
                     <Building className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                    <span>Niveles, Secciones & Materias</span>
+                    <span>Niveles, Secciones, Materias & Suplencias</span>
                   </button>
                 </>
               )}

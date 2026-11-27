@@ -5,11 +5,11 @@ import { performance } from 'perf_hooks';
 import * as webPushModule from 'web-push';
 import type { PushSubscription as WebPushSubscription } from 'web-push';
 import * as db from './localDb.ts';
-import { isSafePushEndpointUrl } from './validation.ts';
+import { assertSafePushEndpointAndResolve } from './validation.ts';
 
 const webPush = ((webPushModule as any).default || webPushModule) as typeof webPushModule;
 
-const PERSISTENT_VAPID_FILE = path.resolve(process.cwd(), 'data', 'vapid-keys.json');
+const PERSISTENT_VAPID_FILE = path.join(db.getDataDir(), 'vapid-keys.json');
 const FALLBACK_TMP_VAPID_FILE = '/tmp/eduasist-vapid.json';
 
 // Parámetros de control de concurrencia y protección contra colapso
@@ -258,12 +258,17 @@ async function sendSingleTaskIsolated(
   attempt: number,
   customSender?: (task: ResilientPushTask, timeoutMs: number, attempt: number) => Promise<unknown>
 ): Promise<SingleSendOutcome> {
-  if (!customSender && !isSafePushEndpointUrl(task.endpoint)) {
-    return {
-      ok: false,
-      statusCode: 400,
-      errorMessage: 'Endpoint Web Push bloqueado por política de seguridad HTTPS.',
-    };
+  if (!customSender) {
+    try {
+      await assertSafePushEndpointAndResolve(task.endpoint);
+    } catch (ssrfErr: any) {
+      return {
+        ok: false,
+        statusCode: 400,
+        errorMessage:
+          ssrfErr?.message || 'Endpoint Web Push bloqueado por política de seguridad HTTPS.',
+      };
+    }
   }
   let guardTimer: NodeJS.Timeout | null = null;
   try {

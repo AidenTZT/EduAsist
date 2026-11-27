@@ -36,7 +36,7 @@ import { DataLifecycleManager } from './DataLifecycleManager.tsx';
 
 interface BackupRestoreManagerProps {
   currentUser: Usuario | null;
-  onRefreshData?: () => void;
+  onRefreshData?: () => Promise<void> | void;
 }
 
 export const BackupRestoreManager: React.FC<BackupRestoreManagerProps> = ({
@@ -317,9 +317,9 @@ export const BackupRestoreManager: React.FC<BackupRestoreManagerProps> = ({
       setShowRestoreModal(false);
       setSelectedFile(null);
       setFileContent(null);
-      loadStats();
-      if (activeSubTab === 'historial') loadBackupLogs(1);
-      if (onRefreshData) onRefreshData();
+      if (onRefreshData) await onRefreshData();
+      await loadStats();
+      if (activeSubTab === 'historial') await loadBackupLogs(1);
     } catch (err: any) {
       setStatusMessage({
         type: 'error',
@@ -350,9 +350,9 @@ export const BackupRestoreManager: React.FC<BackupRestoreManagerProps> = ({
       });
       setShowResetModal(false);
       setResetConfirmText('');
-      loadStats();
-      if (activeSubTab === 'historial') loadBackupLogs(1);
-      if (onRefreshData) onRefreshData();
+      if (onRefreshData) await onRefreshData();
+      await loadStats();
+      if (activeSubTab === 'historial') await loadBackupLogs(1);
     } catch (err: any) {
       setStatusMessage({
         type: 'error',
@@ -566,9 +566,9 @@ export const BackupRestoreManager: React.FC<BackupRestoreManagerProps> = ({
       {activeSubTab === 'mantenimiento' ? (
         <DataLifecycleManager
           currentUser={currentUser}
-          onDataChanged={() => {
-            loadStats();
-            if (onRefreshData) onRefreshData();
+          onDataChanged={async () => {
+            if (onRefreshData) await onRefreshData();
+            await loadStats();
           }}
         />
       ) : activeSubTab === 'historial' ? (

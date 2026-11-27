@@ -38,10 +38,6 @@ service cloud.firestore {
       return key is string && key.size() >= 3 && key.size() <= 200 && key.matches('^[a-zA-Z0-9_\\-\\.@+]+$');
     }
 
-    function isBootstrappedAdmin() {
-      return isSignedIn() && userEmail() == 'adrian0424344@gmail.com';
-    }
-
     function hasStaffIndex() {
       return isSignedIn() && exists(/databases/$(database)/documents/staff_emails/$(userEmail()));
     }
@@ -51,7 +47,7 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isBootstrappedAdmin() || (hasStaffIndex() && staffIndex().rol == 'director');
+      return hasStaffIndex() && staffIndex().rol == 'director';
     }
 
     function isCoordinador() {
@@ -63,7 +59,7 @@ service cloud.firestore {
     }
 
     function isStaff() {
-      return isBootstrappedAdmin() || hasStaffIndex();
+      return hasStaffIndex();
     }
 
     function isManager() {
@@ -260,20 +256,6 @@ service cloud.firestore {
         && data.fechaRegistro is string && data.fechaRegistro.size() == 10 && data.fechaRegistro.matches('^\\d{4}-\\d{2}-\\d{2}$');
     }
 
-    function isValidAuditLog(data) {
-      return data.keys().hasAll(['idLog', 'accion', 'entidad', 'createdAt'])
-        && data.keys().hasOnly(['idLog', 'idUsuario', 'emailOCedula', 'rol', 'accion', 'entidad', 'idEntidad', 'detalles', 'createdAt'])
-        && data.idLog is number
-        && (!('idUsuario' in data) || data.idUsuario == null || data.idUsuario is number)
-        && isOptString(data, 'emailOCedula', 200)
-        && isOptString(data, 'rol', 40)
-        && data.accion is string && data.accion.size() >= 1 && data.accion.size() <= 120
-        && data.entidad is string && data.entidad.size() >= 1 && data.entidad.size() <= 100
-        && isOptString(data, 'idEntidad', 120)
-        && (!('detalles' in data) || data.detalles == null || data.detalles is map || data.detalles is string)
-        && data.createdAt is string && data.createdAt.size() <= 60;
-    }
-
     function isValidPushSubscription(data) {
       return data.keys().hasAll(['idSubscription', 'idRepresentante', 'endpoint', 'p256dh', 'auth', 'activa', 'createdAt'])
         && data.keys().hasOnly(['idSubscription', 'idRepresentante', 'endpoint', 'p256dh', 'auth', 'userAgent', 'activa', 'createdAt', 'lastUsed'])
@@ -353,7 +335,7 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow get: if isValidId(userId) && (isManager() || (isStaff() && existing().email.lower() == userEmail()));
-      allow list: if isManager() || (isStaff() && resource.data.email == userEmail());
+      allow list: if isManager() || (isStaff() && resource.data.email.lower() == userEmail());
       allow create: if isValidId(userId) && isValidUsuario(incoming()) && isAdmin();
       allow update: if isValidId(userId) && isValidUsuario(incoming()) && isAdmin()
         && incoming().diff(existing()).affectedKeys().hasOnly(['uid', 'email', 'nombre', 'apellidos', 'cedula', 'telefono', 'rol']);
@@ -391,7 +373,7 @@ service cloud.firestore {
       allow get: if isValidId(idRepresentante) && (
         isManager() || (isRepresentante() && existing().email.lower() == userEmail())
       );
-      allow list: if isManager() || (isRepresentante() && resource.data.email == userEmail());
+      allow list: if isManager() || (isRepresentante() && resource.data.email.lower() == userEmail());
       allow create: if isValidId(idRepresentante) && isValidRepresentante(incoming()) && isManager();
       allow update: if isValidId(idRepresentante) && isValidRepresentante(incoming()) && (
         (isManager() && incoming().diff(existing()).affectedKeys().hasOnly(['cedula', 'nombres', 'apellidos', 'telefono', 'email'])) ||
@@ -411,9 +393,9 @@ service cloud.firestore {
 
     match /estudiantes/{idEstudiante} {
       allow get: if isValidId(idEstudiante) && (
-        isStaff() || (isRepresentante() && existing().idRepresentante == getRepId())
+        isManager() || (isRepresentante() && existing().idRepresentante == getRepId())
       );
-      allow list: if isStaff() || (isRepresentante() && resource.data.idRepresentante == getRepId());
+      allow list: if isManager() || (isRepresentante() && resource.data.idRepresentante == getRepId());
       allow create: if isValidId(idEstudiante) && isValidEstudiante(incoming()) && isManager();
       allow update: if isValidId(idEstudiante) && isValidEstudiante(incoming()) && isManager()
         && incoming().diff(existing()).affectedKeys().hasOnly(['cedula', 'nombres', 'apellidos', 'idAnoActual', 'idSeccion', 'idRepresentante']);
@@ -422,38 +404,58 @@ service cloud.firestore {
 
     match /asistencia/{docId} {
       allow get: if isValidId(docId) && (
-        isStaff() || (isRepresentante() && existing().idRepresentante == getRepId())
+        isManager() ||
+        isDocenteAssignedTo(existing().idMateria) ||
+        (isRepresentante() && existing().idRepresentante == getRepId())
       );
-      allow list: if isStaff() || (isRepresentante() && resource.data.idRepresentante == getRepId());
+      allow list: if isManager() || (isRepresentante() && resource.data.idRepresentante == getRepId());
       allow create: if isValidId(docId) && isValidAsistencia(incoming()) && (
-        isManager() || isDocenteAssignedTo(incoming().idMateria)
+        isManager() || (
+          isDocenteAssignedTo(incoming().idMateria) &&
+          exists(/databases/$(database)/documents/estudiantes/$(string(incoming().idEstudiante))) &&
+          incoming().idRepresentante == get(/databases/$(database)/documents/estudiantes/$(string(incoming().idEstudiante))).data.idRepresentante
+        )
       );
       allow update: if isValidId(docId) && isValidAsistencia(incoming()) && (
-        isManager() || isDocenteAssignedTo(incoming().idMateria)
-      ) && incoming().diff(existing()).affectedKeys().hasOnly(['horaEntrada', 'estado', 'idRepresentante']);
+        isManager() || (
+          isDocenteAssignedTo(existing().idMateria) &&
+          incoming().idMateria == existing().idMateria &&
+          incoming().idEstudiante == existing().idEstudiante &&
+          incoming().idRepresentante == existing().idRepresentante
+        )
+      ) && incoming().diff(existing()).affectedKeys().hasOnly(['horaEntrada', 'estado']);
       allow delete: if isValidId(docId) && isAdmin();
     }
 
     match /calificaciones/{docId} {
       allow get: if isValidId(docId) && (
-        isStaff() || (isRepresentante() && existing().idRepresentante == getRepId())
+        isManager() ||
+        isDocenteAssignedTo(existing().idMateria) ||
+        (isRepresentante() && existing().idRepresentante == getRepId())
       );
-      allow list: if isStaff() || (isRepresentante() && resource.data.idRepresentante == getRepId());
+      allow list: if isManager() || (isRepresentante() && resource.data.idRepresentante == getRepId());
       allow create: if isValidId(docId) && isValidCalificacion(incoming()) && (
-        isManager() || isDocenteAssignedTo(incoming().idMateria)
+        isManager() || (
+          isDocenteAssignedTo(incoming().idMateria) &&
+          exists(/databases/$(database)/documents/estudiantes/$(string(incoming().idEstudiante))) &&
+          incoming().idRepresentante == get(/databases/$(database)/documents/estudiantes/$(string(incoming().idEstudiante))).data.idRepresentante
+        )
       );
       allow update: if isValidId(docId) && isValidCalificacion(incoming()) && (
-        isManager() || isDocenteAssignedTo(incoming().idMateria)
-      ) && incoming().diff(existing()).affectedKeys().hasOnly(['nota', 'observacion', 'fechaRegistro', 'idRepresentante']);
+        isManager() || (
+          isDocenteAssignedTo(existing().idMateria) &&
+          incoming().idMateria == existing().idMateria &&
+          incoming().idEstudiante == existing().idEstudiante &&
+          incoming().idRepresentante == existing().idRepresentante
+        )
+      ) && incoming().diff(existing()).affectedKeys().hasOnly(['nota', 'observacion', 'fechaRegistro']);
       allow delete: if isValidId(docId) && isAdmin();
     }
 
     match /audit_logs/{idLog} {
       allow get: if isValidId(idLog) && isAdmin();
       allow list: if isAdmin();
-      allow create: if isValidId(idLog) && isValidAuditLog(incoming()) && (isStaff() || isRepresentante());
-      allow update: if false;
-      allow delete: if isValidId(idLog) && isAdmin();
+      allow create, update, delete: if false;
     }
 
     match /push_subscriptions/{subId} {

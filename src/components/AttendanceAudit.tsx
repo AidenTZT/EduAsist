@@ -266,8 +266,11 @@ export const AttendanceAudit: React.FC<AttendanceAuditProps> = ({
   materias,
   currentUser,
 }) => {
-  // Restricción RBAC: Acceso estrictamente reservado a Director y Coordinador
-  const isAuthorized = currentUser?.rol === 'director' || currentUser?.rol === 'coordinador';
+  // Restricción RBAC: Acceso reservado a Director, Coordinador y Coordinador Seccional (acotado a sus años)
+  const isAuthorized =
+    currentUser?.rol === 'director' ||
+    currentUser?.rol === 'coordinador' ||
+    currentUser?.rol === 'coordinador_seccional';
 
   const [subTab, setSubTab] = useState<'asistencias' | 'seguridad'>('asistencias');
 
@@ -582,7 +585,7 @@ export const AttendanceAudit: React.FC<AttendanceAuditProps> = ({
         </h3>
         <p className="text-sm text-slate-600 dark:text-slate-400 mb-4 leading-relaxed">
           El <strong>Módulo de Asistencia General y Gestión de Justificantes</strong> es accesible
-          únicamente por los roles <strong>Director</strong> y <strong>Coordinador</strong>. Los docentes de aula solo realizan el pase de lista regular y no pueden alterar registros con reposos o justificantes sin aprobación de coordinación.
+          únicamente por los roles <strong>Director</strong>, <strong>Coordinador</strong> y <strong>Coordinador Seccional</strong>. Los docentes de aula solo realizan el pase de lista regular y no pueden alterar registros con reposos o justificantes sin aprobación de coordinación.
         </p>
         <span className="inline-block px-3 py-1 rounded-full text-xs font-mono font-bold bg-slate-100 dark:bg-[#181818] text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-[#27272A]">
           Rol detectado: {currentUser?.rol ? currentUser.rol.toUpperCase() : 'NO_AUTORIZADO'}
@@ -624,7 +627,12 @@ export const AttendanceAudit: React.FC<AttendanceAuditProps> = ({
         registros: fullExportRes.data,
         generadoPor: {
           nombre: currentUser ? `${currentUser.nombre} ${currentUser.apellidos}` : 'Dirección General',
-          rol: currentUser?.rol === 'director' ? 'Director General' : 'Coordinador Académico',
+          rol:
+            currentUser?.rol === 'director'
+              ? 'Director General'
+              : currentUser?.rol === 'coordinador_seccional'
+              ? 'Coordinador Seccional'
+              : 'Coordinador Académico',
         },
         config: {
           nombrePlantel: instConfig.nombrePlantel,
@@ -743,9 +751,20 @@ export const AttendanceAudit: React.FC<AttendanceAuditProps> = ({
                 </div>
               </div>
 
-              <span className="px-3 py-1 rounded-full text-xs font-extrabold uppercase bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 self-start sm:self-center">
-                {currentUser?.rol === 'director' ? 'Dirección' : 'Coordinación'}
-              </span>
+              <div className="flex flex-wrap items-center gap-1.5 self-start sm:self-center">
+                <span className="px-3 py-1 rounded-full text-xs font-extrabold uppercase bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800">
+                  {currentUser?.rol === 'director'
+                    ? 'Dirección'
+                    : currentUser?.rol === 'coordinador_seccional'
+                    ? 'Coordinación Seccional'
+                    : 'Coordinación'}
+                </span>
+                {currentUser?.rol === 'coordinador_seccional' && anos.length > 0 && (
+                  <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-teal-50 dark:bg-teal-950/40 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800">
+                    Alcance: {anos.map((a) => a.nombreNivel).join(', ')}
+                  </span>
+                )}
+              </div>
             </div>
 
             {/* Filter grid */}

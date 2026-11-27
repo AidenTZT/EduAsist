@@ -34,7 +34,7 @@ import {
 
 interface DataLifecycleManagerProps {
   currentUser: Usuario | null;
-  onDataChanged?: () => void;
+  onDataChanged?: () => Promise<void> | void;
 }
 
 function downloadJsonFile(data: unknown, filename: string): void {
@@ -400,7 +400,7 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
       });
 
       await Promise.all([loadClosurePreview(), loadResumenes(), loadServerBackups()]);
-      onDataChanged?.();
+      await onDataChanged?.();
     } catch (err: any) {
       setFeedback({
         type: 'error',
@@ -441,7 +441,7 @@ export const DataLifecycleManager: React.FC<DataLifecycleManagerProps> = ({
         text: res.mensaje,
       });
       await loadRetentionPreview();
-      onDataChanged?.();
+      await onDataChanged?.();
     } catch (err: any) {
       setFeedback({
         type: 'error',

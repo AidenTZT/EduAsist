@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Users,
   UserPlus,
@@ -52,7 +52,7 @@ interface StudentsDirectoryProps {
   representantes: Representante[];
   estudiantes: Estudiante[];
   currentUser: Usuario | null;
-  onRefreshData: () => void;
+  onRefreshData: () => Promise<void> | void;
 }
 
 export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
@@ -131,7 +131,18 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
   const [savingCred, setSavingCred] = useState<boolean>(false);
   const [downloadingPdfStudentId, setDownloadingPdfStudentId] = useState<number | null>(null);
 
-  const canEdit = currentUser?.rol === 'director' || currentUser?.rol === 'coordinador';
+  const canEdit =
+    currentUser?.rol === 'director' ||
+    currentUser?.rol === 'coordinador' ||
+    currentUser?.rol === 'coordinador_seccional';
+  const canDeleteRep = currentUser?.rol === 'director' || currentUser?.rol === 'coordinador';
+  const canViewRepresentantes = canEdit;
+
+  useEffect(() => {
+    if (!canViewRepresentantes && directoryTab !== 'estudiantes') {
+      setDirectoryTab('estudiantes');
+    }
+  }, [canViewRepresentantes, directoryTab]);
 
   const handleDownloadStudentAttendancePDF = async (st: Estudiante) => {
     setDownloadingPdfStudentId(st.idEstudiante);
@@ -218,7 +229,7 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
         text: `Credenciales locales de ${credRep.nombres} ${credRep.apellidos} actualizadas correctamente.`,
       });
       setCredModalOpen(false);
-      onRefreshData();
+      await onRefreshData();
     } catch (err: any) {
       setFeedback({ type: 'error', text: err.message || 'Error al actualizar credenciales de acceso' });
     } finally {
@@ -249,24 +260,31 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
     setValidationErrors({});
     setFeedback(null);
     if (student) {
+      const estado = student.estadoAcademico || 'ACTIVO';
+      const isInactive = estado === 'EGRESADO' || estado === 'RETIRADO';
+      const fallbackAno = anos[0]?.idAno || 0;
+      const targetAno = isInactive ? 0 : student.idAnoActual ?? fallbackAno;
+      const fallbackSec =
+        secciones.find((s) => s.idAno === targetAno)?.idSeccion || 0;
       setEditingStudent(student);
       setStudentForm({
         cedula: student.cedula,
         nombres: student.nombres,
         apellidos: student.apellidos,
-        idAnoActual: student.idAnoActual ?? (anos[0]?.idAno || 1),
-        idSeccion: student.idSeccion || secciones[0]?.idSeccion || 1,
+        idAnoActual: targetAno,
+        idSeccion: isInactive ? 0 : student.idSeccion ?? fallbackSec,
         idRepresentante: student.idRepresentante,
-        estadoAcademico: student.estadoAcademico || 'ACTIVO',
+        estadoAcademico: estado,
       });
     } else {
+      const firstAno = anos[0]?.idAno || 0;
       setEditingStudent(null);
       setStudentForm({
         cedula: '',
         nombres: '',
         apellidos: '',
-        idAnoActual: anos[0]?.idAno || 1,
-        idSeccion: secciones.find((s) => s.idAno === (anos[0]?.idAno || 1))?.idSeccion || 1,
+        idAnoActual: firstAno,
+        idSeccion: secciones.find((s) => s.idAno === firstAno)?.idSeccion || 0,
         idRepresentante: representantes[0]?.idRepresentante || 1,
         estadoAcademico: 'ACTIVO',
       });
@@ -322,13 +340,15 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
     setSaving(true);
     setFeedback(null);
     try {
+      const isInactive =
+        studentForm.estadoAcademico === 'EGRESADO' || studentForm.estadoAcademico === 'RETIRADO';
       if (editingStudent) {
         await updateEstudiante(editingStudent.idEstudiante, {
           cedula: studentForm.cedula,
           nombres: studentForm.nombres,
           apellidos: studentForm.apellidos,
-          idAnoActual: studentForm.idAnoActual,
-          idSeccion: studentForm.idSeccion,
+          idAnoActual: isInactive ? null : studentForm.idAnoActual || null,
+          idSeccion: isInactive ? null : studentForm.idSeccion > 0 ? studentForm.idSeccion : null,
           idRepresentante: studentForm.idRepresentante,
           estadoAcademico: studentForm.estadoAcademico,
         });
@@ -339,13 +359,13 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
           nombres: studentForm.nombres,
           apellidos: studentForm.apellidos,
           idAnoActual: studentForm.idAnoActual,
-          idSeccion: studentForm.idSeccion,
+          idSeccion: studentForm.idSeccion > 0 ? studentForm.idSeccion : undefined,
           idRepresentante: studentForm.idRepresentante,
         });
         setFeedback({ type: 'success', text: 'Estudiante inscrito exitosamente' });
       }
       setStudentModalOpen(false);
-      onRefreshData();
+      await onRefreshData();
     } catch (err: any) {
       setFeedback({ type: 'error', text: err.message || 'Error al guardar estudiante' });
     } finally {
@@ -362,7 +382,7 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
         type: 'success',
         text: `Estudiante ${student.nombres} ${student.apellidos} eliminado exitosamente.`,
       });
-      onRefreshData();
+      await onRefreshData();
     } catch (err: any) {
       setFeedback({ type: 'error', text: err.message || 'Error al eliminar estudiante' });
     } finally {
@@ -426,7 +446,7 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
         setFeedback({ type: 'success', text: 'Representante registrado exitosamente' });
       }
       setRepModalOpen(false);
-      onRefreshData();
+      await onRefreshData();
     } catch (err: any) {
       setFeedback({ type: 'error', text: err.message || 'Error al guardar representante' });
     } finally {
@@ -453,7 +473,7 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
         type: 'success',
         text: `Representante ${rep.nombres} ${rep.apellidos} eliminado exitosamente.`,
       });
-      onRefreshData();
+      await onRefreshData();
     } catch (err: any) {
       setFeedback({ type: 'error', text: err.message || 'Error al eliminar representante' });
     } finally {
@@ -535,18 +555,20 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
                 <span>Estudiantes ({filteredStudents.length})</span>
               </button>
 
-              <button
-                type="button"
-                onClick={() => setDirectoryTab('representantes')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer ${
-                  directoryTab === 'representantes'
-                    ? 'bg-white dark:bg-[#27272A] text-emerald-600 dark:text-emerald-400 shadow-xs'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-[#F4F4F5]'
-                }`}
-              >
-                <Shield className="w-3.5 h-3.5" />
-                <span>Representantes ({filteredRepresentantes.length})</span>
-              </button>
+              {canViewRepresentantes && (
+                <button
+                  type="button"
+                  onClick={() => setDirectoryTab('representantes')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer ${
+                    directoryTab === 'representantes'
+                      ? 'bg-white dark:bg-[#27272A] text-emerald-600 dark:text-emerald-400 shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-[#F4F4F5]'
+                  }`}
+                >
+                  <Shield className="w-3.5 h-3.5" />
+                  <span>Representantes ({filteredRepresentantes.length})</span>
+                </button>
+              )}
             </div>
 
             {canEdit && (
@@ -1064,7 +1086,7 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
                             </div>
                           </div>
                         ) : (
-                          <div className="grid grid-cols-3 gap-1.5">
+                          <div className={`grid gap-1.5 ${canDeleteRep ? 'grid-cols-3' : 'grid-cols-2'}`}>
                             <button
                               type="button"
                               onClick={() => openCredModal(rep)}
@@ -1082,32 +1104,34 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
                               <Edit2 className="w-3.5 h-3.5 shrink-0" />
                               <span>Editar</span>
                             </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (linkedStudents.length > 0) {
-                                  setFeedback({
-                                    type: 'error',
-                                    text: `No se puede eliminar: tiene ${linkedStudents.length} alumno(s) vinculado(s). Reasígnelos primero.`,
-                                  });
-                                } else {
-                                  setConfirmDeleteRepId(rep.idRepresentante);
+                            {canDeleteRep && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (linkedStudents.length > 0) {
+                                    setFeedback({
+                                      type: 'error',
+                                      text: `No se puede eliminar: tiene ${linkedStudents.length} alumno(s) vinculado(s). Reasígnelos primero.`,
+                                    });
+                                  } else {
+                                    setConfirmDeleteRepId(rep.idRepresentante);
+                                  }
+                                }}
+                                className={`flex items-center justify-center space-x-1 py-2.5 min-h-[44px] rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+                                  linkedStudents.length > 0
+                                    ? 'bg-slate-50 dark:bg-[#181818] text-slate-400 dark:text-slate-600 border-slate-200 dark:border-[#27272A] opacity-60'
+                                    : 'bg-slate-100 dark:bg-[#181818] hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-700 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 border-slate-200 dark:border-[#27272A]'
+                                }`}
+                                title={
+                                  linkedStudents.length > 0
+                                    ? 'No puede eliminarse mientras tenga alumnos asignados'
+                                    : 'Eliminar representante'
                                 }
-                              }}
-                              className={`flex items-center justify-center space-x-1 py-2.5 min-h-[44px] rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
-                                linkedStudents.length > 0
-                                  ? 'bg-slate-50 dark:bg-[#181818] text-slate-400 dark:text-slate-600 border-slate-200 dark:border-[#27272A] opacity-60'
-                                  : 'bg-slate-100 dark:bg-[#181818] hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-700 dark:text-slate-300 hover:text-rose-600 dark:hover:text-rose-400 border-slate-200 dark:border-[#27272A]'
-                              }`}
-                              title={
-                                linkedStudents.length > 0
-                                  ? 'No puede eliminarse mientras tenga alumnos asignados'
-                                  : 'Eliminar representante'
-                              }
-                            >
-                              <Trash2 className="w-3.5 h-3.5 shrink-0" />
-                              <span>Borrar</span>
-                            </button>
+                              >
+                                <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                                <span>Borrar</span>
+                              </button>
+                            )}
                           </div>
                         )}
                       </div>
@@ -1236,30 +1260,32 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
                                   >
                                     <Edit2 className="w-3.5 h-3.5" />
                                   </button>
-                                  <button
-                                    onClick={() => {
-                                      if (linkedStudents.length > 0) {
-                                        setFeedback({
-                                          type: 'error',
-                                          text: `No se puede eliminar: tiene ${linkedStudents.length} alumno(s) vinculado(s).`,
-                                        });
-                                      } else {
-                                        setConfirmDeleteRepId(rep.idRepresentante);
+                                  {canDeleteRep && (
+                                    <button
+                                      onClick={() => {
+                                        if (linkedStudents.length > 0) {
+                                          setFeedback({
+                                            type: 'error',
+                                            text: `No se puede eliminar: tiene ${linkedStudents.length} alumno(s) vinculado(s).`,
+                                          });
+                                        } else {
+                                          setConfirmDeleteRepId(rep.idRepresentante);
+                                        }
+                                      }}
+                                      className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                                        linkedStudents.length > 0
+                                          ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed'
+                                          : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40'
+                                      }`}
+                                      title={
+                                        linkedStudents.length > 0
+                                          ? 'No se puede eliminar con alumnos asignados'
+                                          : 'Eliminar Representante'
                                       }
-                                    }}
-                                    className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
-                                      linkedStudents.length > 0
-                                        ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed'
-                                        : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40'
-                                    }`}
-                                    title={
-                                      linkedStudents.length > 0
-                                        ? 'No se puede eliminar con alumnos asignados'
-                                        : 'Eliminar Representante'
-                                    }
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
                                 </div>
                               )}
                             </td>
@@ -1358,36 +1384,44 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Año Escolar</label>
                   <select
-                    value={studentForm.idAnoActual}
+                    value={studentForm.estadoAcademico !== 'ACTIVO' ? 0 : studentForm.idAnoActual}
+                    disabled={studentForm.estadoAcademico !== 'ACTIVO'}
                     onChange={(e) => {
                       const newAno = Number(e.target.value);
                       const matchingSec = secciones.find((s) => s.idAno === newAno);
                       setStudentForm({
                         ...studentForm,
                         idAnoActual: newAno,
-                        idSeccion: matchingSec ? matchingSec.idSeccion : studentForm.idSeccion,
+                        idSeccion: matchingSec ? matchingSec.idSeccion : 0,
                       });
                     }}
-                    className="w-full bg-slate-50 dark:bg-[#181818] border border-slate-200 dark:border-[#27272A] text-slate-900 dark:text-[#F4F4F5] rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className="w-full bg-slate-50 dark:bg-[#181818] border border-slate-200 dark:border-[#27272A] text-slate-900 dark:text-[#F4F4F5] rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-55"
                   >
-                    {anos.map((ano) => (
-                      <option key={ano.idAno} value={ano.idAno}>
-                        {ano.nombreNivel}
-                      </option>
-                    ))}
+                    {studentForm.estadoAcademico !== 'ACTIVO' ? (
+                      <option value={0}>Sin asignar ({studentForm.estadoAcademico})</option>
+                    ) : (
+                      anos.map((ano) => (
+                        <option key={ano.idAno} value={ano.idAno}>
+                          {ano.nombreNivel}
+                        </option>
+                      ))
+                    )}
                   </select>
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Sección</label>
                   <select
-                    value={studentForm.idSeccion}
+                    value={studentForm.estadoAcademico !== 'ACTIVO' ? 0 : studentForm.idSeccion}
+                    disabled={studentForm.estadoAcademico !== 'ACTIVO'}
                     onChange={(e) =>
                       setStudentForm({ ...studentForm, idSeccion: Number(e.target.value) })
                     }
-                    className="w-full bg-slate-50 dark:bg-[#181818] border border-slate-200 dark:border-[#27272A] text-slate-900 dark:text-[#F4F4F5] rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className="w-full bg-slate-50 dark:bg-[#181818] border border-slate-200 dark:border-[#27272A] text-slate-900 dark:text-[#F4F4F5] rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-55"
                   >
-                    {modalAvailableSections.length === 0 ? (
+                    {studentForm.estadoAcademico !== 'ACTIVO' ? (
+                      <option value={0}>Sin sección</option>
+                    ) : modalAvailableSections.length === 0 ? (
                       <option value={0}>Sin secciones</option>
                     ) : (
                       modalAvailableSections.map((sec) => (
@@ -1426,12 +1460,35 @@ export const StudentsDirectory: React.FC<StudentsDirectoryProps> = ({
                   </label>
                   <select
                     value={studentForm.estadoAcademico}
-                    onChange={(e) =>
-                      setStudentForm({
-                        ...studentForm,
-                        estadoAcademico: e.target.value as EstadoAcademicoEstudiante,
-                      })
-                    }
+                    onChange={(e) => {
+                      const nextEstado = e.target.value as EstadoAcademicoEstudiante;
+                      if (nextEstado !== 'ACTIVO') {
+                        setStudentForm({
+                          ...studentForm,
+                          estadoAcademico: nextEstado,
+                          idAnoActual: 0,
+                          idSeccion: 0,
+                        });
+                      } else {
+                        const restoredAno =
+                          studentForm.idAnoActual > 0
+                            ? studentForm.idAnoActual
+                            : anos[0]?.idAno || 0;
+                        const restoredSec =
+                          studentForm.idSeccion > 0 &&
+                          secciones.some(
+                            (s) => s.idSeccion === studentForm.idSeccion && s.idAno === restoredAno
+                          )
+                            ? studentForm.idSeccion
+                            : secciones.find((s) => s.idAno === restoredAno)?.idSeccion || 0;
+                        setStudentForm({
+                          ...studentForm,
+                          estadoAcademico: nextEstado,
+                          idAnoActual: restoredAno,
+                          idSeccion: restoredSec,
+                        });
+                      }
+                    }}
                     className="w-full bg-slate-50 dark:bg-[#181818] border border-slate-200 dark:border-[#27272A] text-slate-900 dark:text-[#F4F4F5] rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   >
                     <option value="ACTIVO">Activo (Cursando)</option>

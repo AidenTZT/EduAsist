@@ -17,47 +17,60 @@ import {
   Eye,
   EyeOff,
   Check,
+  RefreshCw,
+  Calendar,
+  Plus,
 } from 'lucide-react';
-import type { Usuario, RolUsuario } from '../types.ts';
-import { createUser, updateUser, deleteUser, fetchUsers } from '../lib/api.ts';
+import type {
+  Usuario,
+  RolUsuario,
+  AnoEscolar,
+  Seccion,
+  Materia,
+  DocenteMateria,
+  SuplenciaDocente,
+} from '../types.ts';
+import {
+  createUser,
+  updateUser,
+  deleteUser,
+  fetchUsers,
+  createSuplencia,
+  toggleSuplencia,
+  deleteSuplencia,
+} from '../lib/api.ts';
 import { validateNoNumbersInName } from '../lib/validation.ts';
 import { formatCedula } from '../lib/utils.ts';
 
 interface StaffManagerProps {
   currentUser: Usuario | null;
   staffUsers: Usuario[];
-  onRefreshData: () => void;
+  anos?: AnoEscolar[];
+  secciones?: Seccion[];
+  materias?: Materia[];
+  docenteMaterias?: DocenteMateria[];
+  suplencias?: SuplenciaDocente[];
+  onRefreshData: () => Promise<void> | void;
 }
 
 export const StaffManager: React.FC<StaffManagerProps> = ({
   currentUser,
   staffUsers,
+  anos = [],
+  secciones = [],
+  materias = [],
+  docenteMaterias = [],
+  suplencias = [],
   onRefreshData,
 }) => {
   const [localUsers, setLocalUsers] = useState<Usuario[]>(staffUsers);
   const [loadingLocal, setLoadingLocal] = useState<boolean>(false);
 
   React.useEffect(() => {
-    if (staffUsers && staffUsers.length > 0) {
-      setLocalUsers(staffUsers);
-    }
+    setLocalUsers(staffUsers);
   }, [staffUsers]);
 
-  React.useEffect(() => {
-    if (!staffUsers || staffUsers.length === 0) {
-      setLoadingLocal(true);
-      fetchUsers()
-        .then((data) => {
-          if (data && data.length > 0) {
-            setLocalUsers(data);
-          }
-        })
-        .catch(() => {})
-        .finally(() => setLoadingLocal(false));
-    }
-  }, [staffUsers]);
-
-  const activeUsersList = localUsers.length > 0 ? localUsers : staffUsers;
+  const activeUsersList = localUsers;
 
   const [filterRole, setFilterRole] = useState<string>('todos');
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -73,6 +86,7 @@ export const StaffManager: React.FC<StaffManagerProps> = ({
     cedula: '',
     telefono: '',
     rol: 'docente' as RolUsuario,
+    anosAsignados: [] as number[],
     password: '',
     activo: true,
   });
@@ -81,6 +95,146 @@ export const StaffManager: React.FC<StaffManagerProps> = ({
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<boolean>(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Modal de Suplencias rápido desde la ficha del Docente Suplente
+  const [suplenciasModalUser, setSuplenciasModalUser] = useState<Usuario | null>(null);
+  const [suplenciaForm, setSuplenciaForm] = useState({
+    idDocenteTitular: 0,
+    alcanceCompleto: true,
+    idMateria: 0,
+    idSeccion: 0,
+    fechaInicio: '',
+    fechaFin: '',
+    motivo: '',
+  });
+  const [savingSuplencia, setSavingSuplencia] = useState<boolean>(false);
+  const [suplenciaModalMsg, setSuplenciaModalMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const canManageSuplencias =
+    currentUser?.rol === 'director' || currentUser?.rol === 'coordinador';
+
+  const openSuplenciasModal = (user: Usuario) => {
+    const firstTitular = activeUsersList.find((u) => u.rol === 'docente' && u.activo !== false);
+    const titularMats = firstTitular
+      ? docenteMaterias.filter((dm) => dm.idUsuario === firstTitular.id)
+      : [];
+    const firstMateriaId = titularMats[0]?.idMateria || materias[0]?.idMateria || 0;
+    setSuplenciasModalUser(user);
+    setSuplenciaModalMsg(null);
+    setSuplenciaForm({
+      idDocenteTitular: firstTitular?.id || 0,
+      alcanceCompleto: titularMats.length > 0,
+      idMateria: firstMateriaId,
+      idSeccion: 0,
+      fechaInicio: '',
+      fechaFin: '',
+      motivo: '',
+    });
+  };
+
+  const handleSaveQuickSuplencia = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!suplenciasModalUser) return;
+    if (!suplenciaForm.idDocenteTitular) {
+      setSuplenciaModalMsg({
+        type: 'error',
+        text: 'Debe seleccionar el docente titular a sustituir.',
+      });
+      return;
+    }
+    const titularAssignedMats = docenteMaterias.filter(
+      (dm) => dm.idUsuario === suplenciaForm.idDocenteTitular
+    );
+    if (suplenciaForm.alcanceCompleto && titularAssignedMats.length === 0) {
+      setSuplenciaModalMsg({
+        type: 'error',
+        text: 'El docente titular seleccionado no tiene materias asignadas aún.',
+      });
+      return;
+    }
+    if (!suplenciaForm.alcanceCompleto && !suplenciaForm.idMateria) {
+      setSuplenciaModalMsg({
+        type: 'error',
+        text: 'Debe seleccionar la materia específica a sustituir.',
+      });
+      return;
+    }
+    if (
+      suplenciaForm.fechaInicio &&
+      suplenciaForm.fechaFin &&
+      suplenciaForm.fechaInicio > suplenciaForm.fechaFin
+    ) {
+      setSuplenciaModalMsg({
+        type: 'error',
+        text: 'La fecha de inicio no puede ser posterior a la fecha de fin.',
+      });
+      return;
+    }
+
+    setSavingSuplencia(true);
+    setSuplenciaModalMsg(null);
+    try {
+      const matchedDm = !suplenciaForm.alcanceCompleto
+        ? docenteMaterias.find(
+            (dm) =>
+              dm.idUsuario === suplenciaForm.idDocenteTitular &&
+              dm.idMateria === suplenciaForm.idMateria
+          )
+        : null;
+      await createSuplencia({
+        idSuplente: suplenciasModalUser.id,
+        idDocenteTitular: suplenciaForm.idDocenteTitular,
+        alcanceCompleto: suplenciaForm.alcanceCompleto,
+        idDocenteMateria: matchedDm?.idAsignacion || null,
+        idMateria: suplenciaForm.alcanceCompleto ? null : suplenciaForm.idMateria,
+        idSeccion: suplenciaForm.idSeccion > 0 ? suplenciaForm.idSeccion : null,
+        activo: true,
+        fechaInicio: suplenciaForm.fechaInicio.trim() || null,
+        fechaFin: suplenciaForm.fechaFin.trim() || null,
+        motivo: suplenciaForm.motivo.trim() || null,
+      });
+      setSuplenciaModalMsg({
+        type: 'success',
+        text: 'Suplencia asignada exitosamente.',
+      });
+      setSuplenciaForm((prev) => ({ ...prev, motivo: '' }));
+      await onRefreshData();
+    } catch (err: any) {
+      setSuplenciaModalMsg({
+        type: 'error',
+        text: err.message || 'No se pudo asignar la suplencia.',
+      });
+    } finally {
+      setSavingSuplencia(false);
+    }
+  };
+
+  const handleToggleQuickSuplencia = async (idSuplencia: number) => {
+    setSuplenciaModalMsg(null);
+    try {
+      await toggleSuplencia(idSuplencia);
+      await onRefreshData();
+    } catch (err: any) {
+      setSuplenciaModalMsg({
+        type: 'error',
+        text: err.message || 'No se pudo cambiar el estado de la suplencia.',
+      });
+    }
+  };
+
+  const handleDeleteQuickSuplencia = async (idSuplencia: number) => {
+    setSuplenciaModalMsg(null);
+    try {
+      await deleteSuplencia(idSuplencia);
+      setSuplenciaModalMsg({ type: 'success', text: 'Suplencia eliminada.' });
+      await onRefreshData();
+    } catch (err: any) {
+      setSuplenciaModalMsg({
+        type: 'error',
+        text: err.message || 'No se pudo eliminar la suplencia.',
+      });
+    }
+  };
 
   const openModal = (userToEdit?: Usuario) => {
     setMessage(null);
@@ -114,6 +268,7 @@ export const StaffManager: React.FC<StaffManagerProps> = ({
         cedula: userToEdit.cedula || '',
         telefono: userToEdit.telefono || '',
         rol: userToEdit.rol,
+        anosAsignados: Array.isArray(userToEdit.anosAsignados) ? [...userToEdit.anosAsignados] : [],
         password: '',
         activo: userToEdit.activo !== false,
       });
@@ -127,6 +282,7 @@ export const StaffManager: React.FC<StaffManagerProps> = ({
         cedula: '',
         telefono: '',
         rol: 'docente',
+        anosAsignados: [],
         password: '',
         activo: true,
       });
@@ -162,12 +318,18 @@ export const StaffManager: React.FC<StaffManagerProps> = ({
         ? 'La nueva contraseña debe tener al menos 6 caracteres.'
         : '';
 
-    if (!nombreCheck.valid || !apellidosCheck.valid || usuarioErr || passwordErr) {
+    const anosErr =
+      form.rol === 'coordinador_seccional' && form.anosAsignados.length === 0
+        ? 'Debe asignar al menos un año escolar al Coordinador Seccional.'
+        : '';
+
+    if (!nombreCheck.valid || !apellidosCheck.valid || usuarioErr || passwordErr || anosErr) {
       setValidationErrors({
         nombre: nombreCheck.error || '',
         apellidos: apellidosCheck.error || '',
         usuario: usuarioErr,
         password: passwordErr,
+        anosAsignados: anosErr,
       });
       return;
     }
@@ -176,6 +338,7 @@ export const StaffManager: React.FC<StaffManagerProps> = ({
     setMessage(null);
 
     try {
+      const scopedAnos = form.rol === 'coordinador_seccional' ? form.anosAsignados : [];
       if (editItem) {
         await updateUser(editItem.id, {
           usuario: usuarioTrim || null,
@@ -185,6 +348,7 @@ export const StaffManager: React.FC<StaffManagerProps> = ({
           cedula: form.cedula.trim() || null,
           telefono: form.telefono.trim() || null,
           rol: form.rol,
+          anosAsignados: scopedAnos,
           activo: form.activo,
           ...(form.password.trim() ? { password: form.password.trim() } : {}),
         });
@@ -198,13 +362,14 @@ export const StaffManager: React.FC<StaffManagerProps> = ({
           cedula: form.cedula.trim() || undefined,
           telefono: form.telefono.trim() || undefined,
           rol: form.rol,
+          anosAsignados: form.rol === 'coordinador_seccional' ? scopedAnos : undefined,
           password: form.password.trim(),
           activo: form.activo,
         });
         setMessage({ type: 'success', text: 'Personal registrado exitosamente en la base de datos local' });
       }
       setModalOpen(false);
-      onRefreshData();
+      await onRefreshData();
     } catch (err: any) {
       setMessage({ type: 'error', text: err.message || 'Error al guardar usuario' });
     } finally {
@@ -256,7 +421,7 @@ export const StaffManager: React.FC<StaffManagerProps> = ({
       await deleteUser(user.id);
       setConfirmDeleteUserId(null);
       setMessage({ type: 'success', text: `Usuario ${user.nombre} ${user.apellidos} eliminado con éxito` });
-      onRefreshData();
+      await onRefreshData();
     } catch (err: any) {
       setMessage({ type: 'error', text: err.message || 'Error al eliminar usuario' });
     }
@@ -285,7 +450,7 @@ export const StaffManager: React.FC<StaffManagerProps> = ({
             <div>
               <h2 className="text-lg font-bold text-slate-900 dark:text-[#F4F4F5]">Gestión de Personal & Roles (RBAC)</h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Control jerárquico estricto: Directores, Coordinadores y Docentes de aula
+                Control jerárquico estricto: Directores, Coordinadores, Coordinadores Seccionales, Docentes y Suplentes
               </p>
             </div>
           </div>
@@ -341,8 +506,10 @@ export const StaffManager: React.FC<StaffManagerProps> = ({
             >
               <option value="todos">Todos los Roles</option>
               <option value="director">Directores</option>
-              <option value="coordinador">Coordinadores</option>
-              <option value="docente">Docentes</option>
+              <option value="coordinador">Coordinadores Generales</option>
+              <option value="coordinador_seccional">Coordinadores Seccionales</option>
+              <option value="docente">Docentes Titulares</option>
+              <option value="docente_suplente">Docentes Suplentes</option>
             </select>
           </div>
         </div>
@@ -391,9 +558,38 @@ export const StaffManager: React.FC<StaffManagerProps> = ({
             <tbody className="divide-y divide-slate-100 dark:divide-[#27272A]">
               {filteredUsers.map((u) => {
                 let roleColor = 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700';
-                if (u.rol === 'director') roleColor = 'bg-purple-100 dark:bg-purple-950/60 text-purple-800 dark:text-purple-300 border-purple-200 dark:border-purple-800 font-black';
-                if (u.rol === 'coordinador') roleColor = 'bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border-blue-200 dark:border-blue-800 font-bold';
-                if (u.rol === 'docente') roleColor = 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800 font-bold';
+                let roleLabel: string = u.rol;
+                if (u.rol === 'director') {
+                  roleColor = 'bg-purple-100 dark:bg-purple-950/60 text-purple-800 dark:text-purple-300 border-purple-200 dark:border-purple-800 font-black';
+                  roleLabel = 'Director';
+                }
+                if (u.rol === 'coordinador') {
+                  roleColor = 'bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border-blue-200 dark:border-blue-800 font-bold';
+                  roleLabel = 'Coordinador';
+                }
+                if (u.rol === 'coordinador_seccional') {
+                  roleColor = 'bg-cyan-100 dark:bg-cyan-950/60 text-cyan-800 dark:text-cyan-300 border-cyan-200 dark:border-cyan-800 font-bold';
+                  roleLabel = 'Coord. Seccional';
+                }
+                if (u.rol === 'docente') {
+                  roleColor = 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800 font-bold';
+                  roleLabel = 'Docente';
+                }
+                if (u.rol === 'docente_suplente') {
+                  roleColor = 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-800 font-bold';
+                  roleLabel = 'Docente Suplente';
+                }
+
+                const activeUserSuplencias =
+                  u.rol === 'docente_suplente'
+                    ? suplencias.filter((s) => s.idSuplente === u.id && s.activo)
+                    : [];
+
+                const assignedAnoChips =
+                  u.rol === 'coordinador_seccional' && Array.isArray(u.anosAsignados)
+                    ? u.anosAsignados
+                        .map((id) => anos.find((a) => a.idAno === id)?.nombreNivel.split(' - ')[0] || `Año #${id}`)
+                    : [];
 
                 const otherDirectors = activeUsersList.filter((user) => user.rol === 'director' && user.id !== u.id);
                 const isMasterAdmin =
@@ -442,13 +638,43 @@ export const StaffManager: React.FC<StaffManagerProps> = ({
                       {u.telefono || 'Sin teléfono'}
                     </td>
                     <td className="py-3 px-4 text-center">
-                      <span className={`inline-block px-3 py-0.5 rounded-full text-xs uppercase border ${roleColor}`}>
-                        {u.rol}
-                      </span>
+                      <div className="flex flex-col items-center gap-1">
+                        <span className={`inline-block px-3 py-0.5 rounded-full text-xs uppercase border ${roleColor}`}>
+                          {roleLabel}
+                        </span>
+                        {assignedAnoChips.length > 0 && (
+                          <div className="flex flex-wrap justify-center gap-1 mt-0.5">
+                            {assignedAnoChips.map((chip, cIdx) => (
+                              <span
+                                key={cIdx}
+                                className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-cyan-50 dark:bg-cyan-950/40 text-cyan-800 dark:text-cyan-300 border border-cyan-200/80 dark:border-cyan-800/60"
+                              >
+                                {chip}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {u.rol === 'docente_suplente' && (
+                          <span className="text-[10px] font-semibold text-amber-700 dark:text-amber-400">
+                            {activeUserSuplencias.length} suplencia(s) activa(s)
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="py-3 px-4 text-right">
                       {currentUser?.rol === 'director' ? (
                         <div className="space-x-1 inline-flex items-center">
+                          {u.rol === 'docente_suplente' && (
+                            <button
+                              type="button"
+                              onClick={() => openSuplenciasModal(u)}
+                              className="px-2 py-1 text-[11px] font-bold text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900/50 border border-amber-200 dark:border-amber-800 rounded-lg transition-colors cursor-pointer inline-flex items-center gap-1"
+                              title="Asignar o gestionar suplencias de este docente"
+                            >
+                              <RefreshCw className="w-3 h-3" />
+                              <span>Suplencias</span>
+                            </button>
+                          )}
                           {isProtectedDirector ? (
                             <div
                               className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-[#181818] border border-slate-200 dark:border-[#27272A] text-slate-500 dark:text-slate-400 text-xs font-medium cursor-help"
@@ -495,6 +721,15 @@ export const StaffManager: React.FC<StaffManagerProps> = ({
                             </>
                           )}
                         </div>
+                      ) : canManageSuplencias && u.rol === 'docente_suplente' ? (
+                        <button
+                          type="button"
+                          onClick={() => openSuplenciasModal(u)}
+                          className="px-2.5 py-1 text-[11px] font-bold text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900/50 border border-amber-200 dark:border-amber-800 rounded-lg transition-colors cursor-pointer inline-flex items-center gap-1"
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                          <span>Suplencias</span>
+                        </button>
                       ) : (
                         <span className="text-[11px] text-slate-400 dark:text-slate-500 italic">Solo lectura</span>
                       )}
@@ -679,16 +914,82 @@ export const StaffManager: React.FC<StaffManagerProps> = ({
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Rol Jerárquico (RBAC)</label>
                 <select
                   value={form.rol}
-                  onChange={(e) => setForm({ ...form, rol: e.target.value as RolUsuario })}
+                  onChange={(e) => {
+                    const nextRol = e.target.value as RolUsuario;
+                    setForm((prev) => ({
+                      ...prev,
+                      rol: nextRol,
+                      anosAsignados: nextRol === 'coordinador_seccional' ? prev.anosAsignados : [],
+                    }));
+                    setValidationErrors((prev) => ({ ...prev, anosAsignados: '' }));
+                  }}
                   className="w-full bg-slate-50 dark:bg-[#181818] border border-slate-200 dark:border-[#27272A] text-slate-900 dark:text-[#F4F4F5] rounded-xl px-3 py-2 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
-                  <option value="docente">Docente de Aula (Acceso solo a sus materias)</option>
-                  <option value="coordinador">Coordinador (Gestión de docentes, materias y alumnos)</option>
+                  <option value="docente">Docente Titular de Aula (Acceso solo a sus materias)</option>
+                  <option value="docente_suplente">Docente Suplente (Sustituye materias asignadas)</option>
+                  <option value="coordinador_seccional">Coordinador Seccional (Gestión por años asignados)</option>
+                  <option value="coordinador">Coordinador General (Gestión de docentes, materias y alumnos)</option>
                   {currentUser?.rol === 'director' && (
                     <option value="director">Director (Control total institucional)</option>
                   )}
                 </select>
               </div>
+
+              {form.rol === 'coordinador_seccional' && (
+                <div className="p-3.5 rounded-2xl bg-cyan-50/70 dark:bg-cyan-950/25 border border-cyan-200 dark:border-cyan-800/60 space-y-2.5">
+                  <div>
+                    <p className="text-xs font-bold text-cyan-900 dark:text-cyan-200">
+                      Años Escolares Asignados (Obligatorio)
+                    </p>
+                    <p className="text-[11px] text-cyan-700 dark:text-cyan-400">
+                      El Coordinador Seccional solo podrá visualizar y gestionar secciones, materias, estudiantes, horarios y asistencias de los años marcados.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                    {anos.map((ano) => {
+                      const checked = form.anosAsignados.includes(ano.idAno);
+                      return (
+                        <label
+                          key={ano.idAno}
+                          className={`flex items-center gap-2 p-2 rounded-xl border text-xs cursor-pointer transition-colors ${
+                            checked
+                              ? 'bg-cyan-100/90 dark:bg-cyan-900/50 border-cyan-400 dark:border-cyan-700 font-bold text-cyan-950 dark:text-cyan-100'
+                              : 'bg-white dark:bg-[#121212] border-slate-200 dark:border-[#27272A] text-slate-700 dark:text-slate-300'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => {
+                              setForm((prev) => ({
+                                ...prev,
+                                anosAsignados: checked
+                                  ? prev.anosAsignados.filter((id) => id !== ano.idAno)
+                                  : [...prev.anosAsignados, ano.idAno],
+                              }));
+                              setValidationErrors((prev) => ({ ...prev, anosAsignados: '' }));
+                            }}
+                            className="rounded text-cyan-600 focus:ring-cyan-500 cursor-pointer"
+                          />
+                          <span className="truncate">{ano.nombreNivel.split(' - ')[0]}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {validationErrors.anosAsignados && (
+                    <p className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold flex items-center gap-1">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                      <span>{validationErrors.anosAsignados}</span>
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {form.rol === 'docente_suplente' && (
+                <div className="p-3 rounded-xl bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60 text-[11px] text-amber-900 dark:text-amber-200 leading-relaxed">
+                  <strong>Docente Suplente:</strong> No requiere asignación previa en <em>Docente-Materia</em> para registrarse ni operar. Se le asigna directamente el docente titular al que sustituye desde el <strong>Panel de Suplencias</strong> o el botón <strong>Suplencias</strong>.
+                </div>
+              )}
 
               <label className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-[#181818] border border-slate-200 dark:border-[#27272A] cursor-pointer">
                 <div>
@@ -735,6 +1036,378 @@ export const StaffManager: React.FC<StaffManagerProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {/* Modal: Gestión Rápida de Suplencias del Docente Suplente */}
+      {suplenciasModalUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4">
+          <div className="bg-white dark:bg-[#121212] rounded-3xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-slate-200 dark:border-[#27272A] transition-colors">
+            <div className="p-4 bg-amber-50/80 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 flex items-center justify-between">
+              <div className="flex items-center space-x-2.5">
+                <div className="p-2 rounded-xl bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300">
+                  <RefreshCw className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-slate-900 dark:text-[#F4F4F5]">
+                    Suplencias de {suplenciasModalUser.nombre} {suplenciasModalUser.apellidos}
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Asignar materias y docente titular al que sustituye para el pase de asistencia
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSuplenciasModalUser(null)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-5">
+              {suplenciaModalMsg && (
+                <div
+                  className={`p-3 rounded-xl text-xs font-semibold flex items-center justify-between border ${
+                    suplenciaModalMsg.type === 'success'
+                      ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200'
+                      : 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-200'
+                  }`}
+                >
+                  <span>{suplenciaModalMsg.text}</span>
+                  <button
+                    type="button"
+                    onClick={() => setSuplenciaModalMsg(null)}
+                    className="cursor-pointer ml-2"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
+              {/* Existing suplencias for this substitute */}
+              <div className="space-y-2">
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Suplencias registradas ({suplencias.filter((s) => s.idSuplente === suplenciasModalUser.id).length})
+                </p>
+                {suplencias.filter((s) => s.idSuplente === suplenciasModalUser.id).length === 0 ? (
+                  <div className="p-4 rounded-xl border border-dashed border-slate-200 dark:border-[#27272A] text-center text-xs text-slate-400">
+                    Este docente suplente aún no tiene suplencias asignadas.
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                    {suplencias
+                      .filter((s) => s.idSuplente === suplenciasModalUser.id)
+                      .map((sup) => (
+                        <div
+                          key={sup.idSuplencia}
+                          className="p-3 rounded-xl border border-slate-200 dark:border-[#27272A] bg-slate-50 dark:bg-[#181818] flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
+                        >
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="font-bold text-slate-900 dark:text-[#F4F4F5]">
+                                {sup.nombreMateria}
+                              </span>
+                              {sup.alcanceCompleto && (
+                                <span className="px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 text-[10px] font-bold border border-amber-200 dark:border-amber-800">
+                                  Suplencia total al titular
+                                </span>
+                              )}
+                              {sup.nombreNivel && (
+                                <span className="px-2 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 text-[10px] font-bold">
+                                  {sup.nombreNivel.split(' - ')[0]}
+                                </span>
+                              )}
+                              <span className="px-2 py-0.5 rounded bg-slate-200 dark:bg-[#27272A] text-slate-700 dark:text-slate-300 text-[10px] font-bold">
+                                {sup.nombreSeccion ? `Sección ${sup.nombreSeccion}` : 'Todas las secciones'}
+                              </span>
+                            </div>
+                            {sup.alcanceCompleto && sup.materiasTitularResumen && sup.materiasTitularResumen.length > 0 && (
+                              <div className="flex flex-wrap gap-1">
+                                {sup.materiasTitularResumen.map((m) => (
+                                  <span
+                                    key={`quick-sup-${sup.idSuplencia}-${m.idMateria}`}
+                                    className="px-1.5 py-0.5 rounded bg-white dark:bg-[#121212] border border-slate-200 dark:border-[#27272A] text-[10px] font-medium text-slate-600 dark:text-slate-300"
+                                  >
+                                    {m.nombreMateria}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                              Supliendo a: <strong>{sup.titularNombre} {sup.titularApellidos}</strong>
+                              {(sup.fechaInicio || sup.fechaFin) && (
+                                <span className="ml-2 font-mono">
+                                  ({sup.fechaInicio || '...'} → {sup.fechaFin || '...'})
+                                </span>
+                              )}
+                            </p>
+                            {sup.motivo && (
+                              <p className="text-[11px] text-slate-400 italic">Motivo: {sup.motivo}</p>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1.5 self-end sm:self-center">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleQuickSuplencia(sup.idSuplencia)}
+                              className={`px-2 py-1 rounded-lg text-[10px] font-bold border cursor-pointer ${
+                                sup.activo
+                                  ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                                  : 'bg-slate-200 dark:bg-[#27272A] text-slate-600 dark:text-slate-400 border-slate-300 dark:border-[#3F3F46]'
+                              }`}
+                            >
+                              {sup.activo ? 'Activa' : 'Inactiva'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteQuickSuplencia(sup.idSuplencia)}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+                              title="Eliminar suplencia"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Assign new suplencia form */}
+              <form
+                onSubmit={handleSaveQuickSuplencia}
+                className="p-4 rounded-2xl bg-slate-50 dark:bg-[#181818] border border-slate-200 dark:border-[#27272A] space-y-3"
+              >
+                <p className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                  <Plus className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Asignar Nueva Suplencia</span>
+                </p>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                    Docente Titular a Sustituir
+                  </label>
+                  <select
+                    value={suplenciaForm.idDocenteTitular}
+                    onChange={(e) => {
+                      const titularId = Number(e.target.value);
+                      const titularMats = docenteMaterias.filter((dm) => dm.idUsuario === titularId);
+                      const nextMatId = titularMats[0]?.idMateria || materias[0]?.idMateria || 0;
+                      setSuplenciaForm((prev) => ({
+                        ...prev,
+                        idDocenteTitular: titularId,
+                        alcanceCompleto: titularMats.length > 0,
+                        idMateria: nextMatId,
+                        idSeccion: 0,
+                      }));
+                    }}
+                    className="w-full bg-white dark:bg-[#121212] border border-slate-200 dark:border-[#27272A] rounded-xl px-3 py-2 text-xs font-semibold text-slate-900 dark:text-[#F4F4F5]"
+                  >
+                    <option value={0}>Seleccione docente titular...</option>
+                    {activeUsersList
+                      .filter((u) => u.rol === 'docente')
+                      .map((doc) => (
+                        <option key={doc.id} value={doc.id}>
+                          {doc.nombre} {doc.apellidos}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+
+                {/* Alcance de la Suplencia */}
+                <div className="space-y-2">
+                  <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400">
+                    Alcance de la Suplencia
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSuplenciaForm((prev) => ({
+                          ...prev,
+                          alcanceCompleto: true,
+                          idSeccion: 0,
+                        }))
+                      }
+                      className={`p-2.5 rounded-xl border text-left transition-colors cursor-pointer ${
+                        suplenciaForm.alcanceCompleto
+                          ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-400 dark:border-amber-700 text-amber-900 dark:text-amber-200'
+                          : 'bg-white dark:bg-[#121212] border-slate-200 dark:border-[#27272A] text-slate-600 dark:text-slate-400'
+                      }`}
+                    >
+                      <span className="block text-[11px] font-bold">Todas las materias del titular</span>
+                      <span className="block text-[10px] opacity-80">
+                        Cubre automáticamente toda la carga académica asignada al titular
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSuplenciaForm((prev) => ({
+                          ...prev,
+                          alcanceCompleto: false,
+                          idSeccion: 0,
+                        }))
+                      }
+                      className={`p-2.5 rounded-xl border text-left transition-colors cursor-pointer ${
+                        !suplenciaForm.alcanceCompleto
+                          ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-400 dark:border-amber-700 text-amber-900 dark:text-amber-200'
+                          : 'bg-white dark:bg-[#121212] border-slate-200 dark:border-[#27272A] text-slate-600 dark:text-slate-400'
+                      }`}
+                    >
+                      <span className="block text-[11px] font-bold">Materia específica</span>
+                      <span className="block text-[10px] opacity-80">
+                        Sustituye únicamente una asignatura seleccionada
+                      </span>
+                    </button>
+                  </div>
+                </div>
+
+                {!suplenciaForm.alcanceCompleto && (
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                      Materia a Suplir
+                    </label>
+                    <select
+                      value={suplenciaForm.idMateria}
+                      onChange={(e) =>
+                        setSuplenciaForm((prev) => ({
+                          ...prev,
+                          idMateria: Number(e.target.value),
+                          idSeccion: 0,
+                        }))
+                      }
+                      className="w-full bg-white dark:bg-[#121212] border border-slate-200 dark:border-[#27272A] rounded-xl px-3 py-2 text-xs font-semibold text-slate-900 dark:text-[#F4F4F5]"
+                    >
+                      <option value={0}>Seleccione materia...</option>
+                      {(() => {
+                        const titularMatIds = new Set(
+                          docenteMaterias
+                            .filter((dm) => dm.idUsuario === suplenciaForm.idDocenteTitular)
+                            .map((dm) => dm.idMateria)
+                        );
+                        const list =
+                          titularMatIds.size > 0
+                            ? materias.filter((m) => titularMatIds.has(m.idMateria))
+                            : materias;
+                        return list.map((m) => (
+                          <option key={m.idMateria} value={m.idMateria}>
+                            {m.nombreMateria} ({m.nombreNivel?.split(' - ')[0]})
+                          </option>
+                        ));
+                      })()}
+                    </select>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                      Sección (Opcional)
+                    </label>
+                    <select
+                      value={suplenciaForm.idSeccion}
+                      onChange={(e) =>
+                        setSuplenciaForm((prev) => ({ ...prev, idSeccion: Number(e.target.value) }))
+                      }
+                      className="w-full bg-white dark:bg-[#121212] border border-slate-200 dark:border-[#27272A] rounded-xl px-3 py-2 text-xs font-semibold text-slate-900 dark:text-[#F4F4F5]"
+                    >
+                      <option value={0}>Todas las secciones</option>
+                      {(() => {
+                        if (suplenciaForm.alcanceCompleto) {
+                          const titularAnoIds = new Set(
+                            docenteMaterias
+                              .filter((dm) => dm.idUsuario === suplenciaForm.idDocenteTitular)
+                              .map((dm) => materias.find((m) => m.idMateria === dm.idMateria)?.idAno ?? dm.idAno)
+                              .filter((id): id is number => Boolean(id))
+                          );
+                          return secciones
+                            .filter((s) => titularAnoIds.size === 0 || titularAnoIds.has(s.idAno))
+                            .map((s) => (
+                              <option key={s.idSeccion} value={s.idSeccion}>
+                                {s.nombreNivel ? `${s.nombreNivel.split(' - ')[0]} - ` : ''}Sección {s.nombreSeccion}
+                              </option>
+                            ));
+                        }
+                        const selectedMat = materias.find(
+                          (m) => m.idMateria === suplenciaForm.idMateria
+                        );
+                        return secciones
+                          .filter((s) => !selectedMat || s.idAno === selectedMat.idAno)
+                          .map((s) => (
+                            <option key={s.idSeccion} value={s.idSeccion}>
+                              Sección {s.nombreSeccion}
+                            </option>
+                          ));
+                      })()}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                      Desde (Opcional)
+                    </label>
+                    <input
+                      type="date"
+                      value={suplenciaForm.fechaInicio}
+                      onChange={(e) =>
+                        setSuplenciaForm((prev) => ({ ...prev, fechaInicio: e.target.value }))
+                      }
+                      className="w-full bg-white dark:bg-[#121212] border border-slate-200 dark:border-[#27272A] rounded-xl px-3 py-2 text-xs font-mono text-slate-900 dark:text-[#F4F4F5]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                      Hasta (Opcional)
+                    </label>
+                    <input
+                      type="date"
+                      value={suplenciaForm.fechaFin}
+                      onChange={(e) =>
+                        setSuplenciaForm((prev) => ({ ...prev, fechaFin: e.target.value }))
+                      }
+                      className="w-full bg-white dark:bg-[#121212] border border-slate-200 dark:border-[#27272A] rounded-xl px-3 py-2 text-xs font-mono text-slate-900 dark:text-[#F4F4F5]"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                    Motivo / Observación (Opcional)
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={250}
+                    placeholder="Ej: Reposo médico del docente titular por 5 días"
+                    value={suplenciaForm.motivo}
+                    onChange={(e) =>
+                      setSuplenciaForm((prev) => ({ ...prev, motivo: e.target.value }))
+                    }
+                    className="w-full bg-white dark:bg-[#121212] border border-slate-200 dark:border-[#27272A] rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-[#F4F4F5]"
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setSuplenciasModalUser(null)}
+                    className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-[#27272A] cursor-pointer"
+                  >
+                    Cerrar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={savingSuplencia}
+                    className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Calendar className="w-3.5 h-3.5" />
+                    <span>{savingSuplencia ? 'Guardando...' : 'Asignar Suplencia'}</span>
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
         </div>
       )}

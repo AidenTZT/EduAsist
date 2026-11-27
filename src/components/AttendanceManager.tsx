@@ -15,6 +15,7 @@ import {
   ShieldCheck,
   CalendarRange,
   CalendarOff,
+  UserCheck,
 } from 'lucide-react';
 import type {
   AnoEscolar,
@@ -25,6 +26,7 @@ import type {
   EstadoAsistencia,
   Usuario,
   DocenteMateria,
+  SuplenciaDocente,
   LapsoEscolar,
   InstitutionalConfigSummary,
   RecesoInstitucional,
@@ -51,6 +53,7 @@ interface AttendanceManagerProps {
   secciones: Seccion[];
   materias: Materia[];
   docenteMaterias: DocenteMateria[];
+  suplencias?: SuplenciaDocente[];
   estudiantes: Estudiante[];
   currentUser: Usuario | null;
   onRefreshData: () => void;
@@ -68,6 +71,7 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
   secciones,
   materias,
   docenteMaterias,
+  suplencias = [],
   estudiantes,
   currentUser,
   onRefreshData,
@@ -165,23 +169,99 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
   const detectedFechaLapso =
     lapsos.find((l) => fecha >= l.fechaInicio && fecha <= l.fechaFin) || activeLapso;
 
-  // RBAC: Acceso permitido a Docente (sus materias asignadas), Coordinador y Director (acceso completo)
+  // RBAC: Acceso permitido a Docente, Docente Suplente, Coordinador Seccional, Coordinador y Director
   const canTakeAttendance =
     currentUser?.rol === 'director' ||
     currentUser?.rol === 'coordinador' ||
-    currentUser?.rol === 'docente';
-  const isDocente = currentUser?.rol === 'docente';
+    currentUser?.rol === 'coordinador_seccional' ||
+    currentUser?.rol === 'docente' ||
+    currentUser?.rol === 'docente_suplente';
+  const isDocenteTitular = currentUser?.rol === 'docente';
+  const isDocenteSuplente = currentUser?.rol === 'docente_suplente';
+  const isDocente = isDocenteTitular || isDocenteSuplente;
+  const isCoordinadorSeccional = currentUser?.rol === 'coordinador_seccional';
   const isDirectorOrCoord =
-    currentUser?.rol === 'director' || currentUser?.rol === 'coordinador';
-  const assignedMateriaIds = isDocente
-    ? docenteMaterias.filter((dm) => dm.idUsuario === currentUser?.id).map((dm) => dm.idMateria)
-    : null;
+    currentUser?.rol === 'director' ||
+    currentUser?.rol === 'coordinador' ||
+    isCoordinadorSeccional;
+
+  const activeSuplenciasOnDate = React.useMemo(
+    () =>
+      isDocenteSuplente
+        ? suplencias.filter((s) => {
+            if (s.idSuplente !== currentUser?.id || !s.activo) return false;
+            if (s.fechaInicio && fecha < s.fechaInicio) return false;
+            if (s.fechaFin && fecha > s.fechaFin) return false;
+            return true;
+          })
+        : [],
+    [isDocenteSuplente, suplencias, currentUser?.id, fecha]
+  );
+
+  const expandedSuplenciasOnDate = React.useMemo(() => {
+    if (!isDocenteSuplente) return [];
+    const entries: Array<{ sup: SuplenciaDocente; idMateria: number; idAno: number }> = [];
+    const secById = new Map(secciones.map((s) => [s.idSeccion, s]));
+    const matById = new Map(materias.map((m) => [m.idMateria, m]));
+
+    for (const sup of activeSuplenciasOnDate) {
+      const seccionObj = sup.idSeccion != null ? secById.get(sup.idSeccion) : undefined;
+      if (sup.alcanceCompleto || sup.idMateria == null) {
+        const summary =
+          sup.materiasTitularResumen && sup.materiasTitularResumen.length > 0
+            ? sup.materiasTitularResumen
+            : docenteMaterias
+                .filter((dm) => dm.idUsuario === sup.idDocenteTitular)
+                .map((dm) => {
+                  const m = matById.get(dm.idMateria);
+                  return {
+                    idMateria: dm.idMateria,
+                    idAno: dm.idAno ?? m?.idAno ?? 0,
+                  };
+                });
+        for (const item of summary) {
+          if (!item.idMateria || !item.idAno) continue;
+          if (seccionObj && item.idAno !== seccionObj.idAno) continue;
+          entries.push({ sup, idMateria: item.idMateria, idAno: item.idAno });
+        }
+      } else {
+        const m = matById.get(sup.idMateria);
+        const aId = sup.idAno ?? m?.idAno ?? 0;
+        if (aId) {
+          entries.push({ sup, idMateria: sup.idMateria, idAno: aId });
+        }
+      }
+    }
+    return entries;
+  }, [isDocenteSuplente, activeSuplenciasOnDate, secciones, materias, docenteMaterias]);
+
+  const assignedMateriaIds = React.useMemo(
+    () =>
+      isDocenteTitular
+        ? docenteMaterias.filter((dm) => dm.idUsuario === currentUser?.id).map((dm) => dm.idMateria)
+        : isDocenteSuplente
+        ? Array.from(new Set(expandedSuplenciasOnDate.map((e) => e.idMateria)))
+        : null,
+    [isDocenteTitular, isDocenteSuplente, docenteMaterias, currentUser?.id, expandedSuplenciasOnDate]
+  );
+
+  const availableAnos = React.useMemo(() => {
+    if (isDocenteSuplente) {
+      const supAnoIds = new Set(expandedSuplenciasOnDate.map((e) => e.idAno));
+      return anos.filter((a) => supAnoIds.has(a.idAno));
+    }
+    if (isCoordinadorSeccional && Array.isArray(currentUser?.anosAsignados)) {
+      const allowed = new Set(currentUser.anosAsignados);
+      return anos.filter((a) => allowed.has(a.idAno));
+    }
+    return anos;
+  }, [anos, isDocenteSuplente, expandedSuplenciasOnDate, isCoordinadorSeccional, currentUser?.anosAsignados]);
 
   // Sincronizar año por defecto cuando el catálogo cargue desde el backend
   useEffect(() => {
-    if (anos.length === 0) return;
-    if (!anos.some((a) => a.idAno === selectedAnoId)) {
-      setSelectedAnoId(anos[0].idAno);
+    if (availableAnos.length === 0) return;
+    if (!availableAnos.some((a) => a.idAno === selectedAnoId)) {
+      setSelectedAnoId(availableAnos[0].idAno);
       return;
     }
     if (isDocente && assignedMateriaIds && assignedMateriaIds.length > 0 && !preselectedTarget?.idAno) {
@@ -195,7 +275,7 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
         }
       }
     }
-  }, [anos, selectedAnoId, isDocente, assignedMateriaIds, materias, preselectedTarget]);
+  }, [availableAnos, selectedAnoId, isDocente, assignedMateriaIds, materias, preselectedTarget]);
 
   // Aplicar preselección directa desde "Mis Materias de Hoy" o "Horarios & En Clase Ahora"
   useEffect(() => {
@@ -221,20 +301,37 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
     return matchesYear && isAssigned;
   });
 
-  // Filter secciones by selected year
-  const filteredSecciones = secciones.filter((s) => s.idAno === selectedAnoId);
+  // Filter secciones by selected year (and suplencia section scope when applicable)
+  const matchingSuplenciasForSelection = isDocenteSuplente
+    ? expandedSuplenciasOnDate
+        .filter(
+          (e) =>
+            e.idAno === selectedAnoId &&
+            (!selectedMateriaId || e.idMateria === selectedMateriaId)
+        )
+        .map((e) => e.sup)
+    : [];
+
+  const suplenteAllowsAllSections =
+    !isDocenteSuplente || matchingSuplenciasForSelection.some((s) => s.idSeccion == null);
+
+  const filteredSecciones = secciones.filter((s) => {
+    if (s.idAno !== selectedAnoId) return false;
+    if (!isDocenteSuplente || suplenteAllowsAllSections) return true;
+    return matchingSuplenciasForSelection.some((sup) => sup.idSeccion === s.idSeccion);
+  });
 
   // Default selections
   useEffect(() => {
     if (filteredSecciones.length > 0) {
       const exists = filteredSecciones.some((s) => s.idSeccion === selectedSeccionId);
-      if (!exists && selectedSeccionId !== 0) {
+      if (!exists && (selectedSeccionId !== 0 || !suplenteAllowsAllSections)) {
         setSelectedSeccionId(filteredSecciones[0].idSeccion);
       }
     } else {
       setSelectedSeccionId(0);
     }
-  }, [selectedAnoId, filteredSecciones]);
+  }, [selectedAnoId, filteredSecciones, suplenteAllowsAllSections]);
 
   useEffect(() => {
     if (filteredMaterias.length > 0) {
@@ -247,15 +344,38 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
     }
   }, [selectedAnoId, filteredMaterias]);
 
+  const currentActiveSuplencia = isDocenteSuplente
+    ? expandedSuplenciasOnDate.find(
+        (e) =>
+          e.idMateria === selectedMateriaId &&
+          e.idAno === selectedAnoId &&
+          (e.sup.idSeccion == null || selectedSeccionId === 0 || e.sup.idSeccion === selectedSeccionId)
+      )?.sup ||
+      expandedSuplenciasOnDate.find((e) => e.idMateria === selectedMateriaId)?.sup ||
+      null
+    : null;
+
   // Filter active students by selected year AND section, sorted strictly by numeric Cédula
+  const allowedSeccionIdSet =
+    isDocenteSuplente && !suplenteAllowsAllSections
+      ? new Set(filteredSecciones.map((s) => s.idSeccion))
+      : null;
+
   const filteredStudents = estudiantes.filter((e) => {
     if (e.estadoAcademico === 'EGRESADO' || e.estadoAcademico === 'RETIRADO') return false;
+    if (isDocenteSuplente && activeSuplenciasOnDate.length === 0) return false;
     const matchesAno = e.idAnoActual === selectedAnoId;
-    const matchesSeccion = selectedSeccionId === 0 || e.idSeccion === selectedSeccionId;
+    const matchesSeccion =
+      selectedSeccionId === 0
+        ? !allowedSeccionIdSet || (e.idSeccion != null && allowedSeccionIdSet.has(e.idSeccion))
+        : e.idSeccion === selectedSeccionId;
     return matchesAno && matchesSeccion;
   });
 
   const sortedStudents = sortStudentsByCedula(filteredStudents);
+
+  const [reloadTick, setReloadTick] = useState<number>(0);
+  const preserveStatusAfterReloadRef = React.useRef<boolean>(false);
 
   // Load existing attendance
   useEffect(() => {
@@ -265,7 +385,11 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
     const loadDayAttendance = async () => {
       if (!currentUser) return;
       setLoading(true);
-      setStatusMessage(null);
+      if (preserveStatusAfterReloadRef.current) {
+        preserveStatusAfterReloadRef.current = false;
+      } else {
+        setStatusMessage(null);
+      }
       try {
         const records: RegistroAsistencia[] = await fetchAsistencia({
           idMateria: selectedMateriaId,
@@ -328,7 +452,7 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [selectedMateriaId, selectedSeccionId, fecha, selectedAnoId, estudiantes, currentUser]);
+  }, [selectedMateriaId, selectedSeccionId, fecha, selectedAnoId, estudiantes, currentUser, reloadTick]);
 
   useEffect(() => {
     setFocusedIndex(0);
@@ -397,6 +521,7 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
   };
 
   const handleSaveAttendance = async () => {
+    if (loading || saving) return;
     if (isNonWorkingDay) {
       setStatusMessage({
         type: 'error',
@@ -430,20 +555,22 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
       });
 
       const res = await submitAsistenciaBatch(selectedMateriaId, fecha, recordsToSubmit);
+      const updatedCount = res.updatedCount ?? res.count;
+      const skippedCount = res.skippedCount ?? 0;
+      const skippedNames = (res.skippedStudents || [])
+        .map((st) => `${st.nombreCompleto} (${st.estadoActual})`)
+        .join(', ');
 
       setStatusMessage({
         type: 'success',
-        text: `¡Asistencia asentada exitosamente en la base de datos institucional! (${res.count} estudiantes registrados)`,
+        text:
+          skippedCount > 0
+            ? `Asistencia asentada (${updatedCount} actualizado(s)). Se preservaron ${skippedCount} registro(s) bloqueado(s) por Coordinación: ${skippedNames}.`
+            : `¡Asistencia asentada exitosamente en la base de datos institucional! (${updatedCount} estudiantes registrados)`,
       });
 
-      setAttendanceMap((prev) => {
-        const reset: typeof prev = {};
-        Object.keys(prev).forEach((k) => {
-          const numKey = Number(k);
-          reset[numKey] = { ...prev[numKey], isModified: false };
-        });
-        return reset;
-      });
+      preserveStatusAfterReloadRef.current = true;
+      setReloadTick((t) => t + 1);
     } catch (err: any) {
       setStatusMessage({
         type: 'error',
@@ -490,7 +617,12 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
             <div>
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-lg font-bold text-slate-900 dark:text-[#F4F4F5]">Pase de Asistencia en Aula</h2>
-                {isDocente ? (
+                {isDocenteSuplente ? (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800 flex items-center gap-1">
+                    <UserCheck className="w-3 h-3" />
+                    Suplencias asignadas
+                  </span>
+                ) : isDocente ? (
                   <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 flex items-center gap-1">
                     <Lock className="w-3 h-3" />
                     Materias asignadas
@@ -500,6 +632,8 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
                     <ShieldCheck className="w-3 h-3" />
                     {currentUser?.rol === 'director'
                       ? 'Dirección — Acceso Total'
+                      : isCoordinadorSeccional
+                      ? 'Coordinación Seccional — Años Asignados'
                       : 'Coordinación — Acceso Total'}
                   </span>
                 )}
@@ -559,11 +693,15 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
               onChange={(e) => setSelectedAnoId(Number(e.target.value))}
               className="w-full bg-slate-50 dark:bg-[#181818] border border-slate-200 dark:border-[#27272A] rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 dark:text-[#F4F4F5] focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
             >
-              {anos.map((ano) => (
-                <option key={ano.idAno} value={ano.idAno}>
-                  {ano.nombreNivel}
-                </option>
-              ))}
+              {availableAnos.length === 0 ? (
+                <option value={0}>Sin años escolares habilitados</option>
+              ) : (
+                availableAnos.map((ano) => (
+                  <option key={ano.idAno} value={ano.idAno}>
+                    {ano.nombreNivel}
+                  </option>
+                ))
+              )}
             </select>
           </div>
 
@@ -576,7 +714,7 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
               onChange={(e) => setSelectedSeccionId(Number(e.target.value))}
               className="w-full bg-slate-50 dark:bg-[#181818] border border-slate-200 dark:border-[#27272A] rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 dark:text-[#F4F4F5] focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
             >
-              <option value={0}>Todas las Secciones</option>
+              {suplenteAllowsAllSections && <option value={0}>Todas las Secciones</option>}
               {filteredSecciones.map((sec) => (
                 <option key={sec.idSeccion} value={sec.idSeccion}>
                   Sección {sec.nombreSeccion}
@@ -596,7 +734,11 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
             >
               {filteredMaterias.length === 0 ? (
                 <option value={0}>
-                  {isDocente ? 'Sin materias asignadas para este año' : 'Sin materias registradas'}
+                  {isDocenteSuplente
+                    ? 'Sin suplencias vigentes para este año/fecha'
+                    : isDocente
+                    ? 'Sin materias asignadas para este año'
+                    : 'Sin materias registradas'}
                 </option>
               ) : (
                 filteredMaterias.map((m) => (
@@ -646,11 +788,45 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
         </div>
       </div>
 
+      {isDocenteSuplente && currentActiveSuplencia && (
+        <div className="p-3.5 rounded-xl bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/70 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2.5">
+          <UserCheck className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+          <div>
+            <p className="font-bold">
+              Suplencia activa en reemplazo de: {currentActiveSuplencia.titularNombre}{' '}
+              {currentActiveSuplencia.titularApellidos}
+              {currentActiveSuplencia.alcanceCompleto && (
+                <span className="ml-2 px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 text-[10px] font-bold">
+                  Suplencia total al titular
+                </span>
+              )}
+            </p>
+            <p className="text-[11px] text-amber-800/90 dark:text-amber-300/90 mt-0.5">
+              Materia:{' '}
+              <strong>
+                {materias.find((m) => m.idMateria === selectedMateriaId)?.nombreMateria ||
+                  currentActiveSuplencia.nombreMateria}
+              </strong>{' '}
+              (
+              {anos.find((a) => a.idAno === selectedAnoId)?.nombreNivel ||
+                currentActiveSuplencia.nombreNivel ||
+                'Año Escolar'}
+              {currentActiveSuplencia.nombreSeccion
+                ? ` • Sección ${currentActiveSuplencia.nombreSeccion}`
+                : ' • Todas las secciones'}
+              ){currentActiveSuplencia.motivo ? ` — Motivo: ${currentActiveSuplencia.motivo}` : ''}.
+              La auditoría registrará este pase de lista bajo su nombre y el docente titular sustituido.
+            </p>
+          </div>
+        </div>
+      )}
+
       {isDocente ? (
         <div className="p-3 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200/80 dark:border-indigo-800/60 text-xs text-indigo-800 dark:text-indigo-200 flex items-center gap-2">
           <Lock className="w-4 h-4 shrink-0 text-indigo-600 dark:text-indigo-400" />
           <span>
-            El pase de lista docente registra únicamente <strong>Presente, Tarde o Ausente</strong>. Los justificantes y reposos médicos son aprobados exclusivamente por Coordinación o Dirección.
+            El pase de lista {isDocenteSuplente ? 'del docente suplente' : 'docente'} registra únicamente{' '}
+            <strong>Presente, Tarde o Ausente</strong>. Los justificantes y reposos médicos son aprobados exclusivamente por Coordinación o Dirección.
           </span>
         </div>
       ) : (
@@ -658,7 +834,22 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
           <div className="p-3 rounded-xl bg-purple-50/70 dark:bg-purple-950/30 border border-purple-200/80 dark:border-purple-800/60 text-xs text-purple-900 dark:text-purple-200 flex items-center gap-2">
             <ShieldCheck className="w-4 h-4 shrink-0 text-purple-600 dark:text-purple-400" />
             <span>
-              <strong>Modo {currentUser?.rol === 'director' ? 'Director' : 'Coordinador'}:</strong> Puede registrar asistencia regular (<strong>Presente, Tarde, Ausente</strong>) o validar estados <strong>Justificado</strong> en cualquier año, sección y materia. Para adjuntar soportes detallados de <em>Reposo Médico</em>, utilice el módulo de <strong>Asistencia General &amp; Auditoría</strong>.
+              <strong>
+                Modo{' '}
+                {currentUser?.rol === 'director'
+                  ? 'Director'
+                  : isCoordinadorSeccional
+                  ? 'Coordinador Seccional'
+                  : 'Coordinador'}
+                :
+              </strong>{' '}
+              Puede registrar asistencia regular (<strong>Presente, Tarde, Ausente</strong>) o validar estados{' '}
+              <strong>Justificado</strong>{' '}
+              {isCoordinadorSeccional
+                ? 'en los años escolares asignados a su coordinación seccional'
+                : 'en cualquier año, sección y materia'}
+              . Para adjuntar soportes detallados de <em>Reposo Médico</em>, utilice el módulo de{' '}
+              <strong>Asistencia General &amp; Auditoría</strong>.
             </span>
           </div>
         )
@@ -963,7 +1154,7 @@ export const AttendanceManager: React.FC<AttendanceManagerProps> = ({
         <button
           type="button"
           onClick={handleSaveAttendance}
-          disabled={saving || sortedStudents.length === 0 || isNonWorkingDay}
+          disabled={saving || loading || sortedStudents.length === 0 || isNonWorkingDay}
           className="w-full sm:w-auto min-h-[44px] px-5 py-2.5 rounded-xl font-bold text-xs sm:text-sm bg-indigo-600 hover:bg-indigo-500 active:scale-[0.99] transition-all shadow-md shadow-indigo-900/50 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer whitespace-nowrap shrink-0"
         >
           {saving ? (

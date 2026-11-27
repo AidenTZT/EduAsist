@@ -1,6 +1,11 @@
 export type EstadoAsistencia = 'Presente' | 'Tarde' | 'Ausente' | 'Justificado' | 'Reposo Médico';
 
-export type RolUsuario = 'director' | 'coordinador' | 'docente';
+export type RolUsuario =
+  | 'director'
+  | 'coordinador'
+  | 'coordinador_seccional'
+  | 'docente'
+  | 'docente_suplente';
 
 export interface Usuario {
   id: number;
@@ -15,6 +20,7 @@ export interface Usuario {
   activo?: boolean;
   createdAt?: string | Date | null;
   materiasAsignadas?: Materia[];
+  anosAsignados?: number[];
 }
 
 export interface ConfiguracionInstitucional {
@@ -129,6 +135,37 @@ export interface DocenteMateria {
   idAno?: number;
 }
 
+export interface SuplenciaDocente {
+  idSuplencia: number;
+  idSuplente: number;
+  idDocenteTitular: number;
+  idDocenteMateria?: number | null;
+  alcanceCompleto?: boolean;
+  idMateria?: number | null;
+  idAno?: number | null;
+  idSeccion?: number | null;
+  activo: boolean;
+  fechaInicio?: string | null;
+  fechaFin?: string | null;
+  motivo?: string | null;
+  createdAt?: string;
+  suplenteNombre?: string;
+  suplenteApellidos?: string;
+  suplenteEmail?: string;
+  titularNombre?: string;
+  titularApellidos?: string;
+  titularEmail?: string;
+  nombreMateria?: string;
+  nombreNivel?: string;
+  nombreSeccion?: string | null;
+  materiasTitularResumen?: Array<{
+    idMateria: number;
+    nombreMateria: string;
+    idAno: number;
+    nombreNivel?: string;
+  }>;
+}
+
 export interface Horario {
   idHorario: number;
   idAno: number;
@@ -145,6 +182,10 @@ export interface Horario {
   docenteNombre?: string;
   docenteApellidos?: string;
   nombreDocente?: string;
+  esSuplencia?: boolean;
+  idSuplencia?: number | null;
+  docenteTitularNombre?: string | null;
+  motivoSuplencia?: string | null;
 }
 
 export interface ConflictoHorarioItem {
